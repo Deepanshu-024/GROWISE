@@ -16,6 +16,7 @@
     "@trpc/react-query": "^11.8.1",
     "@trpc/server": "^11.8.1",
     "@trpc/tanstack-react-query": "^11.8.1",
+    "inngest": "^3.48.1",
     "next": "16.1.1",
     "react": "19.2.3",
     "react-dom": "19.2.3",
