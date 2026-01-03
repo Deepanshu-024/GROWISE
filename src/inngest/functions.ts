@@ -1,10 +1,33 @@
 import { inngest } from "./client";
+import Sandbox from "@e2b/code-interpreter";
+import {createAgent, openai} from "@inngest/agent-kit"
+import { getSandboxUrl } from "./utils";
 
 export const helloWorld = inngest.createFunction(
   { id: "hello-world" },
   { event: "test/hello.world" },
   async ({ event, step }) => {
-    await step.sleep("wait-a-moment", "1s");
-    return { message: `Hello ${event.data.email}!` };
+
+const sandboxId = await step.run("get sandbox id", async () =>{
+  const sandbox = await Sandbox.create("vibe-testing2");
+  return sandbox.sandboxId;
+});
+
+    const codeAgent = createAgent({
+      name: "code-agent",
+      system: "You are an expert next.js developer. You write readable, maintainable code. You write simple Next.js & React snippets.",
+      model: openai({model: "gpt-4o"}),
+    });
+
+    const { output } = await codeAgent.run(
+      `Summarize the following text: ${event.data.text}`
+    );
+
+    const sandboxUrl =  await step.run("get sandbox url", async () =>{
+      const sandbox = await getSandboxUrl(sandboxId);
+      const host = sandbox.getHost(3000);
+      return `http://${host}`;
+    });
+    return { output , sandboxUrl };
   },
 );
