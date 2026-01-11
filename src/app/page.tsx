@@ -59,10 +59,12 @@ export default function Home() {
     <div className="min-h-screen flex flex-col bg-background text-foreground overflow-hidden">
       <Navigation />
 
-      <main className="flex-1 flex flex-col items-center justify-center px-4 py-8 sm:py-12">
+      <main className="flex-1 flex flex-col items-center px-4 py-8 sm:py-12">
         <div className="w-full max-w-4xl flex flex-col items-center">
-          {/* Hero Section */}
-          <HeroSection headline={activeMode.headline} subheadline={activeMode.subheadline} />
+          {/* Hero Section - Fixed top position */}
+          <div className="w-full flex flex-col items-center mt-20 sm:mb-6">
+            <HeroSection headline={activeMode.headline} subheadline={activeMode.subheadline} />
+          </div>
 
           {/* Mode Switcher */}
           <ModeIndicator
