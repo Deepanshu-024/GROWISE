@@ -33,7 +33,7 @@ export default function PromptInput({ placeholder, buttonText, mode }: PromptInp
             className={`absolute inset-0 rounded-2xl blur-xl transition-all duration-300 ${
               isFocused
                 ? "bg-[#22c55e]/30 opacity-100"
-                : "bg-gradient-to-r from-[#22c55e]/20 to-[#22c55e]/10 opacity-0 group-hover:opacity-100"
+                : "bg-linear-to-r from-[#22c55e]/20 to-[#22c55e]/10 opacity-0 group-hover:opacity-100"
             }`}
           />
 
@@ -56,7 +56,7 @@ export default function PromptInput({ placeholder, buttonText, mode }: PromptInp
 
             <button
               type="submit"
-              className="shrink-0 px-4 sm:px-6 py-2.5 sm:py-3 bg-[#22c55e] text-black hover:shadow-[0_0_25px_rgba(34,197,94,0.6)] transition-all duration-200 rounded-xl font-medium font-semibold flex items-center gap-2 whitespace-nowrap text-sm sm:text-base"
+              className="shrink-0 px-4 sm:px-6 py-2.5 sm:py-3 bg-[#22c55e] text-black hover:shadow-[0_0_25px_rgba(34,197,94,0.6)] transition-all duration-200 rounded-xl font-semibold flex items-center gap-2 whitespace-nowrap text-sm sm:text-base"
             >
               {buttonText}
               <ArrowRight className="w-4 h-4" />
