@@ -12,6 +12,7 @@
     "@e2b/code-interpreter": "^2.3.3",
     "@hookform/resolvers": "^3.10.0",
     "@inngest/agent-kit": "^0.13.2",
+    "@mendable/firecrawl-js": "^4.11.0",
     "@prisma/client": "^7.2.0",
     "@radix-ui/react-accordion": "1.2.2",
     "@radix-ui/react-alert-dialog": "1.1.4",

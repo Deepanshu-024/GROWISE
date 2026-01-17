@@ -4,6 +4,7 @@ import type React from "react"
 
 import { useState } from "react"
 import { ArrowRight } from "lucide-react"
+import { scrapeWebsite } from "../../actions/firecrawl/get-sub-links"
 
 interface PromptInputProps {
   placeholder: string
@@ -14,11 +15,24 @@ interface PromptInputProps {
 export default function PromptInput({ placeholder, buttonText, mode }: PromptInputProps) {
   const [inputValue, setInputValue] = useState("")
   const [isFocused, setIsFocused] = useState(false)
+  const [isLoading, setIsLoading] = useState(false)
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    console.log(`[${mode}] Submitted:`, inputValue)
-    // Handle submission logic here
+    
+    if (mode === "brand" && inputValue.trim()) {
+      setIsLoading(true)
+      try {
+        await scrapeWebsite(inputValue.trim())
+      } catch (error) {
+        console.error("Unexpected error:", error)
+      } finally {
+        setIsLoading(false)
+      }
+    } else {
+      console.log(`[${mode}] Submitted:`, inputValue)
+      // Handle other modes here
+    }
   }
 
   const secondaryButtonText =
@@ -56,9 +70,10 @@ export default function PromptInput({ placeholder, buttonText, mode }: PromptInp
 
             <button
               type="submit"
-              className="shrink-0 px-4 sm:px-6 py-2.5 sm:py-3 bg-[#22c55e] text-black hover:shadow-[0_0_25px_rgba(34,197,94,0.6)] transition-all duration-200 rounded-xl font-semibold flex items-center gap-2 whitespace-nowrap text-sm sm:text-base"
+              disabled={isLoading || !inputValue.trim()}
+              className="shrink-0 px-4 sm:px-6 py-2.5 sm:py-3 bg-[#22c55e] text-black hover:shadow-[0_0_25px_rgba(34,197,94,0.6)] transition-all duration-200 rounded-xl font-semibold flex items-center gap-2 whitespace-nowrap text-sm sm:text-base disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {buttonText}
+              {isLoading ? "Analyzing..." : buttonText}
               <ArrowRight className="w-4 h-4" />
             </button>
           </div>
