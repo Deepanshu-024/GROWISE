@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
       // Create user in database
       await prisma.user.create({
         data: {
-          id: id,
+          clerkId: id,
           email: primaryEmail.email_address,
           name: first_name && last_name ? `${first_name} ${last_name}` : first_name || last_name || null,
         },
@@ -96,7 +96,7 @@ export async function POST(req: NextRequest) {
 
       // Update user in database
       await prisma.user.update({
-        where: { id: id },
+        where: { clerkId: id },
         data: {
           email: primaryEmail.email_address,
           name: first_name && last_name ? `${first_name} ${last_name}` : first_name || last_name || null,
@@ -109,7 +109,7 @@ export async function POST(req: NextRequest) {
 
       // Delete user from database (this will cascade delete chats due to our schema)
       await prisma.user.delete({
-        where: { id: id },
+        where: { clerkId: id },
       });
     }
 
