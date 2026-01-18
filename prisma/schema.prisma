@@ -22,3 +22,28 @@ model Post {
   authorId  Int
   author    User    @relation(fields: [authorId], references: [id])
 }
+
+model GitHubInstallation {
+  id           Int       @id @default(autoincrement())
+  userId       String    // Clerk user ID
+  installationId String  @unique
+  accessToken  String
+  refreshToken String?
+  expiresAt    DateTime?
+  scope        String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  repositories GitHubRepository[]
+}
+
+model GitHubRepository {
+  id            Int       @id @default(autoincrement())
+  installationId String
+  installation  GitHubInstallation @relation(fields: [installationId], references: [installationId], onDelete: Cascade)
+  repoId        String    @unique
+  name          String
+  fullName      String
+  private       Boolean   @default(false)
+  htmlUrl       String
+  createdAt     DateTime  @default(now())
+}
