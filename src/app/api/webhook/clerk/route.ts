@@ -10,7 +10,7 @@ export const runtime = 'nodejs';
 
 // Handle GET requests (e.g., from browser or health checks)
 export async function GET() {
-  return new NextResponse('Webhook endpoint - POST only', { status: 405 });
+  return new NextResponse('Webhook endpoint - POST only', { status: 200 });
 }
 
 export async function POST(req: NextRequest) {
