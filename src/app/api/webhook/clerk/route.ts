@@ -8,6 +8,11 @@ import  prisma  from '@/lib/prisma';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+// Handle GET requests (e.g., from browser or health checks)
+export async function GET() {
+  return new NextResponse('Webhook endpoint - POST only', { status: 200 });
+}
+
 export async function POST(req: NextRequest) {
   const WEBHOOK_SECRET = process.env.CLERK_WEBHOOK_SECRET;
 
