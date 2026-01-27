@@ -1,7 +1,19 @@
-import { clerkMiddleware } from '@clerk/nextjs/server';
+import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
 
-export default clerkMiddleware((auth, req) => {
+const isProtectedRoute = createRouteMatcher([
+  "/dashboard(.*)",
+  "/api/github/status(.*)",
+  "/api/github/disconnect(.*)",
+  "/api/github/repositories(.*)",
+  "/api/github/install(.*)",
+]);
+
+export default clerkMiddleware(async (auth, req) => {
   // Skip authentication for webhook routes
+  if (isProtectedRoute(req)) {
+    await auth.protect();
+}
+
   if (req.nextUrl.pathname.startsWith('/api/webhook')) {
     return;
   }

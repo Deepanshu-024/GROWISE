@@ -8,10 +8,22 @@ datasource db {
 }
 
 model User {
-  id                String    @id @default(uuid())
-  clerkId           String    @unique
-  email             String    @unique
-  name              String?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  id                     String    @id @default(uuid())
+  clerkId                String    @unique
+  email                  String    @unique
+  name                   String?
+  githubInstallationId   String?   @unique
+  githubAccessToken      String?
+  githubAccessTokenExpiry DateTime?
+  githubUsername         String?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+}
+
+model GithubAuthState {
+  id        String   @id @default(uuid())
+  state     String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
 }
