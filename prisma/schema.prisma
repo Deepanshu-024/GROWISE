@@ -18,6 +18,28 @@ model User {
   githubUsername         String?
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt
+  repositories           Repository[]
+}
+
+model Repository {
+  id              String   @id @default(uuid())
+  repositoryId    String   @unique // GitHub repository ID
+  name            String
+  fullName        String
+  owner           String
+  isSupported     Boolean  @default(false)
+  framework       String?  // "next", "react", or null
+  packageJson     Json?    // Store the entire package.json
+  defaultBranch   String?
+  baseDirectory   String?  // Path where package.json was found
+  repoContent     Json?    // Directory contents as array
+  userId          String
+  user            User     @relation(fields: [userId], references: [clerkId])
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId])
+  @@index([repositoryId])
 }
 
 model GithubAuthState {
