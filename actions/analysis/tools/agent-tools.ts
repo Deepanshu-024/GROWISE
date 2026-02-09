@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { DynamicStructuredTool } from "@langchain/core/tools";
+import { tool } from "langchain"
 
 // Types for GitHub API responses
 interface GitHubTreeNode {
@@ -60,17 +60,8 @@ const MAX_FILE_SIZE = 500 * 1024;
  * Tool 1: Get Repository Tree
  * Fetches the complete file structure of a GitHub repository
  */
-export const getRepoTreeTool = new DynamicStructuredTool({
-  name: "getRepoTree",
-  description: "Get the complete file tree structure of a GitHub repository recursively. Returns all files and directories in the repository.",
-  schema: z.object({
-    owner: z.string().describe("Repository owner/organization name"),
-    repo: z.string().describe("Repository name"),
-    branch: z.string().optional().describe("Branch name (optional, defaults to 'main' if not provided)"),
-    accessToken: z.string().describe("GitHub access token for authentication (OAuth or installation token)"),
-  }),
-
-  func: async (input): Promise<string> => {
+export const getRepoTreeTool = tool(
+  async (input): Promise<string> => {
     const { owner, repo, branch, accessToken } = input as { owner: string, repo: string, branch?: string, accessToken: string };
     const effectiveBranch = branch || "main"; // Handle default here instead of in schema
     try {
@@ -159,25 +150,25 @@ ${data.truncated ? 'Note: Tree was truncated by GitHub API.' : ''}`;
     } catch (error) {
       return `Error getting repository tree: ${error instanceof Error ? error.message : "Unknown error occurred"}`;
     }
+  },
+  {
+    name: "getRepoTree",
+    description: "Get the complete file tree structure of a GitHub repository recursively. Returns all files and directories in the repository.",
+    schema: z.object({
+      owner: z.string().describe("Repository owner/organization name"),
+      repo: z.string().describe("Repository name"),
+      branch: z.string().optional().describe("Branch name (optional, defaults to 'main' if not provided)"),
+      accessToken: z.string().describe("GitHub access token for authentication (OAuth or installation token)"),
+    }),
   }
-});
+);
 
 /**
  * Tool 2: Get File Content
  * Fetches the raw content of a specific file from a GitHub repository
  */
-export const getFileContentTool = new DynamicStructuredTool({
-  name: "getFileContent",
-  description: "Get the raw content of a specific file from a GitHub repository. Has a 500KB size limit to prevent memory issues.",
-  schema: z.object({
-    owner: z.string().describe("Repository owner/organization name"),
-    repo: z.string().describe("Repository name"),
-    path: z.string().describe("File path within the repository (e.g., 'src/app/page.tsx')"),
-    accessToken: z.string().describe("GitHub access token for authentication (OAuth or installation token)"),
-    branch: z.string().optional().describe("Branch name (optional, uses default branch if not specified)"),
-  }),
-
-  func: async (input): Promise<string> => {
+export const getFileContentTool = tool(
+  async (input): Promise<string> => {
     const { owner, repo, path, accessToken, branch } = input as { owner: string, repo: string, path: string, accessToken: string, branch: string };
     try {
       let url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}`;
@@ -220,27 +211,26 @@ ${content}`;
     } catch (error) {
       return `Error reading file ${path}: ${error instanceof Error ? error.message : "Unknown error occurred"}`;
     }
+  },
+  {
+    name: "getFileContent",
+    description: "Get the raw content of a specific file from a GitHub repository. Has a 500KB size limit to prevent memory issues.",
+    schema: z.object({
+      owner: z.string().describe("Repository owner/organization name"),
+      repo: z.string().describe("Repository name"),
+      path: z.string().describe("File path within the repository (e.g., 'src/app/page.tsx')"),
+      accessToken: z.string().describe("GitHub access token for authentication (OAuth or installation token)"),
+      branch: z.string().optional().describe("Branch name (optional, uses default branch if not specified)"),
+    }),
   }
-});
+);
 
 /**
  * Tool 3: Search Code
  * Searches for specific keywords or patterns within a GitHub repository
  */
-export const searchCodeTool = new DynamicStructuredTool({
-  name: "searchCode",
-  description: "Search for specific keywords, patterns, or code within a GitHub repository. Useful for finding framework usage, specific functions, or patterns.",
-  schema: z.object({
-    owner: z.string().describe("Repository owner/organization name"),
-    repo: z.string().describe("Repository name"),
-    query: z.string().describe("Search query (e.g., 'useEffect', '@nestjs/', 'function component')"),
-    accessToken: z.string().describe("GitHub access token for authentication (OAuth or installation token)"),
-    language: z.string().optional().describe("Filter by programming language (e.g., 'typescript', 'javascript')"),
-    extension: z.string().optional().describe("Filter by file extension (e.g., 'ts', 'tsx', 'js')"),
-    path: z.string().optional().describe("Filter by file path pattern (e.g., 'src/', 'components/')"),
-  }),
-
-  func: async (input): Promise<string> => {
+export const searchCodeTool = tool(
+  async (input): Promise<string> => {
     const { owner, repo, query, accessToken, language, extension, path } = input as { owner: string, repo: string, query: string, accessToken: string, language: string, extension: string, path: string };
     try {
       // Build search query with filters
@@ -314,8 +304,21 @@ Search query used: ${searchQuery}`;
     } catch (error) {
       return `Error searching code for "${query}": ${error instanceof Error ? error.message : "Unknown error occurred"}`;
     }
+  },
+  {
+    name: "searchCode",
+    description: "Search for specific keywords, patterns, or code within a GitHub repository. Useful for finding framework usage, specific functions, or patterns.",
+    schema: z.object({
+      owner: z.string().describe("Repository owner/organization name"),
+      repo: z.string().describe("Repository name"),
+      query: z.string().describe("Search query (e.g., 'useEffect', '@nestjs/', 'function component')"),
+      accessToken: z.string().describe("GitHub access token for authentication (OAuth or installation token)"),
+      language: z.string().optional().describe("Filter by programming language (e.g., 'typescript', 'javascript')"),
+      extension: z.string().optional().describe("Filter by file extension (e.g., 'ts', 'tsx', 'js')"),
+      path: z.string().optional().describe("Filter by file path pattern (e.g., 'src/', 'components/')"),
+    }),
   }
-});
+);
 
 
 
