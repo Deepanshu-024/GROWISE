@@ -157,7 +157,7 @@ ${data.truncated ? 'Note: Tree was truncated by GitHub API.' : ''}`;
     schema: z.object({
       owner: z.string().describe("Repository owner/organization name"),
       repo: z.string().describe("Repository name"),
-      branch: z.string().optional().describe("Branch name (optional, defaults to 'main' if not provided)"),
+      branch: z.string().nullable().describe("Branch name (optional, defaults to 'main' if not provided)"),
       accessToken: z.string().describe("GitHub access token for authentication (OAuth or installation token)"),
     }),
   }
@@ -220,7 +220,7 @@ ${content}`;
       repo: z.string().describe("Repository name"),
       path: z.string().describe("File path within the repository (e.g., 'src/app/page.tsx')"),
       accessToken: z.string().describe("GitHub access token for authentication (OAuth or installation token)"),
-      branch: z.string().optional().describe("Branch name (optional, uses default branch if not specified)"),
+      branch: z.string().nullable().describe("Branch name (optional, uses default branch if not specified)"),
     }),
   }
 );
@@ -313,9 +313,9 @@ Search query used: ${searchQuery}`;
       repo: z.string().describe("Repository name"),
       query: z.string().describe("Search query (e.g., 'useEffect', '@nestjs/', 'function component')"),
       accessToken: z.string().describe("GitHub access token for authentication (OAuth or installation token)"),
-      language: z.string().optional().describe("Filter by programming language (e.g., 'typescript', 'javascript')"),
-      extension: z.string().optional().describe("Filter by file extension (e.g., 'ts', 'tsx', 'js')"),
-      path: z.string().optional().describe("Filter by file path pattern (e.g., 'src/', 'components/')"),
+      language: z.string().nullable().describe("Filter by programming language (e.g., 'typescript', 'javascript')"),
+      extension: z.string().nullable().describe("Filter by file extension (e.g., 'ts', 'tsx', 'js')"),
+      path: z.string().nullable().describe("Filter by file path pattern (e.g., 'src/', 'components/')"),
     }),
   }
 );

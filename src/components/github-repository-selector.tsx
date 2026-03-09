@@ -158,15 +158,15 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
             // Log detailed results
             console.log("=== Business Classification Result ===");
             if (result.classification) {
-                console.log("Business Type:", result.classification.businessType.primary);
-                console.log("Secondary Types:", result.classification.businessType.secondary);
-                console.log("Confidence:", result.classification.businessType.confidence);
-                console.log("Audience Size:", result.classification.audienceSize);
-                console.log("Usage Pattern:", result.classification.usagePattern);
-                console.log("Risk Profile:", result.classification.riskProfile);
-                console.log("Constraints:", result.classification.constraints);
-                console.log("Scale Breakpoints:", result.classification.scaleBreakpoints);
-                console.log("Evidence:", result.classification.evidence);
+                // console.log("Business Type:", result.classification.businessType.primary);
+                // console.log("Secondary Types:", result.classification.businessType.secondary);
+                // console.log("Confidence:", result.classification.businessType.confidence);
+                // console.log("Audience Size:", result.classification.audienceSize);
+                // console.log("Usage Pattern:", result.classification.usagePattern);
+                // console.log("Risk Profile:", result.classification.riskProfile);
+                // console.log("Constraints:", result.classification.constraints);
+                // console.log("Scale Breakpoints:", result.classification.scaleBreakpoints);
+                // console.log("Evidence:", result.classification.evidence);
             }
             if (result.error) {
                 console.error("Error:", result.error);
@@ -175,10 +175,11 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
 
             // Show result toast
             if (result.classification) {
+                const top = result.classification.archetypes[0];
                 toast.success(
-                    `Business Type: ${result.classification.businessType.primary}`,
+                    `Top archetype: ${top.name} (${top.score})`,
                     {
-                        description: `Audience: ${result.classification.audienceSize} | Risk: ${result.classification.riskProfile}`,
+                        description: `Confidence: ${result.classification.confidence} · ${result.classification.archetypes.length} niche(s) detected`,
                     }
                 );
             } else {

@@ -9,30 +9,24 @@ import { getFileContentTool, getRepoTreeTool, searchCodeTool } from "./tools/age
 import { createAgent } from "langchain";
 import { z } from "zod";
 
-// Zod schema for structured output
+// Zod schema for structured output - Engineering Archetype Classification
 const BusinessClassificationSchema = z.object({
-    businessType: z.object({
-        primary: z.string(),
-        secondary: z.array(z.string()),
-        confidence: z.string(),
-    }),
-    audienceSize: z.string(),
-    usagePattern: z.array(z.string()),
-    constraints: z.object({
-        latency: z.string(),
-        consistency: z.string(),
-        failureCost: z.string(),
-        security: z.string(),
-        compliance: z.string(),
-        costSensitivity: z.string(),
-    }),
-    riskProfile: z.string(),
-    scaleBreakpoints: z.object({
-        "10k": z.string(),
-        "100k": z.string(),
-        "1M": z.string(),
-    }),
-    evidence: z.array(z.string()),
+    archetypes: z.array(
+        z.object({
+            name: z.enum([
+                "database-heavy",
+                "compute-heavy",
+                "ai-powered",
+                "realtime",
+                "event-driven",
+                "financial-transactional",
+                "auth-heavy",
+                "content-heavy"
+            ]),
+            score: z.number().min(0).max(1),
+        })
+    ),
+    confidence: z.enum(["high", "medium", "low"]),
 });
 
 // TypeScript type inferred from Zod schema
@@ -75,6 +69,8 @@ export async function classifyBusinessContext(
                 defaultBranch: true,
                 baseDirectory: true,
                 isSupported: true,
+                archetypes: true,
+                archClassificationConfidence: true,
             },
         });
 
@@ -84,6 +80,17 @@ export async function classifyBusinessContext(
 
         if (!repository.isSupported || !repository.framework) {
             return { error: "Repository framework not analyzed yet. Please run framework analysis first." };
+        }
+
+        // Skip if classification already exists
+        if (repository.archetypes && repository.archClassificationConfidence) {
+            console.log("[SERVER] ✅ Classification already exists, skipping LLM call");
+            return {
+                classification: {
+                    archetypes: repository.archetypes as BusinessClassificationResult["archetypes"],
+                    confidence: repository.archClassificationConfidence as BusinessClassificationResult["confidence"],
+                },
+            };
         }
 
         const { fullName, framework, packageJson, repoContent, defaultBranch } = repository;
@@ -148,7 +155,7 @@ export async function classifyBusinessContext(
             .replace(/{defaultBranch}/g, defaultBranch || "main");
 
         // Create agent with structured output
-        const agent = await createAgent({
+        const agent = createAgent({
             model: gpt5Mini,
             tools: repoAnalysisTools,
             systemPrompt: formattedPrompt,
@@ -161,13 +168,29 @@ export async function classifyBusinessContext(
             messages: [
                 {
                     role: "user",
-                    content: `Analyze the repository ${fullName} and classify its business context and engineering constraints. Use the provided tools if needed to gather additional information.`,
+                    content: `Analyze the repository ${fullName} and classify its engineering niches. Return JSON only.`,
                 },
             ],
         });
 
         console.log("[SERVER] 🤖 LLM Response received");
         console.log("[SERVER] Raw output:", result);
+
+        // Track tool calls
+        const toolCalls = result.messages?.filter((msg: any) => msg.role === "tool" || msg.tool_calls?.length > 0) || [];
+        const toolCallCount = toolCalls.length;
+        console.log(`[SERVER] 🔧 Tool calls made: ${toolCallCount}`);
+
+        if (toolCallCount > 0) {
+            console.log("[SERVER] 🔧 Tool usage details:");
+            result.messages?.forEach((msg: any, index: number) => {
+                if (msg.tool_calls && msg.tool_calls.length > 0) {
+                    msg.tool_calls.forEach((toolCall: any) => {
+                        console.log(`  - ${toolCall.name || 'Unknown tool'}`);
+                    });
+                }
+            });
+        }
 
         // Get structured response from the agent
         const classificationData = result.structuredResponse as BusinessClassificationResult;
@@ -178,9 +201,19 @@ export async function classifyBusinessContext(
         }
 
         console.log("[SERVER] ✅ Classification complete");
-        console.log("[SERVER] Business Type:", classificationData.businessType.primary);
-        console.log("[SERVER] Audience Size:", classificationData.audienceSize);
-        console.log("[SERVER] Risk Profile:", classificationData.riskProfile);
+        console.log("[SERVER] Confidence:", classificationData.confidence);
+        console.log("[SERVER] Archetypes:", classificationData.archetypes.map(a => `${a.name} (${a.score})`).join(", "));
+
+        // Persist classification results to the repository record
+        console.log("[SERVER] 💾 Saving classification results to database...");
+        await prisma.repository.update({
+            where: { repositoryId: repositoryId },
+            data: {
+                archetypes: classificationData.archetypes,
+                archClassificationConfidence: classificationData.confidence,
+            },
+        });
+        console.log("[SERVER] ✅ Classification results saved to database");
 
         return {
             classification: classificationData,

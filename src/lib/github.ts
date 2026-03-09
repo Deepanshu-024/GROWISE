@@ -14,10 +14,10 @@ export async function generateInstallationToken(installationId: string) {
         if (!appId || !privateKey) {
             throw new Error("GitHub App credentials not configured");
         }
-        console.log("App ID:", appId);
-        console.log("Private Key:", privateKey);
+        //console.log("App ID:", appId);
+        //console.log("Private Key:", privateKey);
         const decodedPrivateKey = privateKey.replace(/\\n/g, '\n');
-        console.log("Decoded Private Key:", decodedPrivateKey);
+        //console.log("Decoded Private Key:", decodedPrivateKey);
 
         const auth = createAppAuth({
             appId,

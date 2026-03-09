@@ -10,7 +10,6 @@ export const gpt4oMini = new ChatOpenAI({
 
 export const gpt5Mini = new ChatOpenAI({
   modelName: "gpt-5-mini-2025-08-07",
-  temperature: 0,
   openAIApiKey: process.env.OPENAI_API_KEY,
 });
 

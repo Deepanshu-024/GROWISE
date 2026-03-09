@@ -8,35 +8,37 @@ datasource db {
 }
 
 model User {
-  id                     String    @id @default(uuid())
-  clerkId                String    @unique
-  email                  String    @unique
-  name                   String?
-  githubInstallationId   String?   @unique
-  githubAccessToken      String?
+  id                      String       @id @default(uuid())
+  clerkId                 String       @unique
+  email                   String       @unique
+  name                    String?
+  githubInstallationId    String?      @unique
+  githubAccessToken       String?
   githubAccessTokenExpiry DateTime?
-  githubUsername         String?
-  createdAt              DateTime  @default(now())
-  updatedAt              DateTime  @updatedAt
-  repositories           Repository[]
+  githubUsername          String?
+  createdAt               DateTime     @default(now())
+  updatedAt               DateTime     @updatedAt
+  repositories            Repository[]
 }
 
 model Repository {
-  id              String   @id @default(uuid())
-  repositoryId    String   @unique // GitHub repository ID
-  name            String
-  fullName        String
-  owner           String
-  isSupported     Boolean  @default(false)
-  framework       String?  // "next", "react", or null
-  packageJson     Json?    // Store the entire package.json
-  defaultBranch   String?
-  baseDirectory   String?  // Path where package.json was found
-  repoContent     Json?    // Directory contents as array
-  userId          String
-  user            User     @relation(fields: [userId], references: [clerkId])
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id                           String   @id @default(uuid())
+  repositoryId                 String   @unique // GitHub repository ID
+  name                         String
+  fullName                     String
+  owner                        String
+  isSupported                  Boolean  @default(false)
+  framework                    String? // "next", "react", or null
+  packageJson                  Json? // Store the entire package.json
+  defaultBranch                String?
+  baseDirectory                String? // Path where package.json was found
+  repoContent                  Json? // Directory contents as array
+  archetypes                   Json? // [{ name: "ai-powered", score: 0.91 }, ...]
+  archClassificationConfidence String? // "high" | "medium" | "low"
+  userId                       String
+  user                         User     @relation(fields: [userId], references: [clerkId])
+  createdAt                    DateTime @default(now())
+  updatedAt                    DateTime @updatedAt
 
   @@index([userId])
   @@index([repositoryId])
