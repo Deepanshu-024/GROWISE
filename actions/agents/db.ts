@@ -1,14 +1,14 @@
 import { createAgent } from "langchain";
 import { tool } from "langchain";
-import { z } from "zod";
+import { z } from "zod";    
 import { gpt4oMini } from "@/lib/llm";
-import { getRepoTreeTool, searchCodeTool, getFileContentTool } from "../../tools/agent-tools";
-import { getDependenciesTool } from "../../tools/getDependenciesTool";
-import { scanDatabaseAccessTool } from "../../tools/scanDatabaseAccessTool";
-import { getSchemaDefinitionsTool } from "../../tools/getSchemaDefinitionsTool";
-import { checkConnectionPoolTool } from "../../tools/checkConnectionPoolTool";
-import { traceFunctionTool } from "../../tools/traceFunctionTool";
-import { resolveImportsTool } from "../../tools/resolveImportsTool";
+import { getRepoTreeTool, searchCodeTool, getFileContentTool } from "../analysis/tools/agent-tools";
+import { getDependenciesTool } from "../analysis/tools/getDependenciesTool";
+import { scanDatabaseAccessTool } from "../analysis/tools/scanDatabaseAccessTool";
+import { getSchemaDefinitionsTool } from "../analysis/tools/getSchemaDefinitionsTool";
+import { checkConnectionPoolTool } from "../analysis/tools/checkConnectionPoolTool";
+import { traceFunctionTool } from "../analysis/tools/traceFunctionTool";
+import { resolveImportsTool } from "../analysis/tools/resolveImportsTool";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
