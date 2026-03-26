@@ -5,61 +5,9 @@ import { JsonOutputParser } from "@langchain/core/output_parsers";
 import { gpt4oMini } from "@/lib/llm";
 import prisma from "@/lib/prisma";
 
-// Substring-match lists used in the first (cheap) pass.
-// A package can appear in multiple categories (e.g. ioredis → database + cache).
-const CATEGORY_PATTERNS: Record<string, string[]> = {
-    database: [
-        "prisma", "mongoose", "sequelize", "typeorm", "pg", "mysql2", "mysql",
-        "sqlite3", "better-sqlite3", "knex", "drizzle-orm", "mongodb", "redis",
-        "ioredis", "level", "nedb",
-    ],
-    realtime: [
-        "socket.io", "ws", "sockjs", "pusher", "ably", "liveblocks",
-        "supabase-realtime", "centrifuge", "actioncable",
-    ],
-    auth: [
-        "passport", "next-auth", "jsonwebtoken", "jose", "@auth/",
-        "clerk", "@clerk/", "lucia", "iron-session", "express-session",
-        "bcrypt", "argon2", "crypto-js",
-    ],
-    payments: [
-        "stripe", "@stripe/", "paypal", "braintree", "square",
-        "adyen", "razorpay", "paddle",
-    ],
-    queues: [
-        "bull", "bullmq", "bee-queue", "agenda", "kue",
-        "pg-boss", "faktory", "rabbitmq",
-    ],
-    cache: [
-        "ioredis", "redis", "lru-cache", "node-cache", "memcached",
-        "keyv", "@keyv/",
-    ],
-    email: [
-        "nodemailer", "sendgrid", "@sendgrid/", "resend", "postmark",
-        "mailgun", "@mailchimp/", "ses",
-    ],
-    storage: [
-        "@aws-sdk/", "aws-sdk", "minio", "@google-cloud/storage",
-        "azure-storage", "multer", "formidable", "busboy",
-        "uploadthing", "cloudinary",
-    ],
-    testing: [
-        "jest", "vitest", "mocha", "chai", "jasmine",
-        "cypress", "playwright", "@testing-library/",
-        "supertest", "sinon",
-    ],
-    orm: [
-        "prisma", "typeorm", "sequelize", "mongoose", "drizzle-orm",
-        "objection", "bookshelf", "waterline",
-    ],
-};
+// ─── Types ────────────────────────────────────────────────────────────────────
 
-export const VALID_CATEGORIES = [
-    "database", "realtime", "auth", "payments", "queues",
-    "cache", "email", "storage", "testing", "orm", "uncategorized",
-] as const;
-
-export type CategoryKey = typeof VALID_CATEGORIES[number];
+type DepType = "runtime" | "dev" | "peer";
 
 interface PackageJson {
     name?: string;
@@ -70,36 +18,209 @@ interface PackageJson {
     [key: string]: unknown;
 }
 
-type CategoryBuckets = Record<CategoryKey, string[]>;
-
-interface LLMCategorizationResult {
-    categorized: Record<string, CategoryKey>;
+export interface CategorizedPackage {
+    name: string;
+    version: string;
+    type: string;       // e.g. "orm", "driver", "provider", "sdk", "runner", "unknown"
+    depType: DepType;   // "runtime" | "dev" | "peer"
 }
 
-// Pass 1: regex/substring — no LLM cost
-function regexPass(allDeps: Record<string, string>): CategoryBuckets {
+export interface DependenciesOutput {
+    capabilities: Record<string, CategorizedPackage[]>;
+    totalDeps: number;
+    categorizedCount: number;
+    uncategorizedCount: number;
+}
+
+// ─── Category Patterns (extensible config) ────────────────────────────────────
+
+interface CategoryPatternEntry {
+    /** Substring patterns to match against lowercased package name */
+    patterns: string[];
+    /** Default type tag for packages matched by this category */
+    type: string;
+}
+
+const CATEGORY_PATTERNS: Record<string, CategoryPatternEntry> = {
+    database: {
+        patterns: [
+            "prisma", "mongoose", "sequelize", "typeorm", "pg", "mysql2", "mysql",
+            "sqlite3", "better-sqlite3", "knex", "drizzle-orm", "mongodb", "redis",
+            "ioredis", "level", "nedb",
+        ],
+        type: "driver",
+    },
+    realtime: {
+        patterns: [
+            "socket.io", "ws", "sockjs", "pusher", "ably", "liveblocks",
+            "supabase-realtime", "centrifuge", "actioncable",
+        ],
+        type: "sdk",
+    },
+    auth: {
+        patterns: [
+            "passport", "next-auth", "jsonwebtoken", "jose", "@auth/",
+            "clerk", "@clerk/", "lucia", "iron-session", "express-session",
+            "bcrypt", "argon2", "crypto-js",
+        ],
+        type: "provider",
+    },
+    payments: {
+        patterns: [
+            "stripe", "@stripe/", "paypal", "braintree", "square",
+            "adyen", "razorpay", "paddle",
+        ],
+        type: "sdk",
+    },
+    queues: {
+        patterns: [
+            "bull", "bullmq", "bee-queue", "agenda", "kue",
+            "pg-boss", "faktory", "rabbitmq",
+        ],
+        type: "sdk",
+    },
+    cache: {
+        patterns: [
+            "ioredis", "redis", "lru-cache", "node-cache", "memcached",
+            "keyv", "@keyv/",
+        ],
+        type: "sdk",
+    },
+    email: {
+        patterns: [
+            "nodemailer", "sendgrid", "@sendgrid/", "resend", "postmark",
+            "mailgun", "@mailchimp/", "ses",
+        ],
+        type: "sdk",
+    },
+    storage: {
+        patterns: [
+            "@aws-sdk/", "aws-sdk", "minio", "@google-cloud/storage",
+            "azure-storage", "multer", "formidable", "busboy",
+            "uploadthing", "cloudinary",
+        ],
+        type: "sdk",
+    },
+    testing: {
+        patterns: [
+            "jest", "vitest", "mocha", "chai", "jasmine",
+            "cypress", "playwright", "@testing-library/",
+            "supertest", "sinon",
+        ],
+        type: "runner",
+    },
+    orm: {
+        patterns: [
+            "prisma", "typeorm", "sequelize", "mongoose", "drizzle-orm",
+            "objection", "bookshelf", "waterline",
+        ],
+        type: "orm",
+    },
+};
+
+export const VALID_CATEGORIES = [
+    "database", "realtime", "auth", "payments", "queues",
+    "cache", "email", "storage", "testing", "orm", "uncategorized",
+] as const;
+
+export type CategoryKey = typeof VALID_CATEGORIES[number];
+
+// ─── Scoped Package Parser ────────────────────────────────────────────────────
+// Handles both regular (`prisma@6.10.1`) and scoped (`@clerk/nextjs@^6.0.0`)
+// packages. Uses lastIndexOf("@") to find the version separator, which is
+// always the LAST "@" (scoped packages start with "@" but the version
+// separator is also "@").
+
+function parsePackageEntry(entry: string): { name: string; version: string } {
+    const lastAt = entry.lastIndexOf("@");
+
+    // If "@" is at position 0, there's no version — the whole thing is a name
+    // If no "@" found (-1), also treat entire string as the name
+    if (lastAt <= 0) {
+        return { name: entry, version: "unknown" };
+    }
+
+    return {
+        name: entry.slice(0, lastAt),
+        version: entry.slice(lastAt + 1),
+    };
+}
+
+// ─── Dependency Merger with Type Tagging ──────────────────────────────────────
+
+interface TaggedDep {
+    name: string;
+    version: string;
+    depType: DepType;
+}
+
+function mergeAndTagDeps(packageJson: PackageJson): TaggedDep[] {
+    const result: TaggedDep[] = [];
+    const seen = new Set<string>();
+
+    const addDeps = (deps: Record<string, string> | undefined, depType: DepType) => {
+        if (!deps) return;
+        for (const [name, version] of Object.entries(deps)) {
+            // Guard: skip empty or whitespace-only names
+            if (!name || !name.trim()) continue;
+            if (seen.has(name)) continue;
+            seen.add(name);
+            result.push({ name, version, depType });
+        }
+    };
+
+    // runtime takes priority (added first → seen prevents dev/peer dupes)
+    addDeps(packageJson.dependencies, "runtime");
+    addDeps(packageJson.devDependencies, "dev");
+    addDeps(packageJson.peerDependencies, "peer");
+
+    return result;
+}
+
+// ─── Pass 1: Regex/Substring (no LLM cost) ───────────────────────────────────
+
+type CategoryBuckets = Record<CategoryKey, CategorizedPackage[]>;
+
+function regexPass(deps: TaggedDep[]): CategoryBuckets {
     const result = Object.fromEntries(
-        VALID_CATEGORIES.map((k) => [k, [] as string[]])
+        VALID_CATEGORIES.map((k) => [k, [] as CategorizedPackage[]])
     ) as CategoryBuckets;
 
-    for (const [name, version] of Object.entries(allDeps)) {
-        const entry = `${name}@${version}`;
+    for (const dep of deps) {
+        const lowerName = dep.name.toLowerCase();
         let categorised = false;
 
-        for (const [category, patterns] of Object.entries(CATEGORY_PATTERNS)) {
-            if (patterns.some((p) => name.toLowerCase().includes(p.toLowerCase()))) {
-                (result[category as CategoryKey] as string[]).push(entry);
+        for (const [category, config] of Object.entries(CATEGORY_PATTERNS)) {
+            if (config.patterns.some((p) => lowerName.includes(p.toLowerCase()))) {
+                result[category as CategoryKey].push({
+                    name: dep.name,
+                    version: dep.version,
+                    type: config.type,
+                    depType: dep.depType,
+                });
                 categorised = true;
             }
         }
 
-        if (!categorised) result.uncategorized.push(entry);
+        if (!categorised) {
+            result.uncategorized.push({
+                name: dep.name,
+                version: dep.version,
+                type: "unknown",
+                depType: dep.depType,
+            });
+        }
     }
 
     return result;
 }
 
-// Pass 2: LangChain chain fallback for packages not matched by regex
+// ─── Pass 2: LLM Fallback for Uncategorized ──────────────────────────────────
+
+interface LLMCategorizationResult {
+    categorized: Record<string, CategoryKey>;
+}
+
 const LLM_PROMPT_TEMPLATE = `You are a Node.js / npm dependency classifier.
 
 You will receive a JSON array of npm package names.
@@ -117,16 +238,18 @@ Classify each into ONE of these categories:
   orm       - object-relational / object-document mappers
   uncategorized - anything that does not fit the above
 
-Reply with ONLY valid JSON: { "categorized": { "<packageName>": "<category>", ... } }
+Reply with ONLY valid JSON: {{ "categorized": {{ "<packageName>": "<category>", ... }} }}
 Use the bare package name as the key (no version). JSON only, no explanation.
 
 Packages to classify:
 {packages}`;
 
-async function llmPass(uncategorizedEntries: string[]): Promise<Record<string, CategoryKey>> {
-    if (uncategorizedEntries.length === 0) return {};
+async function llmPass(uncategorizedPackages: CategorizedPackage[]): Promise<Record<string, CategoryKey>> {
+    if (uncategorizedPackages.length === 0) return {};
 
-    const names = uncategorizedEntries.map((e) => e.split("@")[0]);
+    // Extract just the names — scoped packages are already correct here
+    const names = uncategorizedPackages.map((p) => p.name).filter(Boolean);
+    if (names.length === 0) return {};
 
     const prompt = PromptTemplate.fromTemplate(LLM_PROMPT_TEMPLATE);
     const chain = prompt.pipe(gpt4oMini).pipe(new JsonOutputParser<LLMCategorizationResult>());
@@ -139,8 +262,17 @@ async function llmPass(uncategorizedEntries: string[]): Promise<Record<string, C
         return {};
     }
 
+    // Strict validation: ensure parsed has the expected shape
+    if (!parsed || typeof parsed !== "object" || !parsed.categorized || typeof parsed.categorized !== "object") {
+        console.warn("[getDependenciesTool] LLM returned invalid shape, keeping as uncategorized");
+        return {};
+    }
+
     const safe: Record<string, CategoryKey> = {};
-    for (const [pkg, cat] of Object.entries(parsed.categorized ?? {})) {
+    for (const [pkg, cat] of Object.entries(parsed.categorized)) {
+        if (typeof pkg !== "string" || !pkg.trim()) continue;
+        if (typeof cat !== "string") continue;
+
         safe[pkg] = VALID_CATEGORIES.includes(cat as CategoryKey)
             ? (cat as CategoryKey)
             : "uncategorized";
@@ -148,19 +280,50 @@ async function llmPass(uncategorizedEntries: string[]): Promise<Record<string, C
     return safe;
 }
 
+// ─── Apply LLM Results Back into Buckets ──────────────────────────────────────
+
 function applyLLMResults(categories: CategoryBuckets, llmMap: Record<string, CategoryKey>): void {
-    const stillUncategorized: string[] = [];
-    for (const entry of categories.uncategorized) {
-        const name = entry.split("@")[0];
-        const resolved = llmMap[name];
+    const stillUncategorized: CategorizedPackage[] = [];
+
+    for (const pkg of categories.uncategorized) {
+        const resolved = llmMap[pkg.name];
         if (resolved && resolved !== "uncategorized") {
-            (categories[resolved] as string[]).push(entry);
+            const targetType = CATEGORY_PATTERNS[resolved]?.type ?? "unknown";
+            categories[resolved].push({
+                ...pkg,
+                type: targetType,
+            });
         } else {
-            stillUncategorized.push(entry);
+            stillUncategorized.push(pkg);
         }
     }
+
     categories.uncategorized = stillUncategorized;
 }
+
+// ─── Build Structured Output ──────────────────────────────────────────────────
+
+function buildOutput(categories: CategoryBuckets, totalDeps: number): DependenciesOutput {
+    const capabilities: Record<string, CategorizedPackage[]> = {};
+
+    for (const category of VALID_CATEGORIES) {
+        if (categories[category].length > 0) {
+            capabilities[category] = categories[category];
+        }
+    }
+
+    const uncategorizedCount = categories.uncategorized.length;
+    const categorizedCount = totalDeps - uncategorizedCount;
+
+    return {
+        capabilities,
+        totalDeps,
+        categorizedCount,
+        uncategorizedCount,
+    };
+}
+
+// ─── Tool Definition ──────────────────────────────────────────────────────────
 
 /**
  * Tool: Get Dependencies
@@ -168,6 +331,10 @@ function applyLLMResults(categories: CategoryBuckets, llmMap: Record<string, Cat
  * then runs a two-pass classifier:
  *  1. Fast regex/substring pass for known libraries.
  *  2. LLM fallback (gpt-4o-mini) for anything unrecognised in pass 1.
+ *
+ * Returns structured JSON with capabilities grouped by category, each package
+ * tagged with its type (orm, driver, sdk, etc.) and dependency source
+ * (runtime, dev, peer).
  *
  * Call this FIRST before exploring source code — the installed libraries
  * completely change what patterns each specialist agent should look for.
@@ -199,15 +366,20 @@ export const getDependenciesTool = tool(
 
             const packageJson = repository.packageJson as PackageJson;
 
-            // 2. Merge all dep types
-            const allDeps: Record<string, string> = {
-                ...(packageJson.dependencies ?? {}),
-                ...(packageJson.devDependencies ?? {}),
-                ...(packageJson.peerDependencies ?? {}),
-            };
+            // 2. Merge all dep types with source tagging
+            const taggedDeps = mergeAndTagDeps(packageJson);
+
+            if (taggedDeps.length === 0) {
+                return JSON.stringify({
+                    capabilities: {},
+                    totalDeps: 0,
+                    categorizedCount: 0,
+                    uncategorizedCount: 0,
+                } satisfies DependenciesOutput);
+            }
 
             // 3. Pass 1 — regex/substring
-            const categories = regexPass(allDeps);
+            const categories = regexPass(taggedDeps);
 
             // 4. Pass 2 — LLM for unknowns
             if (categories.uncategorized.length > 0) {
@@ -217,12 +389,9 @@ export const getDependenciesTool = tool(
                 console.log(`[getDependenciesTool] ${categories.uncategorized.length} remain uncategorized after LLM pass.`);
             }
 
-            // 5. Build output — categorized list only
-            const lines = VALID_CATEGORIES
-                .filter((k) => categories[k].length > 0)
-                .map((k) => `${k}: ${categories[k].join(", ")}`);
-
-            return lines.join("\n") || "No dependencies found.";
+            // 5. Build structured output
+            const output = buildOutput(categories, taggedDeps.length);
+            return JSON.stringify(output, null, 2);
 
         } catch (error) {
             return `Error reading dependencies for repository "${repositoryId}": ${error instanceof Error ? error.message : "Unknown error occurred"
@@ -231,7 +400,7 @@ export const getDependenciesTool = tool(
     },
     {
         name: "getDependencies",
-        description: "Read and categorize the dependencies stored in the database for a repository. Uses a fast regex pass for known libraries, then an LLM (gpt-4o-mini) for anything unrecognised. Returns libraries grouped by specialist domain (database, auth, payments, realtime, queues, etc.) so each agent knows exactly which frameworks and patterns to look for. Call this FIRST before exploring any source code.",
+        description: "Read and categorize the dependencies stored in the database for a repository. Uses a fast regex pass for known libraries, then an LLM (gpt-4o-mini) for anything unrecognised. Returns structured JSON with capabilities grouped by category (database, auth, payments, realtime, queues, etc.), each package tagged with its type (orm, driver, sdk, provider) and dependency source (runtime, dev, peer). Call this FIRST before exploring any source code.",
         schema: z.object({
             repositoryId: z.string().describe("The GitHub repository ID (repositoryId field) as stored in the database"),
         }),
