@@ -8,15 +8,20 @@ import prisma from "@/lib/prisma";
 import pLimit from "p-limit";
 import {
     UiImport,
-    LLMUiImportResult,
+    LLMBatchImportResult,
     FrequencyEntry,
     FrequencyMap,
-    FileCache
+    FileCache,
 } from "@/lib/interface/tools";
 
-// ─── Exclusion patterns ───────────────────────────────────────────────────────
+// ─── Constants ────────────────────────────────────────────────────────────────
+
 const MAX_FILE_SIZE = 500 * 1024;
-const CONCURRENCY = 10;
+const FETCH_CONCURRENCY = 10;   // parallel GitHub fetches
+const BATCH_SIZE = 10;          // files per LLM call
+
+// ─── Path filters ─────────────────────────────────────────────────────────────
+
 const EXCLUDED_PATH_PATTERNS = [
     "node_modules",
     ".test.",
@@ -31,14 +36,71 @@ const EXCLUDED_PATH_PATTERNS = [
 ];
 
 function isExcluded(filePath: string): boolean {
-    return EXCLUDED_PATH_PATTERNS.some((pattern) => filePath.includes(pattern));
+    return EXCLUDED_PATH_PATTERNS.some((p) => filePath.includes(p));
 }
 
-function isUiFile(filePath: string): boolean {
-    return (filePath.endsWith(".tsx") || filePath.endsWith(".jsx")) && !isExcluded(filePath);
+/**
+ * Only target files that are route-level consumers:
+ *   - Next.js App Router: page.tsx / layout.tsx / route.ts(x) / template.tsx / loading.tsx / not-found.tsx
+ *   - Next.js Pages Router: pages/** /*.tsx (but NOT pages/api/**)
+ *
+ * This deliberately skips pure UI components (button.tsx, card.tsx…)
+ * so we only track which real pages/routes consume each internal function.
+ */
+function isTargetFile(filePath: string): boolean {
+    if (isExcluded(filePath)) return false;
+
+    // App Router special file names
+    if (/\/(page|layout|route|template|loading|not-found)\.(tsx|jsx|ts)$/.test(filePath)) {
+        return true;
+    }
+
+    // Pages Router (top-level pages, not API routes)
+    if (/\/pages\/(?!api\/).*\.(tsx|jsx)$/.test(filePath)) {
+        return true;
+    }
+
+    return false;
 }
 
-// ─── GitHub file fetch helper (reused — same as resolveImportsTool) ────────────
+// ─── Regex import extractor ────────────────────────────────────────────────────
+
+const INTERNAL_PREFIXES = ["./", "../", "@/", "~/"];
+
+function isInternalPath(importPath: string): boolean {
+    return INTERNAL_PREFIXES.some((prefix) => importPath.startsWith(prefix));
+}
+
+/**
+ * Extracts full import statement lines from raw source using regex.
+ * Returns only internal import lines — no LLM involved.
+ *
+ * Handles:
+ *   import { A, B } from '@/lib/foo'
+ *   import A from '@/lib/foo'
+ *   import * as A from '@/lib/foo'
+ *   (Skips type-only and side-effect imports automatically via the `from` requirement)
+ */
+function extractInternalImportLines(source: string): string[] {
+    // Match multi-token imports ending with `from 'path'`
+    // Uses a non-greedy approach to capture the full statement up to the path
+    const regex = /^import\s(?:type\s+)?(?:[^'";\n]+?from\s+)?['"]([^'"]+)['"]/gm;
+    const results: string[] = [];
+    let match: RegExpExecArray | null;
+
+    while ((match = regex.exec(source)) !== null) {
+        const importPath = match[1];
+        // Skip type-only imports that use the `import type` form
+        if (match[0].startsWith("import type ")) continue;
+        if (isInternalPath(importPath)) {
+            results.push(match[0].trimEnd());
+        }
+    }
+
+    return results;
+}
+
+// ─── GitHub file fetch helper ──────────────────────────────────────────────────
 
 async function fetchFileContent(
     owner: string,
@@ -70,17 +132,17 @@ async function fetchFileContent(
 
     const contentLength = response.headers.get("content-length");
     if (contentLength && parseInt(contentLength) > MAX_FILE_SIZE)
-        throw new Error(`File too large: ${contentLength} bytes (max: ${MAX_FILE_SIZE} bytes)`);
+        throw new Error(`File too large: ${contentLength} bytes`);
 
     const content = await response.text();
     if (content.length > MAX_FILE_SIZE)
-        throw new Error(`File content too large: ${content.length} characters (max: ${MAX_FILE_SIZE})`);
+        throw new Error(`File content too large: ${content.length} chars`);
 
     cache.set(cacheKey, content);
     return content;
 }
 
-// ─── Tree parser ──────────────────────────────────────────────────────────────
+// ─── Tree parser ───────────────────────────────────────────────────────────────
 
 function extractFilePathsFromTree(treeOutput: string): string[] {
     const jsonMatch = treeOutput.match(/\{[\s\S]*\}/);
@@ -94,85 +156,102 @@ function extractFilePathsFromTree(treeOutput: string): string[] {
     }
 }
 
+// ─── Batch LLM chain ──────────────────────────────────────────────────────────
 
-// ─── LLM chain ────────────────────────────────────────────────────────────────
+/**
+ * The LLM receives pre-extracted import lines (not full source) for a batch
+ * of up to BATCH_SIZE files. Its job is only to:
+ *   1. Parse each import line to get importedNames
+ *   2. Resolve the path against the repo tree
+ *   3. Detect whether the resolved file is a server action
+ *
+ * This is far cheaper than sending full source: we send ~5 import lines per file
+ * instead of ~200 lines of source per file.
+ */
+const BATCH_IMPORT_RESOLUTION_PROMPT = `You are a TypeScript import resolver.
 
-const UI_IMPORT_EXTRACTION_PROMPT = `You are a TypeScript/JavaScript import analyzer focused on UI components.
+You will receive a batch of files with their ALREADY-EXTRACTED internal import statements.
+Your job is to resolve each import and extract its named exports.
 
-You will be given:
-1. The path of a UI file (.tsx or .jsx) in a repository
-2. A list of ALL files that actually exist in the repository (the repo tree)
-3. The source content of the UI file
-
-Your job is to extract ONLY internal imports from this file and resolve each one.
-
-IGNORE completely:
-- External node_module imports (react, next, lodash, @radix-ui, @clerk, stripe, etc.)
-- Type-only imports (import type ...)
-- Side-effect imports with no named imports (import "./globals.css")
-
-INCLUDE only imports that resolve to a file inside the repository:
-- Relative paths: start with ./ or ../
-- Alias paths: start with @/ or ~/ (treat @ and ~ as the repo root; try both root and src/)
-
-For each INTERNAL import, extract:
+For each import line:
 1. importedNames: string[]
-   - The specific function/component names being imported
-   - e.g. ["getProducts", "getFeaturedProducts"]
-   - For default imports: ["default"]
-   - For namespace imports: ["*"]
-   - Exclude type-only names
+   - Named imports: e.g. import {{ getProducts, getFeatured }} from '...' → ["getProducts", "getFeatured"]
+   - Default import: import Foo from '...' → ["default"]
+   - Namespace import: import * as Foo from '...' → ["*"]
+   - Mixed: import Foo, {{ Bar }} from '...' → ["default", "Bar"]
 
 2. rawPath: string
-   - The import path exactly as written
-   - e.g. "@/lib/products" or "../../services/cart"
+   - The import path exactly as written in the import statement
 
 3. resolvedPath: string | null
-   - The actual file path in the repo (from the repo tree)
-   - Try extensions in this order: .ts → .tsx → .js → .jsx → /index.ts → /index.tsx → /index.js → /index.jsx
-   - ONLY use paths from the provided repo tree — never invent paths
+   - Find the matching file in the repo tree for this rawPath
+   - For alias paths (@ or ~): treat as repo root, try both root and src/ prefix
+   - Try extensions in order: .ts → .tsx → .js → .jsx → /index.ts → /index.tsx → /index.js → /index.jsx
+   - ONLY use paths that exist in the repo tree — never invent paths
    - If no match found: null
 
 4. isServerAction: boolean
-   - true if the imported file path contains any of:
-     "actions", "action", "server-actions", "server-action" anywhere in the path
-   - OR if the LLM can identify this is clearly a server action file from context
+   - true if the resolved path contains "actions", "action", "server-actions", or "server-action" anywhere
    - false otherwise
 
-Current file path: {filePath}
-
-Repo file tree (only files that actually exist):
+Repo file tree (all files that actually exist):
 {repoTree}
 
-Source file content:
-{fileContent}
+Files and their import statements to resolve:
+{batchedImports}
 
-Return ONLY valid JSON in this exact shape, no markdown, no backticks, no explanation:
+Return ONLY valid JSON with NO markdown, NO backticks, NO explanation:
 {{
-  "imports": [
+  "files": [
     {{
-      "importedNames": ["string"],
-      "rawPath": "string",
-      "resolvedPath": "string or null",
-      "isServerAction": boolean
+      "filePath": "exact file path from input",
+      "imports": [
+        {{
+          "importedNames": ["string"],
+          "rawPath": "string",
+          "resolvedPath": "string or null",
+          "isServerAction": boolean
+        }}
+      ]
     }}
   ]
-}}
+}}`;
 
-If no internal imports are found, return {{ "imports": [] }}.`;
-
-const uiImportExtractionChain = PromptTemplate.fromTemplate(UI_IMPORT_EXTRACTION_PROMPT)
+const batchImportResolutionChain = PromptTemplate.fromTemplate(BATCH_IMPORT_RESOLUTION_PROMPT)
     .pipe(gpt4oMini)
-    .pipe(new JsonOutputParser<LLMUiImportResult>());
+    .pipe(new JsonOutputParser<LLMBatchImportResult>());
 
-async function invokeUiImportChain(
-    vars: { filePath: string; repoTree: string; fileContent: string }
-): Promise<LLMUiImportResult | null> {
+async function invokeBatchResolutionChain(vars: {
+    repoTree: string;
+    batchedImports: string;
+}): Promise<LLMBatchImportResult | null> {
     try {
-        return await uiImportExtractionChain.invoke(vars);
+        return await batchImportResolutionChain.invoke(vars);
     } catch {
-        try { return await uiImportExtractionChain.invoke(vars); } catch { return null; }
+        try {
+            return await batchImportResolutionChain.invoke(vars);
+        } catch {
+            return null;
+        }
     }
+}
+
+// ─── Batch formatter ──────────────────────────────────────────────────────────
+
+/**
+ * Formats a batch of { filePath, importLines[] } into a compact text block
+ * that fits in a single LLM prompt. No source code — only import lines.
+ */
+function formatBatchForPrompt(
+    batch: Array<{ filePath: string; importLines: string[] }>
+): string {
+    return batch
+        .map(({ filePath, importLines }) => {
+            if (importLines.length === 0) return null;
+            return `=== FILE: ${filePath} ===\n${importLines.join("\n")}`;
+        })
+        .filter(Boolean)
+        .join("\n\n");
 }
 
 // ─── Frequency classifier ─────────────────────────────────────────────────────
@@ -185,16 +264,6 @@ function classifyFrequency(count: number): "high" | "medium" | "low" {
 
 // ─── Tool Definition ──────────────────────────────────────────────────────────
 
-/**
- * Tool: Build Import Frequency Map
- * Scans all .tsx and .jsx UI files to build a frequency map of which internal
- * functions are imported most across the UI. Import count = proxy for how often
- * real users trigger that function. Agent uses this to weight severity of findings
- * by actual traffic patterns rather than treating all code paths equally.
- *
- * Also detects direct database calls (e.g. prisma.product.findMany()) inside
- * server components, which bypass the normal import chain entirely.
- */
 export const buildImportFrequencyMapTool = tool(
     async (input): Promise<string> => {
         const { repositoryId, accessToken } = input as {
@@ -210,15 +279,17 @@ export const buildImportFrequencyMapTool = tool(
             });
 
             if (!repository) {
-                return `Error: Repository with ID "${repositoryId}" not found in database. ` +
-                    `Ensure framework analysis has been run before calling this tool.`;
+                return (
+                    `Error: Repository with ID "${repositoryId}" not found in database. ` +
+                    `Ensure framework analysis has been run before calling this tool.`
+                );
             }
 
             const [owner, repo] = repository.fullName.split("/");
             const branch = repository.defaultBranch ?? "main";
             const cache: FileCache = new Map();
 
-            // 2. Fetch the full repo tree via getRepoTreeTool
+            // 2. Fetch the full repo tree
             let treeOutput: string;
             try {
                 treeOutput = await getRepoTreeTool.invoke({ owner, repo, branch, accessToken });
@@ -232,15 +303,18 @@ export const buildImportFrequencyMapTool = tool(
 
             const allFilePaths = extractFilePathsFromTree(treeOutput);
             if (allFilePaths.length === 0) {
-                return `Error: Could not parse repository tree for ${repository.fullName}. The tree output may be malformed.`;
+                return `Error: Could not parse repository tree for ${repository.fullName}.`;
             }
 
-            // 3. Filter to UI files only (.tsx / .jsx, excluding noise paths)
-            const uiFiles = allFilePaths.filter(isUiFile);
+            // 3. Filter to target files only (pages, layouts, routes — not UI primitives)
+            const targetFiles = allFilePaths.filter(isTargetFile);
 
-            console.log(`[buildImportFrequencyMap] Found ${uiFiles.length} UI files (.tsx/.jsx)`);
+            console.log(
+                `[buildImportFrequencyMap] ${allFilePaths.length} total files → ` +
+                `${targetFiles.length} target files (pages/layouts/routes)`
+            );
 
-            if (uiFiles.length === 0) {
+            if (targetFiles.length === 0) {
                 const result: FrequencyMap = {
                     repository: repository.fullName,
                     summary: {
@@ -255,50 +329,103 @@ export const buildImportFrequencyMapTool = tool(
                     },
                     functions: [],
                 };
-                return JSON.stringify({ ...result, message: "No UI files found in repository" }, null, 2);
+                return JSON.stringify({ ...result, message: "No page/layout/route files found in repository" }, null, 2);
             }
 
-            console.log(`[buildImportFrequencyMap] Processing ${uiFiles.length} files with concurrency ${CONCURRENCY}`);
-
-            // Use only the file path list in the prompt to keep it compact (same as resolveImportsTool)
-            const repoTree = allFilePaths.join("\n");
-
-            // 4. Process UI files concurrently with p-limit
-            const limit = pLimit(CONCURRENCY);
+            // 4. Fetch all target files concurrently, then extract imports via regex
+            const fetchLimit = pLimit(FETCH_CONCURRENCY);
             const skippedFiles: string[] = [];
+
+            // Each entry: { filePath, importLines[] } — regex result, no LLM yet
+            const fileImportLines: Array<{ filePath: string; importLines: string[] }> = [];
+
+            const fetchTasks = targetFiles.map((filePath) =>
+                fetchLimit(async () => {
+                    let content: string | null;
+                    try {
+                        content = await fetchFileContent(owner, repo, filePath, branch, accessToken, cache);
+                    } catch {
+                        skippedFiles.push(filePath);
+                        return;
+                    }
+
+                    if (!content) {
+                        skippedFiles.push(filePath);
+                        return;
+                    }
+
+                    const importLines = extractInternalImportLines(content);
+                    // Only include files that actually have internal imports
+                    if (importLines.length > 0) {
+                        fileImportLines.push({ filePath, importLines });
+                    }
+                })
+            );
+
+            await Promise.all(fetchTasks);
+
+            console.log(
+                `[buildImportFrequencyMap] Regex pass done: ` +
+                `${fileImportLines.length} files have internal imports, ` +
+                `${skippedFiles.length} skipped`
+            );
+
+            if (fileImportLines.length === 0) {
+                const result: FrequencyMap = {
+                    repository: repository.fullName,
+                    summary: {
+                        totalUiFiles: targetFiles.length,
+                        totalUiFilesProcessed: targetFiles.length - skippedFiles.length,
+                        totalFunctionsTracked: 0,
+                        highFrequencyCount: 0,
+                        mediumFrequencyCount: 0,
+                        lowFrequencyCount: 0,
+                        serverActionsFound: 0,
+                        skippedFiles,
+                    },
+                    functions: [],
+                };
+                return JSON.stringify({ ...result, message: "No internal imports found in target files" }, null, 2);
+            }
+
+            // 5. Split into batches of BATCH_SIZE and resolve via LLM (one call per batch)
+            const repoTree = allFilePaths.join("\n");
+            const batches: Array<typeof fileImportLines> = [];
+            for (let i = 0; i < fileImportLines.length; i += BATCH_SIZE) {
+                batches.push(fileImportLines.slice(i, i + BATCH_SIZE));
+            }
+
+            console.log(
+                `[buildImportFrequencyMap] ${fileImportLines.length} files → ` +
+                `${batches.length} LLM batch(es) of up to ${BATCH_SIZE} files each`
+            );
 
             // Map: "functionName:resolvedPath" → FrequencyEntry (mutable accumulator)
             const frequencyMap = new Map<string, FrequencyEntry>();
 
-            const tasks = uiFiles.map((uiFilePath) =>
-                limit(async () => {
-                    // ── Fetch file content ─────────────────────────────────────────
-                    let fileContent: string | null;
-                    try {
-                        fileContent = await fetchFileContent(owner, repo, uiFilePath, branch, accessToken, cache);
-                    } catch {
-                        skippedFiles.push(uiFilePath);
-                        return;
-                    }
+            for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
+                const batch = batches[batchIdx];
+                const batchedImports = formatBatchForPrompt(batch);
 
-                    if (!fileContent) {
-                        skippedFiles.push(uiFilePath);
-                        return;
-                    }
+                if (!batchedImports) continue;
 
-                    // ── Run LLM to extract internal imports ────────────────────────
-                    const llmResult = await invokeUiImportChain({ filePath: uiFilePath, repoTree, fileContent });
+                console.log(`[buildImportFrequencyMap] LLM batch ${batchIdx + 1}/${batches.length}`);
 
-                    if (!llmResult) {
-                        skippedFiles.push(uiFilePath);
-                        return;
-                    }
+                const llmResult = await invokeBatchResolutionChain({ repoTree, batchedImports });
 
-                    const imports: UiImport[] = llmResult.imports ?? [];
+                if (!llmResult?.files) {
+                    // If batch fails, mark all files in it as skipped
+                    batch.forEach(({ filePath }) => skippedFiles.push(filePath));
+                    continue;
+                }
+
+                // Aggregate results from this batch
+                for (const fileResult of llmResult.files) {
+                    const uiFilePath = fileResult.filePath;
+                    const imports: UiImport[] = fileResult.imports ?? [];
 
                     for (const imp of imports) {
                         for (const name of imp.importedNames) {
-                            // Deduplication key: name + resolvedPath (null-safe)
                             const key = `${name}:${imp.resolvedPath ?? "__unresolved__::" + imp.rawPath}`;
 
                             if (!frequencyMap.has(key)) {
@@ -314,54 +441,48 @@ export const buildImportFrequencyMapTool = tool(
 
                             const entry = frequencyMap.get(key)!;
 
-                            // Avoid double-counting the same UI file for the same function
                             if (!entry.importedInUiFiles.includes(uiFilePath)) {
                                 entry.uiImportCount += 1;
                                 entry.importedInUiFiles.push(uiFilePath);
                             }
 
-                            // Promote isServerAction if any import occurrence marks it true
                             if (imp.isServerAction) entry.isServerAction = true;
                         }
                     }
-                })
-            );
+                }
+            }
 
-            await Promise.all(tasks);
-
-            // 5. Finalize frequency classification for all entries
+            // 6. Finalize frequency classification
             const allEntries: FrequencyEntry[] = [];
-
             for (const entry of frequencyMap.values()) {
                 entry.frequency = classifyFrequency(entry.uiImportCount);
                 allEntries.push(entry);
             }
 
-            // 6. Sort: descending uiImportCount, server actions before regular at same count
+            // 7. Sort: descending uiImportCount, server actions first at same count
             allEntries.sort((a, b) => {
                 if (b.uiImportCount !== a.uiImportCount) return b.uiImportCount - a.uiImportCount;
-                // At same count: server actions first
                 const aScore = a.isServerAction ? 1 : 0;
                 const bScore = b.isServerAction ? 1 : 0;
                 return bScore - aScore;
             });
 
-            // 7. Build summary
+            // 8. Build summary
             const highFrequencyCount = allEntries.filter((e) => e.frequency === "high").length;
             const mediumFrequencyCount = allEntries.filter((e) => e.frequency === "medium").length;
             const lowFrequencyCount = allEntries.filter((e) => e.frequency === "low").length;
             const serverActionsFound = allEntries.filter((e) => e.isServerAction).length;
-            const totalUiFilesProcessed = uiFiles.length - skippedFiles.length;
+            const totalUiFilesProcessed = targetFiles.length - skippedFiles.length;
 
             console.log(
-                `[buildImportFrequencyMap] Complete: ${allEntries.length} functions tracked, ` +
-                `${highFrequencyCount} high frequency, ${skippedFiles.length} files skipped`
+                `[buildImportFrequencyMap] Complete: ${allEntries.length} functions tracked across ` +
+                `${totalUiFilesProcessed} files (${batches.length} LLM calls, ${skippedFiles.length} skipped)`
             );
 
             const result: FrequencyMap = {
                 repository: repository.fullName,
                 summary: {
-                    totalUiFiles: uiFiles.length,
+                    totalUiFiles: targetFiles.length,
                     totalUiFilesProcessed,
                     totalFunctionsTracked: allEntries.length,
                     highFrequencyCount,
@@ -382,9 +503,10 @@ export const buildImportFrequencyMapTool = tool(
     {
         name: "buildImportFrequencyMap",
         description:
-            "Scans all .tsx and .jsx UI files in a repository to build a frequency map of which internal functions are imported most across the UI. " +
-            "Import count is a proxy for how often real users trigger that function — a function imported in 6 UI files is hit far more than one imported in 1 file. " +
-            "Returns all functions sorted by import frequency so the agent can prioritize which ones to investigate for DB calls, performance issues, and scale risks. " +
+            "Scans all page, layout, and route files in a repository to build a frequency map of which internal functions are imported most across the UI. " +
+            "Uses regex to extract import statements, then resolves them in batches of 10 files per LLM call — significantly more efficient than per-file analysis. " +
+            "Import count is a proxy for real user traffic — a function imported in 6 pages is hit far more than one imported in 1 page. " +
+            "Returns all functions sorted by import frequency so the agent can prioritize which ones to investigate for DB calls and scale risks. " +
             "Server actions are identified and prioritized at the same import count. DB investigation is the agent's job — this tool only provides the frequency data.",
         schema: z.object({
             repositoryId: z.string().describe("The GitHub repository ID as stored in the database"),
