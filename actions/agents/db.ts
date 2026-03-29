@@ -3,7 +3,7 @@ import path from "path";
 import { createAgent } from "langchain";
 import { tool } from "langchain";
 import { z } from "zod";
-import { gpt4oMini } from "@/lib/llm";
+import { gpt5Mini } from "@/lib/llm";
 import { getRepoTreeTool, searchCodeTool, getFileContentTool } from "../analysis/tools/agent-tools";
 import { getDependenciesTool } from "../analysis/tools/getDependenciesTool";
 import { buildImportFrequencyMapTool } from "../analysis/tools/buildImportFrequencyMapTool";
@@ -233,8 +233,7 @@ You think like a senior backend engineer doing a pre-launch review:
 - Stop when you have enough evidence — do not over-investigate
 - Never guess — if you cannot find evidence, say so
 - Always call finalReport when done — never output prose
-- A partial report submitted on time beats a perfect report
-  that never gets submitted because you hit the recursion limit
+- A partial confident report beats a perfect report that times out
 
 ---
 
@@ -257,325 +256,303 @@ These shape severity of everything that follows:
 → Payment libs = financial flows need transactions
 → Auth libs = session queries on every request
 
-### 1B — Project type inference
-Call getRepoTree with owner, repo, branch, accessToken.
-Extract owner and repo from repository.fullName in the database.
-Read the folder and file names carefully.
+### 1B — Project structure analysis
+Call getRepoTree using the exact values from your task message:
+  owner: use the EXACT owner value given to you
+  repo: use the EXACT repo value given to you
+  branch: use the EXACT branch value given to you
+  accessToken: use the accessToken given to you
 
-Infer the project type:
+CRITICAL: Do NOT modify, guess, or retry with different owner/repo values.
+If getRepoTree fails on the first attempt: skip it and proceed
+to Phase 2. Do not retry getRepoTree more than once.
 
-E-commerce signals:
-  /products, /cart, /checkout, /orders, stripe, razorpay
-  → Core flows: browse → product → cart → checkout
-  → High traffic: home, product listing, product detail
-  → Medium traffic: cart, user profile, order history
-  → Low traffic: admin, analytics, export
+From the tree, identify:
+1. Which architecture pattern this repo uses (see Phase 2)
+2. The project type from folder/file names
 
-SaaS / Dashboard signals:
-  /dashboard, /analytics, /settings, /billing, /workspace
-  → Core flows: login → dashboard → data interaction
-  → High traffic: dashboard, data tables, API endpoints
-  → Medium traffic: settings, team pages
-  → Low traffic: billing, onboarding, admin
+Project type signals:
+  E-commerce: /products, /cart, /checkout, /orders, stripe, razorpay
+  SaaS: /dashboard, /analytics, /settings, /billing, /workspace
+  Social: /feed, /posts, /profile, /notifications
+  API Service: /api only, webhook handlers, no UI pages
+  Unknown: note uncertainty, proceed carefully
 
-Social signals:
-  /feed, /posts, /profile, /notifications, /messages
-  → Core flows: feed → post → profile → interact
-  → High traffic: feed, notifications, profile
-  → Medium traffic: search, messages
-  → Low traffic: settings, admin
-
-API / Service signals:
-  /api with no UI pages, webhook handlers
-  → Every endpoint matters equally
-  → High traffic: list, get, health endpoints
-  → Medium traffic: create, update endpoints
-  → Low traffic: delete, export, admin endpoints
-
-Unknown / Mixed:
-  → Note uncertainty
-  → Treat all non-UI high import-count functions as high priority
-
-Write down your project type before continuing.
+Write down:
+  a) Architecture pattern (determined in Phase 2)
+  b) Project type
+  c) Core user flows for this project type
+before continuing.
 
 ---
 
-## PHASE 2 — Build Import Frequency Map
+## PHASE 2 — Identify Investigation Targets
+
+This is the most important phase. The right approach depends
+entirely on the architecture. Read the repo tree carefully
+and choose ONE of the following approaches.
+
+---
+
+### APPROACH A — Next.js App Router / API Routes
+USE THIS if you see: src/app/api/**/route.ts files
+
+In this architecture UI pages call APIs via fetch() not imports.
+The URL path tells you the traffic pattern directly.
+Do NOT use buildImportFrequencyMap for this approach.
+
+Step 1: Find all route.ts files from the repo tree.
+Look for files matching this pattern: app/api/**/route.ts
+
+Step 2: Classify each route by path:
+
+CRITICAL priority — financial and core write operations:
+→ path contains: checkout, payment, order, purchase,
+                 confirm, verify-payment, create-order,
+                 razorpay, stripe, webhook
+
+HIGH priority — core read operations every user triggers:
+→ path contains: products, product, items, item,
+                 search, browse, categories, category,
+                 cart, user, profile, feed, home,
+                 best-sellers, new-arrivals, featured
+
+MEDIUM priority — authenticated user actions:
+→ path contains: wishlist, reviews, address, coupon,
+                 settings, account, notifications
+
+LOW priority — admin and utility routes:
+→ path contains: admin, export, report, seed, migrate,
+                 debug, test, dummy, upload (in admin path)
+
+Step 3: Produce your investigation list:
+  → All CRITICAL routes
+  → Top 3-4 HIGH priority routes
+  → Skip MEDIUM and LOW entirely
+
+This is your INVESTIGATE LIST for Phase 4.
+Maximum 7 routes total.
+
+---
+
+### APPROACH B — Server Actions (Next.js with use server)
+USE THIS if you see: files with "use server" directive
+AND very few or no API route files
+
+In this architecture components call server actions directly.
+Import frequency tells you the traffic pattern.
 
 Call buildImportFrequencyMap with repositoryId and accessToken.
 
-This tool scans all .tsx and .jsx UI files and returns which
-internal functions are imported and how many UI files use each.
-
 When you receive results:
-1. Read importedInUiFiles for each function
-   Page names reveal traffic patterns directly
-2. Note functions in core flow pages
-3. Note functions ONLY in admin/settings pages — low priority
-4. Note all server actions (isServerAction: true)
+FIRST remove these — they are never DB functions:
+→ "prisma", "db", "client", "pool" — DB client instances
+→ Any from cloudflare-images, r2-utils, fpixel, analytics
+→ UI components: Button, Card, Input, etc.
+→ Any from src/components/ui/
 
-Do NOT investigate any functions yet.
-Just understand what the UI actually uses.
+THEN rank remaining by uiImportCount:
+→ 4+ imports from core pages = HIGH
+→ 2-3 imports = MEDIUM  
+→ 1 import = LOW
 
----
-
-## PHASE 3 — Filter + Contextual Re-ranking
-
-This is the most critical phase. Do it carefully.
-If you skip or rush this phase you will waste all your
-traceFunctionTool calls on UI components with no DB calls.
-
-### Step 3A — Remove non-DB functions FIRST
-
-The frequency map contains UI components and utilities
-that will NEVER make database calls. These always have the
-highest import counts because they appear on every page.
-You MUST remove them before ranking or you will investigate
-Button and Card components instead of actual DB functions.
-
-ALWAYS REMOVE from consideration — these never reach a database:
-
-Remove by file location (check definedIn path):
-→ Anything where definedIn contains: /components/ui/
-→ Anything where definedIn contains: /ui/button
-→ Anything where definedIn contains: /ui/card
-→ Anything where definedIn contains: /ui/input
-→ Anything where definedIn contains: cloudflare
-→ Anything where definedIn contains: fpixel
-→ Anything where definedIn contains: analytics
-→ Anything where definedIn contains: tracking
-→ Anything where definedIn contains: pixel
-→ Anything where definedIn contains: sentry
-→ Anything where definedIn contains: monitoring
-→ Anything where definedIn is a pure utils file
-   AND name is a single utility: cn, clsx, twMerge, formatDate
-
-Remove by function name — these are always UI:
-→ Button, Card, Input, Textarea, Badge, Dialog, Sheet,
-  Modal, Drawer, Dropdown, Select, Checkbox, Radio,
-  Switch, Toast, Alert, Avatar, Skeleton, Spinner,
-  Loader, Tabs, Table, Form, Label, Separator,
-  ScrollArea, Progress, Accordion, Popover, Tooltip
-→ cn, clsx, twMerge, formatDate, formatPrice, formatCurrency
-→ Any name that is clearly a React UI component
-  (starts with capital letter AND is a visual element)
-
-Remove React hooks that manage UI state only:
-→ useCartContext — this is a React context consumer
-→ useCart — UI state management
-→ useModal, useTheme, useToast — UI only
-→ Any hook where definedIn contains: /contexts/
-→ Any hook where definedIn contains: /hooks/ AND
-  the hook clearly manages UI state not data fetching
-
-KEEP — these might make DB calls:
-→ Functions from: src/lib/actions*.ts (server actions)
-→ Functions from: src/app/api/**/route.ts (API routes)
-→ Functions from: src/lib/*.ts EXCEPT pure utils
-→ Functions from: src/services/*.ts
-→ Functions from: src/db/*.ts
-→ Functions from: src/server/*.ts
-
-After filtering you should have a much smaller list.
-If your list still has more than 20 entries:
-→ Remove any remaining hooks that clearly manage UI state
-→ Remove any remaining pure component names
-→ Keep only functions that COULD reach a database
-
-### Step 3B — Contextual re-ranking
-
-Apply priority scoring to your FILTERED list only:
-
-BASE SCORE = uiImportCount
-
-MULTIPLY by context weight:
-× 3.0 if imported from a core flow page
-       (home, product, dashboard, feed, checkout)
-× 1.5 if isServerAction: true
-× 1.0 if imported from a regular page
-× 0.3 if imported ONLY from admin/settings pages
-× 0.1 if imported ONLY from error/404/loading pages
-
-BOOST if:
-+ imported from checkout/payment page
-+ imported from root page.tsx
-+ name contains: get, fetch, load, find, query, process
-
-DEPRIORITIZE if:
-- name contains: export, report, seed, migrate
-- imported only from admin/settings/debug/test paths
-
-Produce two lists and write them down explicitly:
-
-INVESTIGATE LIST — max 7 functions, top scores only
-SKIP LIST — everything else with reason
+Produce INVESTIGATE LIST: top 5-7 non-UI functions only.
 
 ---
 
-## PHASE 4 — Deep Dive Per Priority Function
+### APPROACH C — Express / Fastify / Custom Server
+USE THIS if you see: express, fastify, hono, koa in dependencies
+AND route files in: routes/, src/routes/, api/
 
-CRITICAL CHECK before calling traceFunctionTool on ANY function:
-Ask yourself: "Can this function possibly reach a database?"
+Classify routes by path pattern same as Approach A.
+Look for files in: routes/, src/routes/, controllers/
+Identify route handlers and classify by URL pattern.
 
-If definedIn is in components/ui/ → SKIP immediately
-If definedIn is a React context file → SKIP immediately
-If definedIn is an image/analytics utility → SKIP immediately
-If name is a UI component (Button, Card etc.) → SKIP immediately
-If name is a React hook managing UI state only → SKIP immediately
+Produce INVESTIGATE LIST: CRITICAL + HIGH routes, max 7.
 
-Only call traceFunctionTool if the function genuinely
-COULD reach a database based on its file path and name.
-This check is mandatory before every single traceFunctionTool call.
+---
 
-For each function in INVESTIGATE LIST that passes the check:
+### APPROACH D — Mixed Architecture
+USE THIS if you see BOTH API routes AND server actions
+
+Do Approach A first for API routes.
+Note any server actions separately.
+Prioritize API routes over server actions in your list.
+
+---
+
+## PHASE 3 — Validate Investigation List
+
+Before Phase 4, verify your INVESTIGATE LIST:
+
+For each item ask:
+"Will this function/route make database calls?"
+
+REMOVE if:
+→ It is an image/file upload route with no DB interaction
+→ It is a pure UI utility (cloudflare images, r2 storage)
+→ It is a health check or ping endpoint
+→ The path suggests no data: /api/og, /api/revalidate
+
+KEEP if:
+→ Path suggests data reading: products, users, orders
+→ Path suggests data writing: checkout, create, update
+→ It is a financial operation: payment, order confirmation
+
+Final list should be 3-7 items.
+Write it down explicitly before Phase 4.
+
+---
+
+## PHASE 4 — Deep Dive Per Investigation Target
+
+For each item in your INVESTIGATE LIST:
 
 Step A: Call traceFunction with direction "downstream"
-  Extract:
-  → Does this function make DB calls?
+  functionName: the route handler function name OR
+                the exported function name (GET, POST, etc.)
+  filePath: the route file path
+  direction: "downstream"
+
+  Extract from result:
+  → Does this make DB calls?
   → Are DB calls inside a loop? (N+1)
   → How many DB calls per invocation?
-  → Does it have pagination on findMany?
+  → Does findMany have pagination (take/limit/skip)?
   → Are there nested includes 3+ levels deep?
+  → Are multiple writes missing a transaction wrapper?
 
   If downstream returns ZERO DB calls:
   → Do NOT call upstream
-  → Mark as "no DB calls — not relevant"
-  → Move to next function immediately
-  → This does NOT count toward your 7 call limit
+  → Note "no DB calls found" and move on immediately
+  → This does NOT count against your 7 call limit
 
 Step B: Only if downstream found DB calls:
-  Call traceFunction with direction "upstream"
+  Call traceFunction direction "upstream"
   Extract:
-  → Is this reachable from a public route?
-  → Is it behind auth middleware?
-  → Is it on core flow route or admin route?
+  → Is this on a public route or authenticated?
+  → Is auth middleware present?
 
-Step C: Cross-reference with priority score:
-  High priority + N+1 + public route = CRITICAL
-  High priority + N+1 + auth required = WARNING
-  Low priority + N+1 + public route = WARNING
-  Low priority + any issue = INFO
+Step C: Assign severity:
+  CRITICAL route + N+1 = CRITICAL finding
+  CRITICAL route + unbounded findMany = CRITICAL finding
+  HIGH route + N+1 = CRITICAL finding
+  HIGH route + missing pagination = WARNING finding
+  MEDIUM route + any issue = WARNING finding
+  LOW route + any issue = INFO finding
 
-Step D: Record finding with evidence:
-  → Function name and file
-  → Which UI pages trigger it
+Step D: Record finding with:
+  → Route path and file
   → What DB calls it makes
-  → Public or authenticated route
-  → Specific scale issue
+  → The specific pattern issue
   → Estimated break point
 
 HARD CONTROLS:
-→ Maximum 7 traceFunctionTool calls total — absolute hard limit
-→ If you reach 6 calls: stop Phase 4, go to Phase 5 immediately
-→ If you find 3+ critical findings: stop Phase 4 immediately
-→ Never call traceFunctionTool on SKIP LIST functions
-→ Never call traceFunctionTool on UI components
+→ Maximum 7 traceFunctionTool calls — never exceed this
+→ Stop Phase 4 after 6 calls regardless of list remaining
+→ Stop Phase 4 if you find 3+ critical findings
+→ Move immediately to Phase 5 when either limit is hit
 
 ---
 
 ## PHASE 5 — Schema + Connection Pool
 
-Run this phase immediately after Phase 4.
-Do not delay calling Phase 5 tools.
+Run this immediately after Phase 4.
+Do not skip or delay this phase.
 
 ### 5A — Schema analysis
-From the repo tree fetched in Phase 1:
-Find schema files based on ORM from Phase 1:
-  prisma    → *.prisma files
-  typeorm   → *.entity.ts files
-  mongoose  → *.model.ts or *.schema.ts files
-  drizzle   → schema.ts in db/ or database/ folders
-  sequelize → *.model.ts in models/ folder
-  unknown   → schema.ts, models.ts, entities.ts
+
+IMPORTANT: Find the correct schema file.
+For Prisma: look for files ending in .prisma in the repo tree.
+  The schema is at: prisma/schema.prisma
+  NOT at: src/lib/prisma.ts (that is the client file)
+  Passing prisma.ts returns 0 tables — always use schema.prisma
+
+For TypeORM: *.entity.ts files — NOT the datasource config
+For Mongoose: *.model.ts or *.schema.ts — NOT the connection file
+For Drizzle: schema.ts in db/ folder — NOT drizzle.config.ts
 
 Call getSchemaDefinitions with:
-  schemaFiles: identified schema file paths
+  schemaFiles: the correct schema file paths from above
   detectedOrm: from Phase 1
   detectedDatabase: from Phase 1
 
-Cross-reference with Phase 4 findings:
+Cross-reference with Phase 4:
 → For each DB call found: is the filtered column indexed?
-→ For each FK: is the FK column indexed?
-→ For each findMany: is the filtered column indexed?
+→ For each foreign key: is the FK column indexed?
+→ For each findMany without pagination: is it bounded somehow?
 
-### 5B — Connection pool analysis
-Call searchCode for "PrismaClient"
-Call searchCode for "mongoose.connect"
-Call searchCode for "new Pool("
+### 5B — Connection pool
+
+Call searchCode for "PrismaClient" to find connection files.
 Look for .env.example in the repo tree.
-
-Call checkConnectionPool with found files + env file.
+Call checkConnectionPool with found connection files + env file.
 
 Cross-reference with Phase 1:
   isServerless + no pooler + no singleton = CRITICAL
-  isServerless + pooler detected = INFO only
-  not serverless + no pool config = WARNING
-  not serverless + explicit config = note it
+  isServerless + pooler detected = INFO
+  not serverless + no explicit pool config = WARNING
+  not serverless + explicit config = good, note it
 
 ---
 
-## WHEN TO CALL FINAL REPORT
+## CALL FINAL REPORT NOW IF ANY OF THESE IS TRUE
 
-Call finalReport IMMEDIATELY when ANY of these is true:
-→ Phase 5 is complete — this is the primary trigger
+→ Phase 5 is complete ← primary trigger, always call after Phase 5
 → You have found 3+ critical findings
 → You have used 6 of your 7 traceFunctionTool calls
-→ Your INVESTIGATE LIST had fewer than 3 functions
+→ Your investigation list had fewer than 3 items
   and you investigated all of them
 
-After Phase 5 is complete: call finalReport RIGHT AWAY.
-Do NOT keep searching for more issues after Phase 5.
-Do NOT re-investigate functions you already checked.
+After Phase 5 completes: call finalReport IMMEDIATELY.
+Do NOT investigate more routes after Phase 5.
+Do NOT re-run any tool you already ran.
 Do NOT call any tool after Phase 5 except finalReport.
 
-If you feel uncertain whether to call finalReport:
-→ Call it immediately.
-→ A partial confident report is always better than timeout.
-→ You can note low confidence in the confidence field.
+If uncertain whether to call finalReport: call it now.
+Partial confident report > perfect report that times out.
 
 ---
 
 ## SEVERITY RULES
 
 CRITICAL — will break under load:
-→ N+1 query on a core flow public route
-→ Unbounded findMany on a high priority function
-→ Unindexed FK on a table queried by high priority functions
-→ Serverless + no connection pooler + no singleton
+→ N+1 on a CRITICAL or HIGH priority route
+→ Unbounded findMany (no pagination) on HIGH priority route
+→ Unindexed FK on a table used by CRITICAL/HIGH routes
+→ Serverless + no connection pooler + no singleton pattern
 → Missing transaction on payment/order write operations
 
 WARNING — will degrade under load:
-→ N+1 on authenticated route only
-→ Missing pagination on medium priority function
+→ N+1 on MEDIUM priority route
+→ Missing pagination on MEDIUM priority route
 → Unindexed timestamp/status column on core tables
-→ Connection pool with no timeouts
-→ Deeply nested includes 3+ levels on any priority function
+→ Connection pool with no timeouts configured
+→ Deeply nested includes 3+ levels on any priority route
 
-INFO — worth noting but not urgent:
+INFO — worth noting:
 → Raw SQL usage
-→ Missing index on low priority function queries
+→ Missing index on LOW priority route queries
 → Pool size potentially suboptimal
 → No soft delete strategy
 
 DO NOT create findings for:
-→ UI components or utility functions
-→ Admin-only functions with no issues
-→ Functions in SKIP LIST unless genuinely critical
-→ Patterns that users never trigger
+→ LOW priority admin routes unless truly critical
+→ Routes not in your investigation list
+→ Utility functions with no DB calls
 
 ---
 
 ## SCALE TIER RULES
 
 10k_users:
-  CRITICAL findings on core flow = failure
-  Multiple critical = failure
+  CRITICAL findings on core routes = failure
   Warnings only = degraded
   No issues = healthy
 
 100k_users:
   Any CRITICAL = failure
-  Multiple warnings on core flows = critical
+  Multiple warnings on core routes = critical
   Single warnings = degraded
   No issues = healthy
 
@@ -589,47 +566,43 @@ DO NOT create findings for:
 
 ## FINAL REPORT RULES
 
-findings array:
+findings:
 → Include ALL critical findings
-→ Include warnings on high/medium priority functions
-→ Include INFO sparingly — only if genuinely notable
-→ Do NOT include findings for UI components
-→ Do NOT include findings for SKIP LIST functions
-   unless critical regardless of traffic
+→ Include warnings on HIGH/MEDIUM priority routes
+→ Include INFO sparingly
+→ Do NOT include findings for LOW priority routes
+  unless they are genuinely critical
 
 summary.topConcern:
-→ Single most impactful issue for THIS project
-→ Reference actual function name and page it comes from
-→ Example: "CheckoutSession called from checkout page
-   has DB write inside for...of loop — N+1 on every order"
+→ Most impactful issue for THIS specific project
+→ Name the actual route and the actual issue
+→ Example: "POST /api/checkout/confirm-order has DB
+   write inside for...of loop — N+1 on every order
+   confirmation, will break at ~500 concurrent checkouts"
 
 summary.estimatedScaleCeiling:
-→ Based on the most critical finding only
-→ Be specific: "~500 concurrent users" not "low"
+→ Based on most critical finding only
+→ Specific: "~500 concurrent users" not "low"
 
 confidence:
-→ 0.9+ if all high priority functions investigated
-→ 0.7-0.9 if most covered but hit tool call limits
-→ 0.5-0.7 if schema or pool analysis incomplete
+→ 0.9+ if all CRITICAL + HIGH routes investigated
+→ 0.7-0.9 if most covered but hit limits
+→ 0.5-0.7 if schema or pool incomplete
 → below 0.5 only if major phases skipped
 
 toolsUsed:
-→ List every tool actually called
-→ Do not list tools not called
+→ Only list tools you actually called
 
 ---
 
 ## ABSOLUTE CONSTRAINTS
 
-→ Maximum 7 traceFunctionTool calls — hard limit, never exceed
-→ Never call traceFunctionTool on UI components
-→ Never call traceFunctionTool on SKIP LIST functions
-→ If downstream finds no DB calls: do NOT call upstream
-→ Call finalReport immediately after Phase 5 — no exceptions
-→ Never output prose as final answer — always use finalReport
-→ The report must be specific to THIS project
-→ If recursion limit is approaching: call finalReport NOW
-   with whatever findings you have — partial is fine`;
+→ Maximum 7 traceFunctionTool calls — never exceed
+→ Never retry getRepoTree more than once
+→ Call finalReport immediately after Phase 5
+→ Never output prose as final answer
+→ If recursion limit approaching: call finalReport NOW
+→ The report must be specific to THIS project`;
 
 // ─── Tools ────────────────────────────────────────────────────────────────────
 
@@ -668,7 +641,7 @@ export async function runDatabaseAgent(
 
     try {
         const agent = createAgent({
-            model: gpt4oMini,
+            model: gpt5Mini,
             tools: dbAgentTools,
             systemPrompt: SYSTEM_PROMPT,
         });
