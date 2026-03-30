@@ -400,7 +400,7 @@ export const getDependenciesTool = tool(
     },
     {
         name: "getDependencies",
-        description: "Read and categorize the dependencies stored in the database for a repository. Uses a fast regex pass for known libraries, then an LLM (gpt-4o-mini) for anything unrecognised. Returns structured JSON with capabilities grouped by category (database, auth, payments, realtime, queues, etc.), each package tagged with its type (orm, driver, sdk, provider) and dependency source (runtime, dev, peer). Call this FIRST before exploring any source code.",
+        description: "Read and categorize all dependencies for a repository from the database. Returns structured JSON with packages grouped by category: database (ORM, drivers), auth, payments, realtime, queues, storage, email, testing, and framework. Each package includes its name, version, type (orm/driver/sdk/provider), and dependency source (runtime/dev/peer). Call this FIRST — the output tells you which ORM is in use, whether a caching layer exists, which payment providers are integrated, and whether the framework is serverless. These facts shape the severity of every subsequent finding.",
         schema: z.object({
             repositoryId: z.string().describe("The GitHub repository ID (repositoryId field) as stored in the database"),
         }),
