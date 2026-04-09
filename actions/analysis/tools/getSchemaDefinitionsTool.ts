@@ -182,6 +182,15 @@ const schemaExtractionChain = PromptTemplate.fromTemplate(SCHEMA_EXTRACTION_PROM
   .pipe(gpt4oMini)
   .pipe(new JsonOutputParser<LLMSchemaResult>());
 
+function isRateLimitError(err: unknown): boolean {
+  if (err instanceof Error) {
+    const msg = err.message.toLowerCase();
+    // OpenAI / LangChain surface rate limits as status 429 or in the message
+    return msg.includes("429") || msg.includes("rate limit") || msg.includes("too many requests");
+  }
+  return false;
+}
+
 async function extractSchemaFromFile(
   filePath: string,
   fileContent: string,
@@ -195,12 +204,23 @@ async function extractSchemaFromFile(
     detectedDatabase,
     ormHint: getOrmHint(detectedOrm),
   };
+
   try {
     return await schemaExtractionChain.invoke(vars);
-  } catch {
+  } catch (err) {
+    if (!isRateLimitError(err)) {
+      console.warn(`[getSchemaDefinitions] Non-retryable error for "${filePath}":`, err);
+      return null;
+    }
+
+    // Rate limit — wait 5 s then retry once
+    console.warn(`[getSchemaDefinitions] Rate limit hit for "${filePath}", retrying in 5 s…`);
+    await new Promise((res) => setTimeout(res, 5_000));
+
     try {
       return await schemaExtractionChain.invoke(vars);
-    } catch {
+    } catch (retryErr) {
+      console.warn(`[getSchemaDefinitions] Retry also failed for "${filePath}":`, retryErr);
       return null;
     }
   }

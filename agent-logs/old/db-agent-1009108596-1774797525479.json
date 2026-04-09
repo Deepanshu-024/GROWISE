@@ -1,0 +1,271 @@
+{
+  "repositoryId": "1009108596",
+  "archetypeScore": 0.86,
+  "startTime": "2026-03-29T15:06:16.168Z",
+  "totalSteps": 0,
+  "steps": [
+    {
+      "stepNumber": 0,
+      "type": "agent_thought",
+      "timestamp": "2026-03-29T15:06:26.585Z",
+      "reasoning": "{\n  \"categorized\": {\n    \"clsx\": \"uncategorized\",\n    \"next\": \"uncategorized\",\n    \"svix\": \"realtime\",\n    \"react\": \"uncategorized\",\n    \"react-dom\": \"uncategorized\",\n    \"@vercel/blob\": \"storage\",\n    \"lottie-react\": \"uncategorized\",\n    \"lucide-react\": \"uncategorized\",\n    \"tailwind-merge\": \"uncategorized\",\n    \"react-sticky-el\": \"uncategorized\",\n    \"@vercel/analytics\": \"uncategorized\",\n    \"@react-email/render\": \"email\",\n    \"tailwindcss-animate\": \"uncategorized\",\n    \"@radix-ui/react-slot\": \"uncategorized\",\n    \"@vercel/speed-insights\": \"uncategorized\",\n    \"@react-email/components\": \"email\",\n    \"class-variance-authority\": \"uncategorized\",\n    \"@lottiefiles/dotlottie-react\": \"uncategorized\",\n    \"eslint\": \"testing\",\n    \"typescript\": \"uncategorized\",\n    \"@types/node\": \"uncategorized\",\n    \"tailwindcss\": \"uncategorized\",\n    \"@types/react\": \"uncategorized\",\n    \"tw-animate-css\": \"uncategorized\",\n    \"@eslint/eslintrc\": \"testing\",\n    \"@types/react-dom\": \"uncategorized\",\n    \"esli"
+    },
+    {
+      "stepNumber": 0,
+      "type": "agent_thought",
+      "timestamp": "2026-03-29T15:07:08.076Z",
+      "reasoning": "{\n  \"files\": [\n    {\n      \"filePath\": \"src/app/all-products/page.tsx\",\n      \"imports\": [\n        {\n          \"importedNames\": [\"CategoryPage\"],\n          \"rawPath\": \"@/components/category-page\",\n          \"resolvedPath\": \"src/components/category-page.tsx\",\n          \"isServerAction\": false\n        }\n      ]\n    },\n    {\n      \"filePath\": \"src/app/api/admin/check-admin/route.ts\",\n      \"imports\": [\n        {\n          \"importedNames\": [\"prisma\"],\n          \"rawPath\": \"@/lib/prisma\",\n          \"resolvedPath\": \"src/lib/prisma.ts\",\n          \"isServerAction\": false\n        }\n      ]\n    },\n    {\n      \"filePath\": \"src/app/api/admin/addons/route.ts\",\n      \"imports\": [\n        {\n          \"importedNames\": [\"prisma\"],\n          \"rawPath\": \"@/lib/prisma\",\n          \"resolvedPath\": \"src/lib/prisma.ts\",\n          \"isServerAction\": false\n        }\n      ]\n    },\n    {\n      \"filePath\": \"src/app/api/admin/add-best-seller/route.ts\",\n      \"imports\": [\n        {\n          \"importedNames\": [\"prism"
+    },
+    {
+      "stepNumber": 0,
+      "type": "agent_thought",
+      "timestamp": "2026-03-29T15:07:31.277Z",
+      "reasoning": "{\n  \"files\": [\n    {\n      \"filePath\": \"src/app/api/admin/orders/export/route.ts\",\n      \"imports\": [\n        {\n          \"importedNames\": [\"prisma\"],\n          \"rawPath\": \"@/lib/prisma\",\n          \"resolvedPath\": \"src/lib/prisma.ts\",\n          \"isServerAction\": false\n        }\n      ]\n    },\n    {\n      \"filePath\": \"src/app/api/admin/orders/route.ts\",\n      \"imports\": [\n        {\n          \"importedNames\": [\"prisma\"],\n          \"rawPath\": \"@/lib/prisma\",\n          \"resolvedPath\": \"src/lib/prisma.ts\",\n          \"isServerAction\": false\n        }\n      ]\n    },\n    {\n      \"filePath\": \"src/app/api/admin/reviews/route.ts\",\n      \"imports\": [\n        {\n          \"importedNames\": [\"prisma\"],\n          \"rawPath\": \"@/lib/prisma\",\n          \"resolvedPath\": \"src/lib/prisma.ts\",\n          \"isServerAction\": false\n        }\n      ]\n    },\n    {\n      \"filePath\": \"src/app/api/admin/dummy-images/upload/route.ts\",\n      \"imports\": [\n        {\n          \"importedNames\": [\"prisma\"],\n          \"rawPath\""
+    },
+    {
+      "stepNumber": 0,
+      "type": "agent_thought",
+      "timestamp": "2026-03-29T15:07:45.007Z",
+      "reasoning": "{\n  \"files\": [\n    {\n      \"filePath\": \"src/app/api/admin/test-r2/route.ts\",\n      \"imports\": [\n        {\n          \"importedNames\": [\"testR2Connection\"],\n          \"rawPath\": \"@/lib/r2-utils\",\n          \"resolvedPath\": \"src/lib/r2-utils.ts\",\n          \"isServerAction\": false\n        }\n      ]\n    },\n    {\n      \"filePath\": \"src/app/api/admin/upload-image/route.ts\",\n      \"imports\": [\n        {\n          \"importedNames\": [\"uploadImageBufferToCloudflare\"],\n          \"rawPath\": \"@/lib/cloudflare-images\",\n          \"resolvedPath\": \"src/lib/cloudflare-images.ts\",\n          \"isServerAction\": false\n        }\n      ]\n    },\n    {\n      \"filePath\": \"src/app/api/admin/add-product/route.ts\",\n      \"imports\": [\n        {\n          \"importedNames\": [\"prisma\"],\n          \"rawPath\": \"@/lib/prisma\",\n          \"resolvedPath\": \"src/lib/prisma.ts\",\n          \"isServerAction\": false\n        }\n      ]\n    },\n    {\n      \"filePath\": \"src/app/api/admin/verify-password/route.ts\",\n      \"imports\": [\n        {"
+    },
+    {
+      "stepNumber": 0,
+      "type": "agent_thought",
+      "timestamp": "2026-03-29T15:08:02.838Z",
+      "reasoning": "{\n  \"files\": [\n    {\n      \"filePath\": \"src/app/api/checkout/razorpay-order/route.ts\",\n      \"imports\": [\n        {\n          \"importedNames\": [\"prisma\"],\n          \"rawPath\": \"@/lib/prisma\",\n          \"resolvedPath\": \"src/lib/prisma.ts\",\n          \"isServerAction\": false\n        }\n      ]\n    },\n    {\n      \"filePath\": \"src/app/api/checkout/verify-payment/route.ts\",\n      \"imports\": [\n        {\n          \"importedNames\": [\"prisma\"],\n          \"rawPath\": \"@/lib/prisma\",\n          \"resolvedPath\": \"src/lib/prisma.ts\",\n          \"isServerAction\": false\n        }\n      ]\n    },\n    {\n      \"filePath\": \"src/app/api/colors/route.ts\",\n      \"imports\": [\n        {\n          \"importedNames\": [\"prisma\"],\n          \"rawPath\": \"'@/lib/prisma'\",\n          \"resolvedPath\": \"src/lib/prisma.ts\",\n          \"isServerAction\": false\n        }\n      ]\n    },\n    {\n      \"filePath\": \"src/app/api/coupons/route.ts\",\n      \"imports\": [\n        {\n          \"importedNames\": [\"prisma\"],\n          \"rawPath\": \"'@/li"
+    },
+    {
+      "stepNumber": 0,
+      "type": "agent_thought",
+      "timestamp": "2026-03-29T15:08:23.831Z",
+      "reasoning": "{\n  \"files\": [\n    {\n      \"filePath\": \"src/app/api/products/route.ts\",\n      \"imports\": [\n        {\n          \"importedNames\": [\"prisma\"],\n          \"rawPath\": \"@/lib/prisma\",\n          \"resolvedPath\": \"src/lib/prisma.ts\",\n          \"isServerAction\": false\n        }\n      ]\n    },\n    {\n      \"filePath\": \"src/app/api/products/category/[category]/route.ts\",\n      \"imports\": [\n        {\n          \"importedNames\": [\"prisma\"],\n          \"rawPath\": \"@/lib/prisma\",\n          \"resolvedPath\": \"src/lib/prisma.ts\",\n          \"isServerAction\": false\n        }\n      ]\n    },\n    {\n      \"filePath\": \"src/app/api/products/[slug]/route.ts\",\n      \"imports\": [\n        {\n          \"importedNames\": [\"prisma\"],\n          \"rawPath\": \"@/lib/prisma\",\n          \"resolvedPath\": \"src/lib/prisma.ts\",\n          \"isServerAction\": false\n        }\n      ]\n    },\n    {\n      \"filePath\": \"src/app/api/reviews/route.ts\",\n      \"imports\": [\n        {\n          \"importedNames\": [\"prisma\"],\n          \"rawPath\": \"@/lib/pr"
+    },
+    {
+      "stepNumber": 0,
+      "type": "agent_thought",
+      "timestamp": "2026-03-29T15:08:58.373Z",
+      "reasoning": "{\n  \"files\": [\n    {\n      \"filePath\": \"src/app/layout.tsx\",\n      \"imports\": [\n        {\n          \"importedNames\": [\"LayoutWrapper\"],\n          \"rawPath\": \"@/components/layout-wrapper\",\n          \"resolvedPath\": \"src/components/layout-wrapper.tsx\",\n          \"isServerAction\": false\n        },\n        {\n          \"importedNames\": [\"CartProvider\"],\n          \"rawPath\": \"@/lib/contexts/CartContext\",\n          \"resolvedPath\": \"src/lib/contexts/CartContext.tsx\",\n          \"isServerAction\": false\n        },\n        {\n          \"importedNames\": [\"FB_PIXEL_ID\"],\n          \"rawPath\": \"@/lib/fpixel\",\n          \"resolvedPath\": \"src/lib/fpixel.ts\",\n          \"isServerAction\": false\n        },\n        {\n          \"importedNames\": [],\n          \"rawPath\": \"./globals.css\",\n          \"resolvedPath\": \"src/app/globals.css\",\n          \"isServerAction\": false\n        }\n      ]\n    },\n    {\n      \"filePath\": \"src/app/general-review/page.tsx\",\n      \"imports\": [\n        {\n          \"importedNames\": [\"Butt"
+    },
+    {
+      "stepNumber": 0,
+      "type": "agent_thought",
+      "timestamp": "2026-03-29T15:09:40.257Z",
+      "reasoning": "{\n  \"calls\": [\n    {\n      \"callee\": \"request.json\",\n      \"importSource\": null,\n      \"isInsideLoop\": false,\n      \"loopType\": null,\n      \"isDatabaseCall\": false\n    },\n    {\n      \"callee\": \"prisma.coupon.findUnique\",\n      \"importSource\": \"@/lib/prisma\",\n      \"isInsideLoop\": false,\n      \"loopType\": null,\n      \"isDatabaseCall\": true\n    },\n    {\n      \"callee\": \"NextResponse.json\",\n      \"importSource\": \"next/server\",\n      \"isInsideLoop\": false,\n      \"loopType\": null,\n      \"isDatabaseCall\": false\n    },\n    {\n      \"callee\": \"prisma.coupon.update\",\n      \"importSource\": \"@/lib/prisma\",\n      \"isInsideLoop\": false,\n      \"loopType\": null,\n      \"isDatabaseCall\": true\n    },\n    {\n      \"callee\": \"prisma.user.findUnique\",\n      \"importSource\": \"@/lib/prisma\",\n      \"isInsideLoop\": false,\n      \"loopType\": null,\n      \"isDatabaseCall\": true\n    },\n    {\n      \"callee\": \"prisma.user.create\",\n      \"importSource\": \"@/lib/prisma\",\n      \"isInsideLoop\": false,\n      \"loopType\": null,"
+    },
+    {
+      "stepNumber": 0,
+      "type": "agent_thought",
+      "timestamp": "2026-03-29T15:10:05.774Z",
+      "reasoning": "{\n  \"calls\": [\n    {\n      \"callee\": \"request.json\",\n      \"importSource\": null,\n      \"isInsideLoop\": false,\n      \"loopType\": null,\n      \"isDatabaseCall\": false\n    },\n    {\n      \"callee\": \"NextResponse.json\",\n      \"importSource\": \"next/server\",\n      \"isInsideLoop\": false,\n      \"loopType\": null,\n      \"isDatabaseCall\": false\n    },\n    {\n      \"callee\": \"prisma.order.findUnique\",\n      \"importSource\": \"prisma\",\n      \"isInsideLoop\": false,\n      \"loopType\": null,\n      \"isDatabaseCall\": true\n    },\n    {\n      \"callee\": \"NextResponse.json\",\n      \"importSource\": \"next/server\",\n      \"isInsideLoop\": false,\n      \"loopType\": null,\n      \"isDatabaseCall\": false\n    },\n    {\n      \"callee\": \"prisma.$transaction\",\n      \"importSource\": \"prisma\",\n      \"isInsideLoop\": false,\n      \"loopType\": null,\n      \"isDatabaseCall\": true\n    },\n    {\n      \"callee\": \"tx.order.update\",\n      \"importSource\": null,\n      \"isInsideLoop\": true,\n      \"loopType\": \"for\",\n      \"isDatabaseCall\": true\n  "
+    },
+    {
+      "stepNumber": 0,
+      "type": "agent_thought",
+      "timestamp": "2026-03-29T15:10:14.336Z",
+      "reasoning": "{\n  \"calls\": [\n    {\n      \"callee\": \"prisma.product.findMany\",\n      \"importSource\": \"null\",\n      \"isInsideLoop\": false,\n      \"loopType\": null,\n      \"isDatabaseCall\": true\n    },\n    {\n      \"callee\": \"products.map\",\n      \"importSource\": \"null\",\n      \"isInsideLoop\": true,\n      \"loopType\": \"map\",\n      \"isDatabaseCall\": false\n    },\n    {\n      \"callee\": \"NextResponse.json\",\n      \"importSource\": \"next/server\",\n      \"isInsideLoop\": false,\n      \"loopType\": null,\n      \"isDatabaseCall\": false\n    },\n    {\n      \"callee\": \"console.error\",\n      \"importSource\": \"null\",\n      \"isInsideLoop\": false,\n      \"loopType\": null,\n      \"isDatabaseCall\": false\n    }\n  ]\n}"
+    },
+    {
+      "stepNumber": 0,
+      "type": "agent_thought",
+      "timestamp": "2026-03-29T15:10:29.023Z",
+      "reasoning": "{\n  \"calls\": [\n    {\n      \"callee\": \"prisma.product.findUnique\",\n      \"importSource\": \"null\",\n      \"isInsideLoop\": false,\n      \"loopType\": null,\n      \"isDatabaseCall\": true\n    },\n    {\n      \"callee\": \"NextResponse.json\",\n      \"importSource\": \"next/server\",\n      \"isInsideLoop\": false,\n      \"loopType\": null,\n      \"isDatabaseCall\": false\n    },\n    {\n      \"callee\": \"product.reviews.length\",\n      \"importSource\": \"null\",\n      \"isInsideLoop\": false,\n      \"loopType\": null,\n      \"isDatabaseCall\": false\n    },\n    {\n      \"callee\": \"product.reviews.reduce\",\n      \"importSource\": \"null\",\n      \"isInsideLoop\": true,\n      \"loopType\": \"reduce\",\n      \"isDatabaseCall\": false\n    },\n    {\n      \"callee\": \"product.colors.map\",\n      \"importSource\": \"null\",\n      \"isInsideLoop\": true,\n      \"loopType\": \"map\",\n      \"isDatabaseCall\": false\n    },\n    {\n      \"callee\": \"product.videos.map\",\n      \"importSource\": \"null\",\n      \"isInsideLoop\": true,\n      \"loopType\": \"map\",\n      \"isDataba"
+    },
+    {
+      "stepNumber": 0,
+      "type": "agent_thought",
+      "timestamp": "2026-03-29T15:10:45.453Z",
+      "reasoning": "{\n  \"calls\": [\n    {\n      \"callee\": \"request.json\",\n      \"importSource\": null,\n      \"isInsideLoop\": false,\n      \"loopType\": null,\n      \"isDatabaseCall\": false\n    },\n    {\n      \"callee\": \"prisma.cart.findUnique\",\n      \"importSource\": \"prisma\",\n      \"isInsideLoop\": false,\n      \"loopType\": null,\n      \"isDatabaseCall\": true\n    },\n    {\n      \"callee\": \"prisma.product.findUnique\",\n      \"importSource\": \"prisma\",\n      \"isInsideLoop\": false,\n      \"loopType\": null,\n      \"isDatabaseCall\": true\n    },\n    {\n      \"callee\": \"prisma.cartItem.findUnique\",\n      \"importSource\": \"prisma\",\n      \"isInsideLoop\": false,\n      \"loopType\": null,\n      \"isDatabaseCall\": true\n    },\n    {\n      \"callee\": \"prisma.productColor.findFirst\",\n      \"importSource\": \"prisma\",\n      \"isInsideLoop\": false,\n      \"loopType\": null,\n      \"isDatabaseCall\": true\n    },\n    {\n      \"callee\": \"prisma.$transaction\",\n      \"importSource\": \"prisma\",\n      \"isInsideLoop\": false,\n      \"loopType\": null,\n      \"is"
+    },
+    {
+      "stepNumber": 0,
+      "type": "agent_thought",
+      "timestamp": "2026-03-29T15:11:06.249Z",
+      "reasoning": "{\n  \"calls\": [\n    {\n      \"callee\": \"req.json\",\n      \"importSource\": null,\n      \"isInsideLoop\": false,\n      \"loopType\": null,\n      \"isDatabaseCall\": false\n    },\n    {\n      \"callee\": \"NextResponse.json\",\n      \"importSource\": \"next/server\",\n      \"isInsideLoop\": false,\n      \"loopType\": null,\n      \"isDatabaseCall\": false\n    },\n    {\n      \"callee\": \"crypto.createHmac\",\n      \"importSource\": \"crypto\",\n      \"isInsideLoop\": false,\n      \"loopType\": null,\n      \"isDatabaseCall\": false\n    },\n    {\n      \"callee\": \"crypto.update\",\n      \"importSource\": \"crypto\",\n      \"isInsideLoop\": false,\n      \"loopType\": null,\n      \"isDatabaseCall\": false\n    },\n    {\n      \"callee\": \"crypto.digest\",\n      \"importSource\": \"crypto\",\n      \"isInsideLoop\": false,\n      \"loopType\": null,\n      \"isDatabaseCall\": false\n    },\n    {\n      \"callee\": \"prisma.order.findUnique\",\n      \"importSource\": \"prisma\",\n      \"isInsideLoop\": false,\n      \"loopType\": null,\n      \"isDatabaseCall\": true\n    },\n    {\n"
+    },
+    {
+      "stepNumber": 0,
+      "type": "agent_thought",
+      "timestamp": "2026-03-29T15:12:29.422Z",
+      "reasoning": "{\n  \"connectionSetup\": {\n    \"fileFound\": true,\n    \"setupFile\": \"src/lib/prisma.ts\",\n    \"clientType\": \"PrismaClient\"\n  },\n  \"poolConfiguration\": {\n    \"isExplicitlyConfigured\": false,\n    \"maxConnections\": null,\n    \"minConnections\": null,\n    \"connectionTimeoutMs\": null,\n    \"idleTimeoutMs\": null,\n    \"acquireTimeoutMs\": null\n  },\n  \"databaseUrl\": {\n    \"found\": true,\n    \"hasConnectionLimit\": false,\n    \"hasPgBouncerMode\": false,\n    \"hasPoolTimeout\": false,\n    \"hasSSLMode\": false,\n    \"format\": \"postgresql://***:***@host/db\"\n  },\n  \"poolerConfiguration\": {\n    \"externalPoolerDetected\": true,\n    \"poolerType\": \"prisma-accelerate\",\n    \"poolerHandlesConnections\": true\n  },\n  \"serverlessPatterns\": {\n    \"usesGlobalSingleton\": true,\n    \"createsNewConnectionPerRequest\": false,\n    \"hasWarmStartOptimization\": true\n  }\n}"
+    },
+    {
+      "stepNumber": 0,
+      "type": "agent_thought",
+      "timestamp": "2026-03-29T15:16:22.511Z",
+      "reasoning": "{\n  \"tables\": [\n    {\n      \"name\": \"User\",\n      \"sourceFile\": \"prisma/schema.prisma\",\n      \"columns\": [\n        { \"name\": \"id\", \"type\": \"String\", \"isPrimary\": true, \"isRequired\": true, \"isUnique\": false, \"isIndexed\": true, \"isForeignKey\": false, \"referencesTable\": null },\n        { \"name\": \"email\", \"type\": \"String\", \"isPrimary\": false, \"isRequired\": true, \"isUnique\": true, \"isIndexed\": true, \"isForeignKey\": false, \"referencesTable\": null },\n        { \"name\": \"firstName\", \"type\": \"String?\", \"isPrimary\": false, \"isRequired\": false, \"isUnique\": false, \"isIndexed\": false, \"isForeignKey\": false, \"referencesTable\": null },\n        { \"name\": \"lastName\", \"type\": \"String?\", \"isPrimary\": false, \"isRequired\": false, \"isUnique\": false, \"isIndexed\": false, \"isForeignKey\": false, \"referencesTable\": null },\n        { \"name\": \"phone\", \"type\": \"String?\", \"isPrimary\": false, \"isRequired\": false, \"isUnique\": false, \"isIndexed\": false, \"isForeignKey\": false, \"referencesTable\": null },\n        { \"name\":"
+    }
+  ],
+  "endTime": "2026-03-29T15:18:45.479Z",
+  "finalReport": {
+    "agentType": "database",
+    "repositoryId": "1009108596",
+    "archetypeScore": 0.86,
+    "scaleAnalysis": {
+      "10k_users": {
+        "verdict": "failure",
+        "primaryIssues": [
+          "POST /api/checkout/create-order: N+1 writes + missing transaction",
+          "GET /api/products: unbounded findMany (no pagination)",
+          "GET /api/cart/items: DB calls inside loop leading to N+1"
+        ]
+      },
+      "100k_users": {
+        "verdict": "failure",
+        "primaryIssues": [
+          "Same as 10k plus unindexed foreign keys on order_items (will cause full scans)",
+          "Multiple critical checkout endpoints contain looped writes causing DB lock contention"
+        ]
+      },
+      "1M_users": {
+        "verdict": "failure",
+        "primaryIssues": [
+          "No application-level cache for product listing + unbounded queries",
+          "Multiple N+1 patterns on checkout and cart will exhaust DB and cause failures",
+          "Unindexed FK columns on order_items and orders will lead to full table scans"
+        ]
+      }
+    },
+    "findings": [
+      {
+        "id": "F1",
+        "severity": "critical",
+        "category": "transaction",
+        "title": "POST /api/checkout/create-order — N+1 writes inside loop and no transaction",
+        "detail": "traceFunction downstream for src/app/api/checkout/create-order/route.ts shows multiple DB writes inside a for loop: prisma.orderItem.update, prisma.orderItem.create, prisma.orderItem.delete (loopedDbCallCount: 3). No prisma.$transaction wrapper observed for these per-item writes, causing N+1 write pattern and risk of partial writes under failure.",
+        "breaksAt": "~200 concurrent checkouts (depends on average items per order; could surface earlier)",
+        "fix": "Wrap all order mutations in a single transaction. Batch per-item operations using createMany/updateMany where possible. For stock updates, use single UPDATE queries or SELECT ... FOR UPDATE + batch update instead of per-item round-trips.",
+        "evidence": {
+          "trace": "traceFunction downstream: src/app/api/checkout/create-order/route.ts — looped DB calls: prisma.orderItem.update, prisma.orderItem.create, prisma.orderItem.delete (for-loop, loopedDbCallCount:3)",
+          "files": [
+            "src/app/api/checkout/create-order/route.ts"
+          ]
+        }
+      },
+      {
+        "id": "F2",
+        "severity": "critical",
+        "category": "query_pattern",
+        "title": "POST /api/checkout/confirm-order — DB writes inside loop inside transaction (N+1)",
+        "detail": "traceFunction downstream for src/app/api/checkout/confirm-order/route.ts shows prisma.$transaction used but inside it repeated per-item updates occur: tx.order.update, tx.productColor.update, tx.product.update executed inside a for loop (loopedDbCallCount: 3). Long transactions with many statements cause locking and latency.",
+        "breaksAt": "~500 concurrent confirmations (degrades earlier with larger orders)",
+        "fix": "Within the transaction, replace per-item queries with batched updateMany or single UPDATE statements affecting multiple rows. Minimize logic inside the transaction; offload non-critical updates to background jobs.",
+        "evidence": {
+          "trace": "traceFunction downstream: src/app/api/checkout/confirm-order/route.ts — prisma.$transaction with tx.* updates inside for-loop (loopedDbCallCount:3)",
+          "files": [
+            "src/app/api/checkout/confirm-order/route.ts"
+          ]
+        }
+      },
+      {
+        "id": "F3",
+        "severity": "critical",
+        "category": "transaction",
+        "title": "POST /api/checkout/verify-payment — looped tx updates (N+1)",
+        "detail": "traceFunction downstream for src/app/api/checkout/verify-payment/route.ts shows prisma.order.findUnique then prisma.$transaction performing tx.order.update, tx.productColor.update, tx.product.update inside a for loop (loopedDbCallCount: 3). This duplicates confirm-order risks and can create long-running transactions.",
+        "breaksAt": "~500 concurrent payment verifications",
+        "fix": "Batch updates inside the transaction or move non-critical per-item work to background processing. Reduce number of statements and duration of transactions.",
+        "evidence": {
+          "trace": "traceFunction downstream: src/app/api/checkout/verify-payment/route.ts — findUnique then prisma.$transaction with per-item tx updates inside for-loop",
+          "files": [
+            "src/app/api/checkout/verify-payment/route.ts"
+          ]
+        }
+      },
+      {
+        "id": "F4",
+        "severity": "critical",
+        "category": "query_pattern",
+        "title": "GET /api/products — unbounded findMany (no pagination)",
+        "detail": "src/app/api/products/route.ts executes prisma.product.findMany({ include: { colors }, orderBy: { createdAt: 'desc' } }) with no take/skip/cursor. This returns the whole products table and will grow linearly with catalog size leading to high memory and DB load.",
+        "breaksAt": "When products table grows (>=10k rows) or under moderate concurrent listing traffic (hundreds of requests)",
+        "fix": "Add pagination (cursor/limit) to product listing endpoints, return trimmed fields for list pages, and add caching (CDN or Redis) for high-traffic lists. Consider indexing createdAt if sorting by it often.",
+        "evidence": {
+          "trace": "file content: src/app/api/products/route.ts — prisma.product.findMany with include: { colors } and no pagination parameters",
+          "files": [
+            "src/app/api/products/route.ts"
+          ]
+        }
+      },
+      {
+        "id": "F5",
+        "severity": "critical",
+        "category": "query_pattern",
+        "title": "GET /api/cart/items — DB findMany inside reduce/loop inside transaction (N+1)",
+        "detail": "traceFunction downstream for src/app/api/cart/items/route.ts shows use of prisma.$transaction and within that tx.cartItem.findMany appears inside a reduce/loop; multiple tx.* operations (findFirst, update, create, findMany) are used per-request indicating per-item DB work instead of single prefetch.",
+        "breaksAt": "~300 concurrent cart fetches with medium cart sizes",
+        "fix": "Prefetch cart items with a single findMany(cartId) including required relations and compute totals in application memory. Avoid per-item DB calls; batch writes when needed inside transactions.",
+        "evidence": {
+          "trace": "traceFunction downstream: src/app/api/cart/items/route.ts — tx.cartItem.findMany inside reduce/loop and multiple tx.* calls",
+          "files": [
+            "src/app/api/cart/items/route.ts"
+          ]
+        }
+      },
+      {
+        "id": "F6",
+        "severity": "critical",
+        "category": "missing_index",
+        "title": "OrderItem foreign keys are not indexed (orderId, productId)",
+        "detail": "getSchemaDefinitions for prisma/schema.prisma shows OrderItem model has orderId and productId foreign keys but no explicit @@index entries. Missing FK indexes will cause scans for common lookups (order → items, product → order_items) at scale.",
+        "breaksAt": "When order_items exceeds ~100k rows or with concurrent order processing (~100+ concurrent ops)",
+        "fix": "Add indexes on OrderItem.orderId and OrderItem.productId (e.g. @@index([orderId]), @@index([productId])) and run a migration. Add composite indexes for frequent multi-column filters if needed.",
+        "evidence": {
+          "trace": "prisma/schema.prisma: OrderItem model has orderId and productId without @@index definitions",
+          "files": [
+            "prisma/schema.prisma"
+          ]
+        }
+      },
+      {
+        "id": "F7",
+        "severity": "warning",
+        "category": "missing_index",
+        "title": "Order.userId has no index — queries by user may be slow",
+        "detail": "Schema shows Order.userId is a foreign key but not indexed. Queries for user order history or admin lookups by user will cause full scans on orders table when large.",
+        "breaksAt": "When orders table grows (>100k rows) or on moderate user-history traffic",
+        "fix": "Add an index on Order.userId (e.g. @@index([userId])). Consider indexing createdAt or orderNumber depending on query patterns.",
+        "evidence": {
+          "trace": "prisma/schema.prisma: Order model includes userId but no index defined",
+          "files": [
+            "prisma/schema.prisma"
+          ]
+        }
+      },
+      {
+        "id": "F8",
+        "severity": "info",
+        "category": "connection_pool",
+        "title": "Serverless Prisma usage — global singleton present and prisma-accelerate detected",
+        "detail": "src/lib/prisma.ts uses a global singleton for PrismaClient (good for serverless). checkConnectionPool detected @prisma/extension-accelerate in dependencies, indicating an external pooler. No explicit pool parameters (max/min/timeouts) are set in the repo.",
+        "breaksAt": "N/A",
+        "fix": "Continue using the global singleton. Ensure prisma-accelerate or external pooler is configured for production; add connection timeouts and monitor connection metrics. Consider explicit pool configuration in environment if needed.",
+        "evidence": {
+          "trace": "file: src/lib/prisma.ts — global singleton for PrismaClient; getDependencies shows @prisma/extension-accelerate present",
+          "files": [
+            "src/lib/prisma.ts"
+          ]
+        }
+      }
+    ],
+    "summary": {
+      "totalFindings": 8,
+      "criticalCount": 6,
+      "warningCount": 1,
+      "infoCount": 1,
+      "overallRisk": "critical",
+      "topConcern": "POST /api/checkout/create-order — multiple DB writes inside for...of loop without a transaction (N+1 + missing transaction)",
+      "estimatedScaleCeiling": "~200 concurrent checkout requests before user-facing failures (likely 100-500 depending on average cart size and DB config)"
+    },
+    "toolsUsed": [
+      "getDependencies",
+      "buildImportFrequencyMap",
+      "getRepoTree",
+      "traceFunction",
+      "searchCode",
+      "getFileContent",
+      "checkConnectionPool",
+      "getSchemaDefinitions"
+    ],
+    "confidence": 0.92
+  }
+}

@@ -49,6 +49,7 @@ interface LLMRouteResult {
 interface RouteMapResult {
   repository: string;
   detectedFramework: string;
+  detectedRouterType: string;
   detectedAuthProvider: string | null;
   skippedFiles: string[];
   summary: {
@@ -130,19 +131,73 @@ const SENSITIVE_PATH_KEYWORDS = [
 
 function isSensitivePath(path: string | null): boolean {
   if (!path) return false;
-  const lowerPath = path.toLowerCase();
+  const segments = path.toLowerCase().split("/").filter(Boolean);
   return SENSITIVE_PATH_KEYWORDS.some((keyword) =>
-    lowerPath.includes(keyword)
+    segments.some(
+      (seg) =>
+        seg === keyword ||
+        seg.startsWith(keyword + "-") ||
+        seg.endsWith("-" + keyword) ||
+        seg.startsWith(keyword + "[") ||
+        seg === "[" + keyword + "]"
+    )
   );
 }
 
 function getSensitiveReason(path: string | null): string {
   if (!path) return "Route path could not be determined but may be sensitive";
-  const lowerPath = path.toLowerCase();
+  const segments = path.toLowerCase().split("/").filter(Boolean);
   const matched = SENSITIVE_PATH_KEYWORDS.filter((keyword) =>
-    lowerPath.includes(keyword)
+    segments.some(
+      (seg) =>
+        seg === keyword ||
+        seg.startsWith(keyword + "-") ||
+        seg.endsWith("-" + keyword)
+    )
   );
   return `Route contains sensitive path segment(s): ${matched.join(", ")} — no auth check detected`;
+}
+
+// ─── Router type detection ───────────────────────────────────────────────────
+
+function detectRouterType(
+  routeFiles: string[],
+  framework: string | null
+): "nextjs-app-router" | "nextjs-pages-router" | "react-custom" | "mixed" {
+  if (!framework || framework === "react") return "react-custom";
+
+  const hasAppRouter = routeFiles.some(
+    (f) => f.includes("/app/api/") || f.startsWith("app/api/")
+  );
+  const hasPagesRouter = routeFiles.some(
+    (f) => f.includes("/pages/api/") || f.startsWith("pages/api/")
+  );
+
+  if (hasAppRouter && hasPagesRouter) return "mixed";
+  if (hasAppRouter) return "nextjs-app-router";
+  if (hasPagesRouter) return "nextjs-pages-router";
+  return "nextjs-app-router"; // default for Next.js
+}
+
+// ─── Path derivation from file path ──────────────────────────────────────────
+
+function derivePathFromFilePath(filePath: string): string | null {
+  // Next.js App Router: src/app/api/products/route.ts → /api/products
+  const appMatch = filePath.match(
+    /(?:src\/)?app(\/api\/.+?)\/route\.[tj]sx?$/
+  );
+  if (appMatch) return appMatch[1];
+
+  // Next.js Pages Router: src/pages/api/users.ts → /api/users
+  const pagesMatch = filePath.match(
+    /(?:src\/)?pages(\/api\/.+?)\.[tj]sx?$/
+  );
+  if (pagesMatch) {
+    // Remove file extension from last segment
+    return pagesMatch[1].replace(/\.[tj]sx?$/, "");
+  }
+
+  return null;
 }
 
 // ─── Framework-specific extraction hints ─────────────────────────────────────
@@ -151,6 +206,7 @@ const FRAMEWORK_HINTS: Record<string, string> = {
   "nextjs-app-router": `This is a Next.js App Router route file. Each file exports named async functions for HTTP methods: GET, POST, PUT, DELETE, PATCH. Auth checks typically appear at the top of each exported function. Common auth patterns: auth() from @clerk/nextjs/server, getServerSession() from next-auth, createRouteHandlerClient() from @supabase/auth-helpers-nextjs, currentUser() from @clerk/nextjs/server. Route path is derived from the file path (e.g. src/app/api/products/route.ts → /api/products).`,
   "nextjs-pages-router": `This is a Next.js Pages Router API route file. Each file exports a default handler function that receives (req, res). Auth checks typically appear at the top of the handler or via wrapper functions. Common auth patterns: getSession()/getServerSession() from next-auth, withApiAuthRequired() from @auth0/nextjs-auth0, requireAuth() wrappers, session checks via req.session, JWT verification via jsonwebtoken. Route path is derived from the file path (e.g. src/pages/api/users.ts → /api/users).`,
   "react-custom": `This is a custom backend route file (Express/Fastify/Koa style). Routes are defined with app.get(), app.post(), router.get(), etc. Auth is typically applied via middleware functions before the handler. Common auth patterns: authMiddleware, requireAuth, isAuthenticated middleware, jwt.verify() calls, req.user checks, passport.authenticate() calls, custom auth guard decorators.`,
+  mixed: `This is a Next.js App Router route file. Each file exports named async functions for HTTP methods: GET, POST, PUT, DELETE, PATCH. Auth checks typically appear at the top of each exported function. Common auth patterns: auth() from @clerk/nextjs/server, getServerSession() from next-auth, createRouteHandlerClient() from @supabase/auth-helpers-nextjs, currentUser() from @clerk/nextjs/server. Route path is derived from the file path (e.g. src/app/api/products/route.ts → /api/products).`,
   unknown: `Analyze this route file and extract any HTTP route handlers you find regardless of the framework. Look for exported functions, handler definitions, or route registrations.`,
 };
 
@@ -192,6 +248,19 @@ For each route/handler found, extract:
       src/pages/api/users.ts → "/api/users"
     For custom backends: extract from route registration code
     null if cannot be determined
+
+    IMPORTANT: For dynamic route segments always use Next.js bracket notation.
+    Use [param] not :param.
+    Examples:
+      /api/products/[slug]    ✅ correct
+      /api/products/:slug     ❌ wrong
+      /api/users/[id]         ✅ correct
+      /api/users/:id          ❌ wrong
+    The pre-derived path already uses bracket notation — prefer it.
+
+    Pre-derived path from file path: {derivedPath}
+    Use this as the path value. If the file content clearly shows
+    a different path, correct it. Otherwise use the pre-derived value.
 
   isProtected: true if ANY auth check is present before the main logic:
     - auth(), auth().protect(), auth().userId from Clerk
@@ -273,7 +342,8 @@ async function extractRoutesFromFile(
   filePath: string,
   fileContent: string,
   detectedFramework: string,
-  detectedAuthProvider: string | null
+  detectedAuthProvider: string | null,
+  derivedPath: string | null
 ): Promise<LLMRouteResult | null> {
   const vars = {
     filePath,
@@ -281,6 +351,7 @@ async function extractRoutesFromFile(
     detectedFramework,
     detectedAuthProvider: detectedAuthProvider ?? "unknown",
     frameworkHint: getFrameworkHint(detectedFramework),
+    derivedPath: derivedPath ?? "could not be derived from file path",
   };
 
   try {
@@ -317,11 +388,10 @@ async function extractRoutesFromFile(
  */
 export const getRouteMapTool = tool(
   async (input): Promise<string> => {
-    const { repositoryId, accessToken, routeFiles, detectedFramework, detectedAuthProvider } = input as {
+    const { repositoryId, accessToken, routeFiles, detectedAuthProvider } = input as {
       repositoryId: string;
       accessToken: string;
       routeFiles: string[];
-      detectedFramework: string;
       detectedAuthProvider: string | null;
     };
 
@@ -333,7 +403,7 @@ export const getRouteMapTool = tool(
       // 1. Read repository metadata from DB
       const repository = await prisma.repository.findUnique({
         where: { repositoryId },
-        select: { fullName: true, defaultBranch: true },
+        select: { fullName: true, defaultBranch: true, framework: true },
       });
 
       if (!repository) {
@@ -343,6 +413,8 @@ export const getRouteMapTool = tool(
 
       const [owner, repo] = repository.fullName.split("/");
       const branch = repository.defaultBranch ?? "main";
+      const framework = repository.framework ?? "next";
+      const routerType = detectRouterType(routeFiles, framework);
       const cache: FileCache = new Map();
       const skippedFiles: string[] = [];
       const allRoutes: RouteDefinition[] = [];
@@ -351,7 +423,11 @@ export const getRouteMapTool = tool(
       const filesToProcess = routeFiles.slice(0, MAX_ROUTE_FILES);
 
       console.log(`[getRouteMap] Analyzing ${filesToProcess.length} route files`);
-      console.log(`[getRouteMap] Framework: ${detectedFramework}, Auth provider: ${detectedAuthProvider ?? "unknown"}`);
+      console.log(
+        `[getRouteMap] Framework: ${framework}, ` +
+        `Router type: ${routerType}, ` +
+        `Auth provider: ${detectedAuthProvider ?? "unknown"}`
+      );
 
       // 2. Fetch + LLM extraction per file
       for (const filePath of filesToProcess) {
@@ -363,7 +439,8 @@ export const getRouteMapTool = tool(
           continue;
         }
 
-        const llmResult = await extractRoutesFromFile(filePath, fileContent, detectedFramework, detectedAuthProvider);
+        const derivedPath = derivePathFromFilePath(filePath);
+        const llmResult = await extractRoutesFromFile(filePath, fileContent, routerType, detectedAuthProvider, derivedPath);
         if (!llmResult) {
           skippedFiles.push(filePath);
           continue;
@@ -414,7 +491,8 @@ export const getRouteMapTool = tool(
 
       const result: RouteMapResult = {
         repository: repository.fullName,
-        detectedFramework,
+        detectedFramework: framework,
+        detectedRouterType: routerType,
         detectedAuthProvider,
         skippedFiles,
         summary: {
@@ -439,13 +517,12 @@ export const getRouteMapTool = tool(
   },
   {
     name: "getRouteMap",
-    description: "Analyze route files identified by the agent to extract a complete route map including HTTP methods, auth protection status, auth provider and method used, rate limiting presence, DB call count, and whether there is a DB lookup for the current user after auth. Automatically flags unprotected routes with sensitive paths. Returns raw facts only — the agent uses this to find auth gaps, missing rate limits, and per-request DB patterns that break at scale.",
+    description: "Analyze route files identified by the agent to extract a complete route map including HTTP methods, auth protection status, auth provider and method used, rate limiting presence, DB call count, and whether there is a direct DB lookup for the current user after auth. Framework is read automatically from the database — no need to pass it. Router type (App Router vs Pages Router) is detected automatically from the route file paths provided. Automatically flags unprotected routes with sensitive path segments. Returns raw facts only — the agent uses this to find auth gaps, missing rate limits, and per-request DB patterns that break at scale. Note: hasDbCallAfterAuth detects direct DB calls only — indirect patterns via helper functions may not be detected.",
     schema: z.object({
       repositoryId: z.string().describe("The GitHub repository ID as stored in the database"),
       accessToken: z.string().describe("GitHub access token for fetching files via the API"),
-      routeFiles: z.array(z.string()).describe("File paths the agent has identified as route files (e.g. ['src/app/api/products/route.ts', 'src/pages/api/auth/[...nextauth].ts'])"),
-      detectedFramework: z.string().describe("Framework detected from getDependencies — 'nextjs-app-router' | 'nextjs-pages-router' | 'react-custom' | 'unknown'"),
-      detectedAuthProvider: z.string().nullable().describe("Auth provider detected from getDependencies — 'clerk' | 'nextauth' | 'auth0' | 'supabase' | 'jwt' | 'custom' | null"),
+      routeFiles: z.array(z.string()).describe("File paths the agent has identified as route files (e.g. ['src/app/api/products/route.ts', 'src/pages/api/auth/[...nextauth].ts']). Framework and router type are detected automatically."),
+      detectedAuthProvider: z.string().nullable().describe("Auth provider detected from getDependencies output — 'clerk' | 'nextauth' | 'auth0' | 'supabase' | 'jwt' | 'custom' | null"),
     }),
   }
 );
