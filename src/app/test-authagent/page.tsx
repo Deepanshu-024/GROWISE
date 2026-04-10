@@ -519,7 +519,7 @@ export default function TestAuthAgentPage() {
                                     color: "text-cyan-400",
                                 },
                             ].map((s) => (
-                                <Card key={s.label} className="!p-4">
+                                <Card key={s.label} className="p-4!">
                                     <p className="text-xs text-gray-500">{s.label}</p>
                                     <p className={`text-xl font-bold mt-1 ${s.color}`}>{s.value}</p>
                                 </Card>
