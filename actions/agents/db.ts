@@ -65,10 +65,30 @@ export interface DbAgentReport {
     confidence: number;
 }
 
+export interface StreamEvent {
+    type: "tool_start" | "tool_end" | "llm_end" | "agent_thought" | "error" | "done" | "agent_start";
+    stepNumber: number;
+    timestamp: string;
+    elapsedMs: number;
+    toolName?: string;
+    toolInput?: unknown;
+    toolOutput?: string;
+    toolOutputLength?: number;
+    reasoning?: string;
+    tokenUsage?: { inputTokens: number; outputTokens: number; totalTokens: number };
+    cumulativeTokens?: { inputTokens: number; outputTokens: number; totalTokens: number };
+    // done event fields
+    report?: DbAgentReport | null;
+    totalToolCalls?: number;
+    executionTimeMs?: number;
+    error?: string;
+}
+
 export interface DbAgentInput {
     repositoryId: string;
     accessToken: string;
     archetypeScore: number;
+    onEvent?: (event: StreamEvent) => void;
 }
 
 export interface DbAgentOutput {
@@ -746,7 +766,7 @@ const dbAgentTools = [
 export async function runDatabaseAgent(
     input: DbAgentInput
 ): Promise<DbAgentOutput> {
-    const { repositoryId, accessToken, archetypeScore } = input;
+    const { repositoryId, accessToken, archetypeScore, onEvent } = input;
     const startTime = Date.now();
 
     const agentLog: AgentLog = {
@@ -757,9 +777,24 @@ export async function runDatabaseAgent(
         steps: [],
     };
     let stepCounter = 0;
+    let cumulativeInputTokens = 0;
+    let cumulativeOutputTokens = 0;
+    let lastToolName = "unknown";
+
+    const emit = (event: StreamEvent) => {
+        try { onEvent?.(event); } catch { /* ignore stream errors */ }
+    };
 
     console.log(`[dbAgent] Starting investigation for: ${repositoryId}`);
     console.log(`[dbAgent] Archetype score: ${archetypeScore}`);
+
+    emit({
+        type: "agent_start",
+        stepNumber: 0,
+        timestamp: new Date().toISOString(),
+        elapsedMs: 0,
+        reasoning: `Starting DB agent for ${repositoryId} (archetype score: ${archetypeScore})`,
+    });
 
     try {
         const agent = createAgent({
@@ -808,12 +843,11 @@ export async function runDatabaseAgent(
                             console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
                         },
                         handleToolStart(tool: any, input: string) {
-                            // LangChain serializes tool as { id: string[], name?: string }
-                            // The actual tool name is the last element of the id array
                             const toolName: string =
                                 tool.name ??
                                 (Array.isArray(tool.id) ? tool.id[tool.id.length - 1] : undefined) ??
                                 "unknown";
+                            lastToolName = toolName;
                             let parsedInput: unknown = input;
                             try {
                                 parsedInput = JSON.parse(input);
@@ -822,9 +856,22 @@ export async function runDatabaseAgent(
                             }
                             console.log(`\n[Step ${stepCounter}] → Calling ${toolName}`);
                             console.log(`Input: ${JSON.stringify(parsedInput, null, 2).slice(0, 300)}`);
+
+                            emit({
+                                type: "tool_start",
+                                stepNumber: stepCounter,
+                                timestamp: new Date().toISOString(),
+                                elapsedMs: Date.now() - startTime,
+                                toolName,
+                                toolInput: parsedInput,
+                                cumulativeTokens: {
+                                    inputTokens: cumulativeInputTokens,
+                                    outputTokens: cumulativeOutputTokens,
+                                    totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                                },
+                            });
                         },
                         handleToolEnd(output: any) {
-                            // output may be an object in newer LangChain versions — always coerce to string
                             const outputStr: string =
                                 typeof output === "string"
                                     ? output
@@ -840,8 +887,40 @@ export async function runDatabaseAgent(
                             }
                             console.log(`[Step ${stepCounter}] ← Tool response: ${outputStr.length} chars`);
                             console.log(`Preview: ${outputStr.slice(0, 500)}`);
+
+                            emit({
+                                type: "tool_end",
+                                stepNumber: stepCounter,
+                                timestamp: new Date().toISOString(),
+                                elapsedMs: Date.now() - startTime,
+                                toolName: lastToolName,
+                                toolOutput: outputStr.length > 5000
+                                    ? outputStr.slice(0, 5000) + "\n... [truncated]"
+                                    : outputStr,
+                                toolOutputLength: outputStr.length,
+                                cumulativeTokens: {
+                                    inputTokens: cumulativeInputTokens,
+                                    outputTokens: cumulativeOutputTokens,
+                                    totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                                },
+                            });
                         },
                         handleLLMEnd(output: any) {
+                            // Extract token usage from LangChain output metadata
+                            const usage = output?.llmOutput?.tokenUsage
+                                ?? output?.llmOutput?.usage
+                                ?? output?.llmOutput?.estimatedTokenUsage
+                                ?? null;
+
+                            let inputTokens = 0;
+                            let outputTokens = 0;
+                            if (usage) {
+                                inputTokens = usage.promptTokens ?? usage.prompt_tokens ?? usage.inputTokens ?? usage.input_tokens ?? 0;
+                                outputTokens = usage.completionTokens ?? usage.completion_tokens ?? usage.outputTokens ?? usage.output_tokens ?? 0;
+                            }
+                            cumulativeInputTokens += inputTokens;
+                            cumulativeOutputTokens += outputTokens;
+
                             const generation = output.generations?.[0]?.[0];
                             const message = (generation as any)?.message;
                             const fnCall = message?.additional_kwargs?.function_call;
@@ -857,8 +936,39 @@ export async function runDatabaseAgent(
                                         reasoning: content.slice(0, 1000),
                                     });
                                     console.log(`[Step ${stepCounter}] Agent thought: ${content.slice(0, 300)}`);
+
+                                    emit({
+                                        type: "agent_thought",
+                                        stepNumber: stepCounter,
+                                        timestamp: new Date().toISOString(),
+                                        elapsedMs: Date.now() - startTime,
+                                        reasoning: content.slice(0, 2000),
+                                        cumulativeTokens: {
+                                            inputTokens: cumulativeInputTokens,
+                                            outputTokens: cumulativeOutputTokens,
+                                            totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                                        },
+                                    });
                                 }
                             }
+
+                            // Always emit llm_end with token info
+                            emit({
+                                type: "llm_end",
+                                stepNumber: stepCounter,
+                                timestamp: new Date().toISOString(),
+                                elapsedMs: Date.now() - startTime,
+                                tokenUsage: {
+                                    inputTokens,
+                                    outputTokens,
+                                    totalTokens: inputTokens + outputTokens,
+                                },
+                                cumulativeTokens: {
+                                    inputTokens: cumulativeInputTokens,
+                                    outputTokens: cumulativeOutputTokens,
+                                    totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                                },
+                            });
                         },
                         handleChainError(error: Error) {
                             agentLog.steps.push({
@@ -869,6 +979,19 @@ export async function runDatabaseAgent(
                             });
                             agentLog.error = error.message;
                             console.log(`\n[dbAgent] CHAIN ERROR: ${error.message}`);
+
+                            emit({
+                                type: "error",
+                                stepNumber: stepCounter,
+                                timestamp: new Date().toISOString(),
+                                elapsedMs: Date.now() - startTime,
+                                error: error.message,
+                                cumulativeTokens: {
+                                    inputTokens: cumulativeInputTokens,
+                                    outputTokens: cumulativeOutputTokens,
+                                    totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                                },
+                            });
                         },
                     },
                 ],
@@ -964,6 +1087,22 @@ export async function runDatabaseAgent(
         console.log(`[dbAgent] Total steps: ${stepCounter}`);
         console.log(`[dbAgent] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 
+        // Emit done event with final totals
+        emit({
+            type: "done",
+            stepNumber: stepCounter,
+            timestamp: new Date().toISOString(),
+            elapsedMs: executionTimeMs,
+            report,
+            totalToolCalls,
+            executionTimeMs,
+            cumulativeTokens: {
+                inputTokens: cumulativeInputTokens,
+                outputTokens: cumulativeOutputTokens,
+                totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+            },
+        });
+
         return {
             report,
             intermediateSteps: messages,
@@ -991,6 +1130,22 @@ export async function runDatabaseAgent(
         const logPath = path.join(logDir, logFileName);
         fs.writeFileSync(logPath, JSON.stringify(agentLog, null, 2));
         console.error(`[dbAgent] Error log written to: ${logPath}`);
+
+        emit({
+            type: "done",
+            stepNumber: stepCounter,
+            timestamp: new Date().toISOString(),
+            elapsedMs: executionTimeMs,
+            report: null,
+            totalToolCalls: 0,
+            executionTimeMs,
+            error: message,
+            cumulativeTokens: {
+                inputTokens: cumulativeInputTokens,
+                outputTokens: cumulativeOutputTokens,
+                totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+            },
+        });
 
         return {
             report: null,

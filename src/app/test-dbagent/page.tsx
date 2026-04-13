@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -48,6 +48,26 @@ interface AgentOutput {
     error?: string;
 }
 
+interface StreamEvent {
+    type: "tool_start" | "tool_end" | "llm_end" | "agent_thought" | "error" | "done" | "agent_start" | "result";
+    stepNumber: number;
+    timestamp: string;
+    elapsedMs: number;
+    toolName?: string;
+    toolInput?: unknown;
+    toolOutput?: string;
+    toolOutputLength?: number;
+    reasoning?: string;
+    tokenUsage?: { inputTokens: number; outputTokens: number; totalTokens: number };
+    cumulativeTokens?: { inputTokens: number; outputTokens: number; totalTokens: number };
+    report?: Record<string, unknown> | null;
+    totalToolCalls?: number;
+    executionTimeMs?: number;
+    error?: string;
+    // result event fields
+    intermediateSteps?: Message[];
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function getBestArchetypeScore(archetypes: Archetype[] | null): number {
@@ -79,6 +99,17 @@ function verdictDot(v: string) {
     if (v === "degraded") return "bg-amber-400";
     if (v === "critical") return "bg-orange-400";
     return "bg-red-500";
+}
+
+function formatTokens(n: number): string {
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+    return String(n);
+}
+
+function formatMs(ms: number): string {
+    if (ms >= 60_000) return `${(ms / 60_000).toFixed(1)}m`;
+    return `${(ms / 1_000).toFixed(1)}s`;
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -234,6 +265,174 @@ function ToolStepRow({ msg, index }: { msg: Message; index: number }) {
     );
 }
 
+// ─── Live Log Event Row ───────────────────────────────────────────────────────
+
+const EVENT_CONFIG: Record<string, { icon: string; label: string; color: string; bg: string }> = {
+    agent_start: { icon: "🚀", label: "Start", color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20" },
+    tool_start: { icon: "🔧", label: "Tool Call", color: "text-blue-400", bg: "bg-blue-500/10 border-blue-500/20" },
+    tool_end: { icon: "✅", label: "Tool Result", color: "text-green-400", bg: "bg-green-500/10 border-green-500/20" },
+    llm_end: { icon: "🧠", label: "LLM", color: "text-purple-400", bg: "bg-purple-500/10 border-purple-500/20" },
+    agent_thought: { icon: "💭", label: "Thought", color: "text-gray-400", bg: "bg-gray-500/10 border-gray-500/20" },
+    error: { icon: "❌", label: "Error", color: "text-red-400", bg: "bg-red-500/10 border-red-500/20" },
+    done: { icon: "🏁", label: "Done", color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20" },
+};
+
+function LiveEventRow({ event, index }: { event: StreamEvent; index: number }) {
+    const [open, setOpen] = useState(false);
+    const config = EVENT_CONFIG[event.type] ?? { icon: "📋", label: event.type, color: "text-gray-400", bg: "bg-gray-500/10 border-gray-500/20" };
+
+    // Don't render llm_end events with 0 tokens as separate rows (noise)
+    if (event.type === "llm_end" && (!event.tokenUsage || event.tokenUsage.totalTokens === 0)) {
+        return null;
+    }
+
+    const hasExpandable = event.toolInput || event.toolOutput || event.reasoning || event.error;
+
+    return (
+        <div className={`border rounded-lg overflow-hidden text-xs ${config.bg}`}>
+            <button
+                onClick={() => hasExpandable && setOpen((o) => !o)}
+                className={`w-full flex items-center gap-2 px-3 py-2 text-left transition-colors ${hasExpandable ? "hover:bg-white/5 cursor-pointer" : "cursor-default"}`}
+            >
+                {/* Icon */}
+                <span className="shrink-0 text-sm">{config.icon}</span>
+
+                {/* Step number */}
+                <span className="text-gray-500 shrink-0 font-mono w-6 text-right">
+                    {event.stepNumber > 0 ? `#${event.stepNumber}` : ""}
+                </span>
+
+                {/* Type badge */}
+                <span className={`shrink-0 font-semibold ${config.color}`}>
+                    {config.label}
+                </span>
+
+                {/* Tool name or summary */}
+                <span className="font-mono text-gray-200 truncate flex-1">
+                    {event.toolName && (
+                        <span className="text-cyan-300">{event.toolName}</span>
+                    )}
+                    {event.type === "tool_end" && event.toolOutputLength !== undefined && (
+                        <span className="text-gray-500 ml-2">
+                            ({formatTokens(event.toolOutputLength)} chars)
+                        </span>
+                    )}
+                    {event.type === "llm_end" && event.tokenUsage && (
+                        <span className="text-purple-300 ml-1">
+                            ↓{formatTokens(event.tokenUsage.inputTokens)} ↑{formatTokens(event.tokenUsage.outputTokens)}
+                        </span>
+                    )}
+                    {event.type === "agent_thought" && (
+                        <span className="text-gray-400 ml-1 truncate">
+                            {event.reasoning?.slice(0, 80)}…
+                        </span>
+                    )}
+                    {event.type === "error" && (
+                        <span className="text-red-300 ml-1 truncate">{event.error}</span>
+                    )}
+                    {event.type === "agent_start" && (
+                        <span className="text-gray-300 ml-1">{event.reasoning}</span>
+                    )}
+                </span>
+
+                {/* Elapsed time */}
+                <span className="text-gray-600 shrink-0 font-mono text-[10px]">
+                    {formatMs(event.elapsedMs)}
+                </span>
+
+                {/* Cumulative tokens */}
+                {event.cumulativeTokens && event.cumulativeTokens.totalTokens > 0 && (
+                    <span className="text-gray-600 shrink-0 font-mono text-[10px] w-16 text-right">
+                        Σ{formatTokens(event.cumulativeTokens.totalTokens)}
+                    </span>
+                )}
+
+                {/* Expand arrow */}
+                {hasExpandable && (
+                    <svg
+                        className={`w-3 h-3 text-gray-600 transition-transform shrink-0 ${open ? "rotate-180" : ""}`}
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                    >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                )}
+            </button>
+
+            {/* Expandable content */}
+            {open && (
+                <div className="border-t border-white/5">
+                    {/* Tool Input */}
+                    {event.toolInput && (
+                        <div className="px-3 py-2">
+                            <p className="text-[10px] font-bold uppercase text-blue-400 mb-1">Input</p>
+                            <pre className="text-xs bg-black/40 rounded p-2.5 overflow-auto max-h-48 text-gray-300 whitespace-pre-wrap break-all">
+                                {typeof event.toolInput === "string"
+                                    ? event.toolInput
+                                    : JSON.stringify(event.toolInput, null, 2)}
+                            </pre>
+                        </div>
+                    )}
+
+                    {/* Tool Output */}
+                    {event.toolOutput && (
+                        <div className="px-3 py-2">
+                            <p className="text-[10px] font-bold uppercase text-green-400 mb-1">
+                                Output
+                                {event.toolOutputLength && (
+                                    <span className="text-gray-500 font-normal ml-2">
+                                        ({event.toolOutputLength.toLocaleString()} chars)
+                                    </span>
+                                )}
+                            </p>
+                            <pre className="text-xs bg-black/40 rounded p-2.5 overflow-auto max-h-64 text-gray-300 whitespace-pre-wrap break-all">
+                                {event.toolOutput}
+                            </pre>
+                        </div>
+                    )}
+
+                    {/* Reasoning / Thought */}
+                    {event.reasoning && event.type === "agent_thought" && (
+                        <div className="px-3 py-2">
+                            <p className="text-[10px] font-bold uppercase text-gray-400 mb-1">Reasoning</p>
+                            <p className="text-xs text-gray-300 whitespace-pre-wrap leading-relaxed">
+                                {event.reasoning}
+                            </p>
+                        </div>
+                    )}
+
+                    {/* Error */}
+                    {event.error && (
+                        <div className="px-3 py-2">
+                            <p className="text-[10px] font-bold uppercase text-red-400 mb-1">Error</p>
+                            <pre className="text-xs text-red-300 whitespace-pre-wrap">{event.error}</pre>
+                        </div>
+                    )}
+
+                    {/* Token usage detail */}
+                    {event.tokenUsage && event.tokenUsage.totalTokens > 0 && (
+                        <div className="px-3 py-2 flex gap-4">
+                            <div>
+                                <span className="text-[10px] text-gray-500">Input Tokens</span>
+                                <p className="text-sm font-mono text-purple-300">{event.tokenUsage.inputTokens.toLocaleString()}</p>
+                            </div>
+                            <div>
+                                <span className="text-[10px] text-gray-500">Output Tokens</span>
+                                <p className="text-sm font-mono text-purple-300">{event.tokenUsage.outputTokens.toLocaleString()}</p>
+                            </div>
+                            <div>
+                                <span className="text-[10px] text-gray-500">Total</span>
+                                <p className="text-sm font-mono text-purple-200">{event.tokenUsage.totalTokens.toLocaleString()}</p>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function TestDbAgentPage() {
@@ -248,7 +447,22 @@ export default function TestDbAgentPage() {
 
     const [running, setRunning] = useState(false);
     const [result, setResult] = useState<AgentOutput | null>(null);
-    const [activeTab, setActiveTab] = useState<"report" | "steps">("report");
+    const [activeTab, setActiveTab] = useState<"report" | "steps" | "live">("live");
+
+    // Live streaming state
+    const [liveEvents, setLiveEvents] = useState<StreamEvent[]>([]);
+    const [tokenTotals, setTokenTotals] = useState({ input: 0, output: 0 });
+    const [elapsedMs, setElapsedMs] = useState(0);
+    const [stepsCompleted, setStepsCompleted] = useState(0);
+    const logEndRef = useRef<HTMLDivElement>(null);
+    const [autoScroll, setAutoScroll] = useState(true);
+
+    // Auto-scroll live log
+    useEffect(() => {
+        if (autoScroll && logEndRef.current) {
+            logEndRef.current.scrollIntoView({ behavior: "smooth" });
+        }
+    }, [liveEvents, autoScroll]);
 
     // ── Load repositories on mount ──
     useEffect(() => {
@@ -276,7 +490,7 @@ export default function TestDbAgentPage() {
         }
     }, [selectedRepo]);
 
-    // ── Run agent ──
+    // ── Run agent with SSE streaming ──
     const runAgent = useCallback(async () => {
         if (!selectedRepo) return;
 
@@ -286,7 +500,6 @@ export default function TestDbAgentPage() {
 
         const installationId = selectedRepo.user.githubInstallationId;
 
-        // Need at least one auth source
         if (!oauthToken && !installationId) {
             alert("No access token or installation ID available. Enable the override and paste a token.");
             return;
@@ -294,7 +507,11 @@ export default function TestDbAgentPage() {
 
         setRunning(true);
         setResult(null);
-        setActiveTab("report");
+        setLiveEvents([]);
+        setTokenTotals({ input: 0, output: 0 });
+        setElapsedMs(0);
+        setStepsCompleted(0);
+        setActiveTab("live");
 
         try {
             const res = await fetch("/api/agent/db-test", {
@@ -306,21 +523,98 @@ export default function TestDbAgentPage() {
                     archetypeScore,
                 }),
             });
-            const data = await res.json();
-            setResult(data);
-            if (data.report) {
-                setActiveTab("report");
-            } else {
-                setActiveTab("steps");
+
+            if (!res.ok) {
+                const errBody = await res.json().catch(() => ({ error: "Request failed" }));
+                throw new Error(errBody.error ?? `HTTP ${res.status}`);
+            }
+
+            const reader = res.body?.getReader();
+            if (!reader) throw new Error("No response body");
+
+            const decoder = new TextDecoder();
+            let buffer = "";
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+
+                // Parse SSE events from buffer
+                const lines = buffer.split("\n");
+                buffer = lines.pop() ?? ""; // keep incomplete line in buffer
+
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (!trimmed.startsWith("data: ")) continue;
+
+                    const jsonStr = trimmed.slice(6);
+                    try {
+                        const event: StreamEvent = JSON.parse(jsonStr);
+
+                        if (event.type === "result") {
+                            // Final result with report + intermediateSteps
+                            setResult({
+                                report: event.report ?? null,
+                                intermediateSteps: event.intermediateSteps ?? [],
+                                totalToolCalls: event.totalToolCalls ?? 0,
+                                executionTimeMs: event.executionTimeMs ?? 0,
+                                error: event.error,
+                            });
+                            continue;
+                        }
+
+                        // Accumulate live events
+                        setLiveEvents(prev => [...prev, event]);
+
+                        // Update running totals
+                        if (event.cumulativeTokens) {
+                            setTokenTotals({
+                                input: event.cumulativeTokens.inputTokens,
+                                output: event.cumulativeTokens.outputTokens,
+                            });
+                        }
+                        if (event.elapsedMs) {
+                            setElapsedMs(event.elapsedMs);
+                        }
+                        if (event.stepNumber > 0) {
+                            setStepsCompleted(event.stepNumber);
+                        }
+
+                        // If this is a done event, also set result
+                        if (event.type === "done") {
+                            if (event.report || event.error) {
+                                setResult(prev => prev ?? {
+                                    report: event.report ?? null,
+                                    intermediateSteps: [],
+                                    totalToolCalls: event.totalToolCalls ?? 0,
+                                    executionTimeMs: event.executionTimeMs ?? 0,
+                                    error: event.error,
+                                });
+                            }
+                        }
+                    } catch {
+                        // skip malformed events
+                    }
+                }
             }
         } catch (e) {
+            const errorMsg = e instanceof Error ? e.message : "Unknown error";
             setResult({
                 report: null,
                 intermediateSteps: [],
                 totalToolCalls: 0,
                 executionTimeMs: 0,
-                error: e instanceof Error ? e.message : "Unknown error",
+                error: errorMsg,
             });
+            setLiveEvents(prev => [...prev, {
+                type: "error",
+                stepNumber: -1,
+                timestamp: new Date().toISOString(),
+                elapsedMs: 0,
+                error: errorMsg,
+            }]);
         } finally {
             setRunning(false);
         }
@@ -514,44 +808,90 @@ export default function TestDbAgentPage() {
                     </div>
                 </Card>
 
+                {/* Live status bar (shown while running or when events exist) */}
+                {(running || liveEvents.length > 0) && (
+                    <div className="bg-gray-900/80 border border-white/10 rounded-xl px-5 py-3 flex items-center gap-6 text-xs">
+                        {running && (
+                            <div className="flex items-center gap-2">
+                                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                                <span className="text-emerald-400 font-semibold">LIVE</span>
+                            </div>
+                        )}
+                        {!running && liveEvents.length > 0 && (
+                            <div className="flex items-center gap-2">
+                                <span className="w-2 h-2 rounded-full bg-gray-500" />
+                                <span className="text-gray-400 font-semibold">COMPLETE</span>
+                            </div>
+                        )}
+                        <div>
+                            <span className="text-gray-500">Steps</span>
+                            <span className="ml-1 font-mono text-blue-400">{stepsCompleted}</span>
+                        </div>
+                        <div>
+                            <span className="text-gray-500">Elapsed</span>
+                            <span className="ml-1 font-mono text-purple-400">{formatMs(elapsedMs)}</span>
+                        </div>
+                        <div>
+                            <span className="text-gray-500">Input Tokens</span>
+                            <span className="ml-1 font-mono text-amber-400">{formatTokens(tokenTotals.input)}</span>
+                        </div>
+                        <div>
+                            <span className="text-gray-500">Output Tokens</span>
+                            <span className="ml-1 font-mono text-amber-400">{formatTokens(tokenTotals.output)}</span>
+                        </div>
+                        <div>
+                            <span className="text-gray-500">Total Tokens</span>
+                            <span className="ml-1 font-mono font-bold text-amber-300">
+                                {formatTokens(tokenTotals.input + tokenTotals.output)}
+                            </span>
+                        </div>
+                        <div className="ml-auto">
+                            <span className="text-gray-500">Events</span>
+                            <span className="ml-1 font-mono text-gray-300">{liveEvents.length}</span>
+                        </div>
+                    </div>
+                )}
+
                 {/* Results */}
-                {result && (
+                {(result || liveEvents.length > 0) && (
                     <div className="space-y-4">
                         {/* Meta stats */}
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                            {[
-                                {
-                                    label: "Status",
-                                    value: result.error ? "Error" : result.report ? "Success" : "No report",
-                                    color: result.error ? "text-red-400" : result.report ? "text-emerald-400" : "text-amber-400",
-                                },
-                                {
-                                    label: "Tool Calls",
-                                    value: result.totalToolCalls,
-                                    color: "text-blue-400",
-                                },
-                                {
-                                    label: "Execution Time",
-                                    value: `${(result.executionTimeMs / 1000).toFixed(1)}s`,
-                                    color: "text-purple-400",
-                                },
-                                {
-                                    label: "Confidence",
-                                    value: result.report
-                                        ? `${((result.report.confidence as number) * 100).toFixed(0)}%`
-                                        : "—",
-                                    color: "text-yellow-400",
-                                },
-                            ].map((s) => (
-                                <Card key={s.label} className="p-4!">
-                                    <p className="text-xs text-gray-500">{s.label}</p>
-                                    <p className={`text-xl font-bold mt-1 ${s.color}`}>{s.value}</p>
-                                </Card>
-                            ))}
-                        </div>
+                        {result && (
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                                {[
+                                    {
+                                        label: "Status",
+                                        value: result.error ? "Error" : result.report ? "Success" : "No report",
+                                        color: result.error ? "text-red-400" : result.report ? "text-emerald-400" : "text-amber-400",
+                                    },
+                                    {
+                                        label: "Tool Calls",
+                                        value: result.totalToolCalls,
+                                        color: "text-blue-400",
+                                    },
+                                    {
+                                        label: "Execution Time",
+                                        value: `${(result.executionTimeMs / 1000).toFixed(1)}s`,
+                                        color: "text-purple-400",
+                                    },
+                                    {
+                                        label: "Confidence",
+                                        value: result.report
+                                            ? `${((result.report.confidence as number) * 100).toFixed(0)}%`
+                                            : "—",
+                                        color: "text-yellow-400",
+                                    },
+                                ].map((s) => (
+                                    <Card key={s.label} className="p-4!">
+                                        <p className="text-xs text-gray-500">{s.label}</p>
+                                        <p className={`text-xl font-bold mt-1 ${s.color}`}>{s.value}</p>
+                                    </Card>
+                                ))}
+                            </div>
+                        )}
 
                         {/* Error state */}
-                        {result.error && (
+                        {result?.error && (
                             <Card className="border-red-500/30 bg-red-950/20">
                                 <p className="text-sm font-semibold text-red-400 mb-1">
                                     ⚠ Agent Error
@@ -565,7 +905,7 @@ export default function TestDbAgentPage() {
                         {/* Tabs */}
                         <div>
                             <div className="flex gap-1 mb-4">
-                                {(["report", "steps"] as const).map((tab) => (
+                                {(["live", "report", "steps"] as const).map((tab) => (
                                     <button
                                         key={tab}
                                         onClick={() => setActiveTab(tab)}
@@ -574,15 +914,109 @@ export default function TestDbAgentPage() {
                                             : "text-gray-400 hover:text-gray-200 hover:bg-white/5"
                                             }`}
                                     >
-                                        {tab === "report"
-                                            ? `📊 Report (${(result.report?.findings as unknown[])?.length ?? 0} findings)`
-                                            : `🔧 Tool Steps (${result.intermediateSteps.length})`}
+                                        {tab === "live"
+                                            ? `📡 Live Logs (${liveEvents.length})`
+                                            : tab === "report"
+                                                ? `📊 Report (${(result?.report?.findings as unknown[])?.length ?? 0} findings)`
+                                                : `🔧 Tool Steps (${result?.intermediateSteps?.length ?? 0})`}
                                     </button>
                                 ))}
                             </div>
 
+                            {/* Live Logs tab */}
+                            {activeTab === "live" && (
+                                <div className="space-y-1">
+                                    {/* Controls bar */}
+                                    <div className="flex items-center justify-between mb-2">
+                                        <p className="text-xs text-gray-500">
+                                            {liveEvents.length} events
+                                            {running && " — streaming…"}
+                                        </p>
+                                        <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer select-none">
+                                            <input
+                                                type="checkbox"
+                                                className="accent-emerald-500"
+                                                checked={autoScroll}
+                                                onChange={(e) => setAutoScroll(e.target.checked)}
+                                            />
+                                            Auto-scroll
+                                        </label>
+                                    </div>
+
+                                    {/* Event list */}
+                                    <div className="space-y-1 max-h-[700px] overflow-y-auto rounded-lg" id="live-log-container">
+                                        {liveEvents.map((ev, i) => (
+                                            <LiveEventRow key={i} event={ev} index={i} />
+                                        ))}
+                                        {liveEvents.length === 0 && !running && (
+                                            <Card className="text-center py-10">
+                                                <p className="text-gray-500">
+                                                    No events yet. Run the agent to see live logs.
+                                                </p>
+                                            </Card>
+                                        )}
+                                        {running && liveEvents.length === 0 && (
+                                            <Card className="text-center py-10">
+                                                <div className="flex items-center justify-center gap-2 text-gray-400">
+                                                    <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                                                    </svg>
+                                                    Waiting for first event…
+                                                </div>
+                                            </Card>
+                                        )}
+                                        <div ref={logEndRef} />
+                                    </div>
+
+                                    {/* Token summary card */}
+                                    {(tokenTotals.input > 0 || tokenTotals.output > 0) && (
+                                        <Card className="mt-4">
+                                            <h3 className="text-sm font-semibold text-gray-200 mb-3">Token Usage Summary</h3>
+                                            <div className="grid grid-cols-3 gap-4">
+                                                <div className="text-center">
+                                                    <p className="text-2xl font-bold font-mono text-blue-400">
+                                                        {tokenTotals.input.toLocaleString()}
+                                                    </p>
+                                                    <p className="text-xs text-gray-500 mt-1">Input Tokens</p>
+                                                </div>
+                                                <div className="text-center">
+                                                    <p className="text-2xl font-bold font-mono text-purple-400">
+                                                        {tokenTotals.output.toLocaleString()}
+                                                    </p>
+                                                    <p className="text-xs text-gray-500 mt-1">Output Tokens</p>
+                                                </div>
+                                                <div className="text-center">
+                                                    <p className="text-2xl font-bold font-mono text-amber-400">
+                                                        {(tokenTotals.input + tokenTotals.output).toLocaleString()}
+                                                    </p>
+                                                    <p className="text-xs text-gray-500 mt-1">Total Tokens</p>
+                                                </div>
+                                            </div>
+                                            {/* Visual bar */}
+                                            <div className="mt-3 h-3 bg-gray-800 rounded-full overflow-hidden flex">
+                                                <div
+                                                    className="bg-blue-500 transition-all duration-300"
+                                                    style={{ width: `${tokenTotals.input / (tokenTotals.input + tokenTotals.output + 1) * 100}%` }}
+                                                    title={`Input: ${tokenTotals.input.toLocaleString()}`}
+                                                />
+                                                <div
+                                                    className="bg-purple-500 transition-all duration-300"
+                                                    style={{ width: `${tokenTotals.output / (tokenTotals.input + tokenTotals.output + 1) * 100}%` }}
+                                                    title={`Output: ${tokenTotals.output.toLocaleString()}`}
+                                                />
+                                            </div>
+                                            <div className="flex justify-between text-[10px] text-gray-600 mt-1">
+                                                <span>← Input ({Math.round(tokenTotals.input / (tokenTotals.input + tokenTotals.output + 1) * 100)}%)</span>
+                                                <span>Output ({Math.round(tokenTotals.output / (tokenTotals.input + tokenTotals.output + 1) * 100)}%) →</span>
+                                            </div>
+                                        </Card>
+                                    )}
+                                </div>
+                            )}
+
                             {/* Report tab */}
-                            {activeTab === "report" && result.report && (
+                            {activeTab === "report" && result?.report && (
                                 <div className="space-y-5">
                                     {/* Summary strip */}
                                     <Card>
@@ -684,13 +1118,15 @@ export default function TestDbAgentPage() {
                                 </div>
                             )}
 
-                            {activeTab === "report" && !result.report && !result.error && (
+                            {activeTab === "report" && !result?.report && !result?.error && (
                                 <Card className="text-center py-10">
                                     <p className="text-gray-500">
-                                        Agent completed but did not produce a final report.
+                                        {running
+                                            ? "Agent is running — report will appear when complete."
+                                            : "Agent completed but did not produce a final report."}
                                     </p>
                                     <p className="text-xs text-gray-600 mt-1">
-                                        Switch to Tool Steps to inspect intermediate messages.
+                                        Switch to Live Logs to inspect events.
                                     </p>
                                 </Card>
                             )}
@@ -698,12 +1134,16 @@ export default function TestDbAgentPage() {
                             {/* Steps tab */}
                             {activeTab === "steps" && (
                                 <div className="space-y-1.5">
-                                    {result.intermediateSteps.map((msg, i) => (
+                                    {(result?.intermediateSteps ?? []).map((msg, i) => (
                                         <ToolStepRow key={i} msg={msg} index={i} />
                                     ))}
-                                    {result.intermediateSteps.length === 0 && (
+                                    {(result?.intermediateSteps ?? []).length === 0 && (
                                         <Card className="text-center py-10">
-                                            <p className="text-gray-500">No intermediate steps recorded.</p>
+                                            <p className="text-gray-500">
+                                                {running
+                                                    ? "Steps will appear after agent completes."
+                                                    : "No intermediate steps recorded."}
+                                            </p>
                                         </Card>
                                     )}
                                 </div>
