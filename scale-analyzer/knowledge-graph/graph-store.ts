@@ -366,6 +366,14 @@ export class GraphStore {
     });
   }
 
+  /** Get a single flow by its primary key ID. */
+  async getFlowById(id: string): Promise<any | null> {
+    return this.prisma.codeFlow.findUnique({
+      where: { id },
+    });
+  }
+
+
   // ─── Helpers ───────────────────────────────────────────────────────────
 
   private makeQualified(node: NodeInfo): string {
