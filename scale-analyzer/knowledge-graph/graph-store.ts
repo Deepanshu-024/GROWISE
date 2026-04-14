@@ -54,8 +54,10 @@ export interface FlowData {
   nodeCount: number;
   fileCount: number;
   criticality: number;
-  path: string[];     // ordered qualified names
-  files: string[];    // distinct files touched
+  dbCallCount: number;  // total DB-touching calls across the entire BFS flow
+  hasN1Risk: boolean;   // true if any node has fan-out>2 AND ≥1 DB call
+  path: string[];       // ordered qualified names
+  files: string[];      // distinct files touched
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -346,6 +348,8 @@ export class GraphStore {
         nodeCount: flow.nodeCount,
         fileCount: flow.fileCount,
         criticality: flow.criticality,
+        dbCallCount: flow.dbCallCount,
+        hasN1Risk: flow.hasN1Risk,
         pathJson: flow.path,
         filesJson: flow.files,
       })),
@@ -354,13 +358,21 @@ export class GraphStore {
     return flows.length;
   }
 
-  /** Get stored flows, sorted by criticality (descending). */
+  /** Get stored flows, sorted by the given column (descending).
+   *  When sortBy='dbCallCount', flows with zero DB calls are excluded
+   *  automatically — they are noise for database analysis.
+   */
   async getFlows(
-    sortBy: 'criticality' | 'depth' | 'nodeCount' = 'criticality',
+    sortBy: 'criticality' | 'depth' | 'nodeCount' | 'dbCallCount' = 'criticality',
     limit: number = 50,
   ): Promise<any[]> {
+    const where: any = { repositoryId: this.repositoryId };
+    // Exclude zero-DB-call flows when sorting by DB count — irrelevant for DB analysis
+    if (sortBy === 'dbCallCount') {
+      where.dbCallCount = { gt: 1 };
+    }
     return this.prisma.codeFlow.findMany({
-      where: { repositoryId: this.repositoryId },
+      where,
       orderBy: { [sortBy]: 'desc' },
       take: limit,
     });
@@ -373,12 +385,21 @@ export class GraphStore {
     });
   }
 
-  /** Search flows by partial name match (Postgres ILIKE). Returns up to `limit` results. */
+  /**
+   * Search flows by partial name OR entryPointQn match (Postgres ILIKE).
+   *
+   * Flows are stored with name = bare function name (e.g. "POST") and
+   * entryPointQn = full qualified name (e.g. "src/app/api/checkout/route.ts::POST").
+   * Agents often pass qualified names, so we search both columns.
+   */
   async searchFlowsByName(partialName: string, limit: number = 10): Promise<any[]> {
     return this.prisma.codeFlow.findMany({
       where: {
         repositoryId: this.repositoryId,
-        name: { contains: partialName, mode: 'insensitive' },
+        OR: [
+          { name: { contains: partialName, mode: 'insensitive' } },
+          { entryPointQn: { contains: partialName, mode: 'insensitive' } },
+        ],
       },
       orderBy: { criticality: 'desc' },
       take: limit,

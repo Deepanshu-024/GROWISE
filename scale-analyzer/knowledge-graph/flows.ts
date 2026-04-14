@@ -153,12 +153,35 @@ async function traceSingleFlow(
     nodeCount: pathQnames.length,
     fileCount: files.length,
     criticality: 0.0,
+    dbCallCount: 0,
+    hasN1Risk: false,
     path: pathQnames,
     files,
   };
 
-  // Score criticality
+  // Score criticality (also derives dbCalls internally, but doesn't expose them)
   flow.criticality = await computeScaleCriticality(flow, store);
+
+  // Compute dbCallCount and hasN1Risk via the same edge-scan used in the in-memory path
+  let dbCalls = 0;
+  let hasN1Risk = false;
+  for (const qn of pathQnames) {
+    const edges = await store.getEdgesBySource(qn);
+    let nodeDbCalls = 0;
+    let callCount = 0;
+    for (const edge of edges) {
+      if (edge.kind !== 'CALLS') continue;
+      callCount++;
+      const targetName = edge.targetQualified.split('::').pop()?.split('.').pop() ?? '';
+      if (DB_KEYWORDS.has(targetName)) {
+        dbCalls++;
+        nodeDbCalls++;
+      }
+    }
+    if (callCount > 2 && nodeDbCalls >= 1) hasN1Risk = true;
+  }
+  flow.dbCallCount = dbCalls;
+  flow.hasN1Risk = hasN1Risk;
 
   return flow;
 }
@@ -261,17 +284,25 @@ function traceSingleFlowInMemory(
   let dbCalls = 0;
   let maxFanOut = 0;
   let externalCount = 0;
+  let hasN1Risk = false;
 
   for (const node of nodes) {
     const edges = edgesBySource.get(node.qualifiedName) ?? [];
     let callCount = 0;
+    let nodeDbCalls = 0;
     for (const edge of edges) {
       callCount++;
       const targetName = edge.targetQualified.split('::').pop()?.split('.').pop() ?? '';
-      if (DB_KEYWORDS.has(targetName)) dbCalls++;
+      if (DB_KEYWORDS.has(targetName)) {
+        dbCalls++;
+        nodeDbCalls++;
+      }
       if (!nodeMap.has(edge.targetQualified)) externalCount++;
     }
     maxFanOut = Math.max(maxFanOut, callCount);
+    // N+1 heuristic: a single function with fan-out>2 AND ≥1 DB call
+    // suggests DB calls inside a loop or repeated fan-out pattern
+    if (callCount > 2 && nodeDbCalls >= 1) hasN1Risk = true;
   }
 
   const dbRatio = Math.min(dbCalls / 5, 1.0);
@@ -293,6 +324,8 @@ function traceSingleFlowInMemory(
     nodeCount: pathQnames.length,
     fileCount: files.length,
     criticality,
+    dbCallCount: dbCalls,
+    hasN1Risk,
     path: pathQnames,
     files,
   };

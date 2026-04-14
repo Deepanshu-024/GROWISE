@@ -338,3 +338,104 @@ export async function validateGitHubToken(accessToken: string): Promise<boolean>
     return false;
   }
 }
+
+/**
+ * Tool 4: Get Code Block
+ * Fetches a specific line range from a file in a GitHub repository.
+ * Use lineStart/lineEnd from get_flow step data to read exactly the function
+ * body without fetching the full file — typically 80-90% fewer tokens.
+ */
+export const getCodeBlockTool = tool(
+  async (input): Promise<string> => {
+    const { owner, repo, filePath, lineStart, lineEnd, accessToken, branch } = input as {
+      owner: string;
+      repo: string;
+      filePath: string;
+      lineStart: number;
+      lineEnd: number;
+      accessToken: string;
+      branch?: string;
+    };
+    try {
+      const ref = branch ?? 'main';
+      const url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(filePath)}?ref=${encodeURIComponent(ref)}`;
+
+      const response = await fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Accept': 'application/vnd.github.v3.raw',
+          'User-Agent': 'DevilDev-Agent'
+        }
+      });
+
+      if (!response.ok) {
+        // Try default branch if specified branch fails
+        if (branch && response.status === 404) {
+          const fallbackUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(filePath)}`;
+          const fallbackResp = await fetch(fallbackUrl, {
+            headers: {
+              'Authorization': `Bearer ${accessToken}`,
+              'Accept': 'application/vnd.github.v3.raw',
+              'User-Agent': 'DevilDev-Agent'
+            }
+          });
+          if (!fallbackResp.ok) {
+            throw new Error(`File not found: ${filePath} (tried branch "${branch}" and default)`);
+          }
+          const fallbackContent = await fallbackResp.text();
+          return sliceLines(fallbackContent, filePath, lineStart, lineEnd);
+        }
+        if (response.status === 404) throw new Error(`File not found: ${filePath}`);
+        throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
+      }
+
+      const content = await response.text();
+      return sliceLines(content, filePath, lineStart, lineEnd);
+
+    } catch (error) {
+      return `Error reading code block from ${filePath}:${lineStart}-${lineEnd}: ${error instanceof Error ? error.message : 'Unknown error'}`;
+    }
+  },
+  {
+    name: 'getCodeBlock',
+    description:
+      'Fetch a specific line range from a file in a GitHub repository. ' +
+      'PREFERRED over getFileContent when you have lineStart/lineEnd from get_flow step data. ' +
+      'Returns only the requested lines with line numbers prepended — ' +
+      'uses ~80-90% fewer tokens than reading the full file. ' +
+      'Use lineStart/lineEnd from the "steps" array in get_flow output.',
+    schema: z.object({
+      owner: z.string().describe('Repository owner/organization name'),
+      repo: z.string().describe('Repository name'),
+      filePath: z.string().describe('File path within the repository (e.g. "src/app/api/checkout/route.ts")'),
+      lineStart: z.number().describe('First line to include (1-indexed, from get_flow step.lineStart)'),
+      lineEnd: z.number().describe('Last line to include (1-indexed, from get_flow step.lineEnd)'),
+      accessToken: z.string().describe('GitHub access token for authentication'),
+      branch: z.string().optional().describe('Branch name (optional, uses default branch if not specified)'),
+    }),
+  }
+);
+
+/** Slice file content to the given 1-indexed line range and prepend line numbers. */
+function sliceLines(content: string, filePath: string, lineStart: number, lineEnd: number): string {
+  const allLines = content.split('\n');
+  const totalLines = allLines.length;
+
+  // Clamp to valid range
+  const start = Math.max(1, lineStart);
+  const end = Math.min(totalLines, lineEnd);
+
+  if (start > totalLines) {
+    return `File ${filePath} has only ${totalLines} lines (requested lineStart=${lineStart})`;
+  }
+
+  const sliced = allLines.slice(start - 1, end);
+  const numbered = sliced.map((line, i) => `${String(start + i).padStart(4, ' ')} | ${line}`);
+
+  return [
+    `Code block: ${filePath} lines ${start}–${end} (of ${totalLines} total)`,
+    '',
+    ...numbered,
+  ].join('\n');
+}
+

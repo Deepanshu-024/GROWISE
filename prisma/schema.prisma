@@ -116,6 +116,8 @@ model CodeFlow {
   nodeCount      Int
   fileCount      Int
   criticality    Float      @default(0.0)  // 0.0 - 1.0 scale-risk score
+  dbCallCount    Int        @default(0)    // total DB-touching calls across the entire flow
+  hasN1Risk      Boolean    @default(false) // true if any single node has fan-out>2 + DB call
   pathJson       Json       @default("[]") // ordered qualified names
   filesJson      Json       @default("[]") // distinct files touched
 
@@ -123,4 +125,5 @@ model CodeFlow {
 
   @@index([repositoryId])
   @@index([repositoryId, criticality])
+  @@index([repositoryId, dbCallCount])
 }

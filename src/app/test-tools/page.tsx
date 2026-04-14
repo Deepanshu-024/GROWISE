@@ -94,38 +94,85 @@ const TOOL_DEFS: ToolDef[] = [
     },
     {
         name: "list_flows",
-        description: "List execution flows sorted by criticality.",
+        description: "List execution flows that make DB calls, sorted by DB call count (most DB-heavy first).",
         params: [
             {
                 name: "sortBy",
                 type: "enum",
-                description: "Sort field",
+                description: "Sort column",
                 required: false,
-                defaultValue: "criticality",
-                enumValues: ["criticality", "depth", "nodeCount"],
+                defaultValue: "dbCallCount",
+                enumValues: ["dbCallCount", "criticality", "depth", "nodeCount"],
             },
-            { name: "limit", type: "number", description: "Max flows", required: false, defaultValue: 20 },
+            { name: "limit", type: "number", description: "Max flows to return", required: false, defaultValue: 30 },
             { name: "kind", type: "string", description: "Filter by node kind e.g. Function", required: false },
-            {
-                name: "detailLevel",
-                type: "enum",
-                description: "standard or minimal",
-                required: false,
-                defaultValue: "standard",
-                enumValues: ["standard", "minimal"],
-            },
+            { name: "minDbCalls", type: "number", description: "Min DB calls to include (default 2)", required: false, defaultValue: 2 },
         ],
+        hint: "Returns flows sorted by dbCallCount. Use flowId from results with get_flow.",
     },
     {
         name: "get_flow",
         description: "Get full details of a single execution flow by ID or partial name.",
         params: [
-            { name: "flowId", type: "string", description: "Exact flow ID (from list_flows)", required: false },
-            { name: "flowName", type: "string", description: "Partial name to search for", required: false },
+            { name: "flowId", type: "string", description: "Exact flow ID (from list_flows — most reliable)", required: false },
+            { name: "flowName", type: "string", description: "Partial name or entryPointQn to search for", required: false },
         ],
-        hint: "Run list_flows first to get an ID or name to look up.",
+        hint: "Run list_flows first to get a flowId. flowId is the most reliable lookup.",
+    },
+    // ─── GitHub tools ────────────────────────────────────────────────────────
+    {
+        name: "getCodeBlock",
+        description: "Fetch a specific line range from a GitHub file. Use lineStart/lineEnd from get_flow step data.",
+        params: [
+            { name: "owner", type: "string", description: "GitHub owner/org name", required: true },
+            { name: "repo", type: "string", description: "Repository name", required: true },
+            { name: "filePath", type: "string", description: "File path e.g. src/app/api/checkout/route.ts", required: true },
+            { name: "lineStart", type: "number", description: "First line (1-indexed)", required: true, defaultValue: 1 },
+            { name: "lineEnd", type: "number", description: "Last line (1-indexed)", required: true, defaultValue: 50 },
+            { name: "accessToken", type: "string", description: "GitHub access token", required: true },
+            { name: "branch", type: "string", description: "Branch name (optional)", required: false, defaultValue: "main" },
+        ],
+        hint: "Fetches only the specified lines — ~80% fewer tokens than getFileContent.",
+    },
+    {
+        name: "getFileContent",
+        description: "Get the full raw content of a GitHub file (500 KB limit).",
+        params: [
+            { name: "owner", type: "string", description: "GitHub owner/org name", required: true },
+            { name: "repo", type: "string", description: "Repository name", required: true },
+            { name: "path", type: "string", description: "File path e.g. src/app/api/checkout/route.ts", required: true },
+            { name: "accessToken", type: "string", description: "GitHub access token", required: true },
+            { name: "branch", type: "string", description: "Branch name (optional)", required: false, defaultValue: "main" },
+        ],
+        hint: "Prefer getCodeBlock when you know the line range from get_flow.",
+    },
+    {
+        name: "searchCode",
+        description: "Search for keywords or patterns within a GitHub repository.",
+        params: [
+            { name: "owner", type: "string", description: "GitHub owner/org name", required: true },
+            { name: "repo", type: "string", description: "Repository name", required: true },
+            { name: "query", type: "string", description: "Search query e.g. 'findMany', 'useEffect'", required: true },
+            { name: "accessToken", type: "string", description: "GitHub access token", required: true },
+            { name: "language", type: "string", description: "Filter by language e.g. typescript", required: false },
+            { name: "extension", type: "string", description: "Filter by extension e.g. ts", required: false },
+            { name: "path", type: "string", description: "Filter by path pattern e.g. src/", required: false },
+        ],
+        hint: "Returns file paths that match — not the code content itself.",
+    },
+    {
+        name: "getRepoTree",
+        description: "Get the complete recursive file tree of a GitHub repository.",
+        params: [
+            { name: "owner", type: "string", description: "GitHub owner/org name", required: true },
+            { name: "repo", type: "string", description: "Repository name", required: true },
+            { name: "accessToken", type: "string", description: "GitHub access token", required: true },
+            { name: "branch", type: "string", description: "Branch name (optional)", required: false, defaultValue: "main" },
+        ],
+        hint: "Returns all files and directories recursively.",
     },
 ];
+
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

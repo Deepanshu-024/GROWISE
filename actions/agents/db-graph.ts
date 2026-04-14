@@ -7,7 +7,7 @@ import { tool } from "langchain";
 import { z } from "zod";
 import { gpt5Mini } from "@/lib/llm";
 import prisma from "@/lib/prisma";
-import { getRepoTreeTool, searchCodeTool } from "../analysis/tools/agent-tools";
+import { getRepoTreeTool, searchCodeTool, getCodeBlockTool } from "../analysis/tools/agent-tools";
 import { getDependenciesTool } from "../analysis/tools/getDependenciesTool";
 import { getSchemaDefinitionsTool } from "../analysis/tools/getSchemaDefinitionsTool";
 import { checkConnectionPoolTool } from "../analysis/tools/checkConnectionPoolTool";
@@ -805,6 +805,7 @@ Non-graph tools:
 - getDependencies
 - getRepoTree
 - searchCode
+- getCodeBlock    ← PREFER this over getFileContent when you have lineStart/lineEnd from get_flow steps
 - getSchemaDefinitions
 - checkConnectionPool
 - finalReport
@@ -874,6 +875,7 @@ const dbGraphSupportTools = [
     checkConnectionPoolTool,
     getRepoTreeTool,
     searchCodeTool,
+    getCodeBlockTool,
     finalReportTool,
 ];
 

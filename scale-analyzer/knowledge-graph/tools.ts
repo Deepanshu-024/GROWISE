@@ -662,28 +662,77 @@ export function createKnowledgeGraphTools(prisma: any, repositoryId: string) {
 
   // ─────────────────────────────────────────────────────────────────────
   // 9. list_flows  (mirrors list_flows in flows_tools.py)
-  //    Returns stored flows sorted by criticality, with optional kind filter
-  //    and detail_level support.
+  //    Returns stored flows sorted by dbCallCount (default) or criticality.
+  //    Enriched with routeLabel, priority, dbCallCount, hasN1Risk, getFlowHint.
+  //    Flows with dbCallCount<=1 are excluded when sorting by dbCallCount.
   // ─────────────────────────────────────────────────────────────────────
+
+  /** Parse entryPointQn into a human-friendly route label.
+   *  "src/app/api/checkout/create-order/route.ts::POST"
+   *  → "POST /api/checkout/create-order"
+   */
+  function buildRouteLabel(entryPointQn: string): string {
+    // Pattern: <file>::<method>  e.g. src/app/api/checkout/route.ts::POST
+    const sep = entryPointQn.lastIndexOf('::');
+    if (sep === -1) return entryPointQn;
+
+    const filePart = entryPointQn.slice(0, sep);
+    const method = entryPointQn.slice(sep + 2);
+
+    // Strip common prefixes and trailing /route.ts or /index.ts
+    const cleaned = filePart
+      .replace(/^src\//, '')
+      .replace(/^app\//, '')
+      .replace(/\/route\.[tj]sx?$/, '')
+      .replace(/\/index\.[tj]sx?$/, '');
+
+    // If it looks like an API route, format as METHOD /path
+    if (/^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)$/.test(method)) {
+      const apiPath = '/' + cleaned.replace(/^app\//, '').replace(/^pages\//, '');
+      return `${method} ${apiPath}`;
+    }
+
+    // Server action or other function: just return qualified name
+    return `${method} (${cleaned})`;
+  }
+
+  /** Classify a flow into a priority tier based on path keywords. */
+  function classifyPriority(routeLabel: string, entryPointQn: string): 'critical' | 'high' | 'medium' | 'low' {
+    const combined = (routeLabel + ' ' + entryPointQn).toLowerCase();
+
+    const CRITICAL = ['checkout', 'payment', 'order', 'purchase', 'confirm', 'webhook',
+      'razorpay', 'stripe', 'transaction', 'billing', 'invoice', 'subscription'];
+    const HIGH = ['product', 'products', 'cart', 'user', 'users', 'profile', 'feed',
+      'search', 'item', 'items', 'categor', 'listing', 'dashboard', 'analytics',
+      'home', 'index', 'notification', 'message', 'auth', 'login', 'signup'];
+    const LOW = ['admin', 'export', 'seed', 'migrate', 'health', 'debug', 'test',
+      'dummy', 'revalidate', 'og', 'cron', 'cleanup'];
+
+    if (CRITICAL.some((k) => combined.includes(k))) return 'critical';
+    if (LOW.some((k) => combined.includes(k))) return 'low';
+    if (HIGH.some((k) => combined.includes(k))) return 'high';
+    return 'medium';
+  }
+
   const listFlows = tool(
     async ({
-      sortBy = 'criticality',
-      limit = 50,
+      sortBy = 'dbCallCount',
+      limit = 30,
       kind,
-      detailLevel = 'standard',
+      minDbCalls = 2,
     }: {
       sortBy?: string;
       limit?: number;
       kind?: string;
-      detailLevel?: string;
+      minDbCalls?: number;
     }) => {
       try {
+        const validSort = ['criticality', 'depth', 'nodeCount', 'dbCallCount'].includes(sortBy)
+          ? (sortBy as 'criticality' | 'depth' | 'nodeCount' | 'dbCallCount')
+          : 'dbCallCount';
+
         // Fetch more when filtering by kind so we have enough after filtering
         const fetchLimit = kind ? limit * 10 : limit;
-        const validSort = ['criticality', 'depth', 'nodeCount'].includes(sortBy)
-          ? (sortBy as 'criticality' | 'depth' | 'nodeCount')
-          : 'criticality';
-
         let flows: any[] = await store.getFlows(validSort, fetchLimit);
 
         // Filter by entry point kind if requested
@@ -692,42 +741,68 @@ export function createKnowledgeGraphTools(prisma: any, repositoryId: string) {
           for (const f of flows) {
             if (f.entryPointQn) {
               const epNode = await store.getNode(f.entryPointQn);
-              if (epNode && epNode.kind === kind) {
-                filtered.push(f);
-              }
+              if (epNode && epNode.kind === kind) filtered.push(f);
             }
             if (filtered.length >= limit) break;
           }
           flows = filtered;
         }
 
-        // Normalize flow shape (Prisma returns camelCase)
-        const normalizedFlows = flows.map((f: any) => ({
-          id: f.id,
-          name: f.name,
-          entryPointQn: f.entryPointQn,
-          depth: f.depth,
-          nodeCount: f.nodeCount,
-          fileCount: f.fileCount,
-          criticality: f.criticality,
-          files: f.filesJson ?? [],
-          path: f.pathJson ?? [],
-        }));
+        // Apply minDbCalls filter (default 2 — exclude single-query flows)
+        if (minDbCalls > 0) {
+          flows = flows.filter((f: any) => (f.dbCallCount ?? 0) >= minDbCalls);
+        }
+        flows = flows.slice(0, limit);
 
-        // Apply detail_level
-        const outputFlows = detailLevel === 'minimal'
-          ? normalizedFlows.map((f) => ({
-            name: f.name,
+        // Build enriched output per flow
+        const enrichedFlows = flows.map((f: any) => {
+          const routeLabel = buildRouteLabel(f.entryPointQn ?? f.name);
+          const priority = classifyPriority(routeLabel, f.entryPointQn ?? '');
+          return {
+            flowId: f.id,
+            getFlowHint: `get_flow({ flowId: "${f.id}" })`,
+            routeLabel,
+            priority,
+            dbCallCount: f.dbCallCount ?? 0,
+            hasN1Risk: f.hasN1Risk ?? false,
             criticality: f.criticality,
+            depth: f.depth,
             nodeCount: f.nodeCount,
-          }))
-          : normalizedFlows;
+            fileCount: f.fileCount,
+            // Keep raw fields for compatibility
+            name: f.name,
+            entryPointQn: f.entryPointQn,
+          };
+        });
+
+        // Build summary sentence
+        const byCrit = enrichedFlows.filter((f) => f.priority === 'critical');
+        const byHigh = enrichedFlows.filter((f) => f.priority === 'high');
+        const n1Count = enrichedFlows.filter((f) => f.hasN1Risk).length;
+        const topFlow = enrichedFlows[0];
+        const summaryParts: string[] = [
+          `Found ${enrichedFlows.length} DB-touching flows (critical: ${byCrit.length}, high: ${byHigh.length}).`,
+        ];
+        if (topFlow) {
+          summaryParts.push(
+            `Top: "${topFlow.routeLabel}" with ${topFlow.dbCallCount} DB calls` +
+            (topFlow.hasN1Risk ? ', N+1 risk detected' : '') + '.',
+          );
+        }
+        if (n1Count > 0) {
+          summaryParts.push(`${n1Count} flow(s) have N+1 risk.`);
+        }
+        summaryParts.push(
+          'Use flowId with get_flow() for full step-level details. ' +
+          'Example: ' + (topFlow?.getFlowHint ?? 'get_flow({ flowId: "<id>" })'),
+        );
 
         return JSON.stringify({
           status: 'ok',
-          summary: `Found ${outputFlows.length} execution flow(s)`,
-          flows: outputFlows,
-          total: outputFlows.length,
+          summary: summaryParts.join(' '),
+          sortedBy: validSort,
+          total: enrichedFlows.length,
+          flows: enrichedFlows,
         }, null, 2);
       } catch (err) {
         return JSON.stringify({
@@ -739,23 +814,31 @@ export function createKnowledgeGraphTools(prisma: any, repositoryId: string) {
     {
       name: 'list_flows',
       description:
-        'List execution flows in the codebase sorted by criticality. ' +
-        'Each flow represents a call chain starting from an entry point ' +
-        '(e.g. HTTP handler, CLI command). ' +
-        'Use detailLevel="minimal" for a lightweight summary.',
+        'List execution flows that make database calls, sorted by DB call count (most DB-heavy first). ' +
+        'ALWAYS call this before get_flow to discover which flows to investigate. ' +
+        'Each flow in the response includes: ' +
+        '"flowId" (use this with get_flow — most reliable), ' +
+        '"getFlowHint" (copy-paste ready get_flow call), ' +
+        '"routeLabel" (human-friendly route e.g. "POST /api/checkout/create-order"), ' +
+        '"priority" (critical/high/medium/low based on route path), ' +
+        '"dbCallCount" (total DB calls across the entire flow), ' +
+        '"hasN1Risk" (true = likely N+1 pattern). ' +
+        'Only flows with dbCallCount>=2 are returned by default. ' +
+        'Focus on critical+high priority flows with high dbCallCount and hasN1Risk=true.',
       schema: z.object({
-        sortBy: z.enum(['criticality', 'depth', 'nodeCount'])
-          .optional().default('criticality')
-          .describe('Column to sort by'),
-        limit: z.number().optional().default(50)
-          .describe('Maximum flows to return'),
+        sortBy: z.enum(['dbCallCount', 'criticality', 'depth', 'nodeCount'])
+          .optional().default('dbCallCount')
+          .describe('Sort column. "dbCallCount" (default) = most DB-heavy first'),
+        limit: z.number().optional().default(30)
+          .describe('Maximum flows to return (default 30)'),
         kind: z.string().optional()
           .describe('Filter by entry point kind, e.g. "Function"'),
-        detailLevel: z.enum(['standard', 'minimal']).optional().default('standard')
-          .describe('"standard" returns full flow data; "minimal" returns name/criticality/nodeCount only'),
+        minDbCalls: z.number().optional().default(2)
+          .describe('Minimum dbCallCount to include (default 2 — filters single-query flows)'),
       }),
     },
   );
+
 
   // ─────────────────────────────────────────────────────────────────────
   // 10. get_flow  (mirrors get_flow in flows_tools.py)
@@ -784,27 +867,32 @@ export function createKnowledgeGraphTools(prisma: any, repositoryId: string) {
           // Look up by ID directly
           flow = await store.getFlowById(flowId);
         } else if (flowName) {
-          // Search by partial name match directly in Postgres (no JS-side scan limit)
+          // Search Postgres for partial match on BOTH name (bare fn name, e.g. "POST")
+          // AND entryPointQn (full qualified name, e.g. "src/app/api/checkout/route.ts::POST").
+          // This means you can pass either "POST" or the full qualified name and it will work.
           const nameMatches = await store.searchFlowsByName(flowName, 5);
           if (nameMatches.length > 0) {
-            // nameMatches already ordered by criticality desc — take the best
+            // Results ordered by criticality desc — take the highest-criticality match
             flow = nameMatches[0];
-          } else {
-            // Fallback: search by entryPointQn containing the name
-            const allFlows: any[] = await store.getFlows('criticality', 500);
-            const match = allFlows.find(
-              (f: any) =>
-                f.name.toLowerCase().includes(flowName!.toLowerCase()) ||
-                f.entryPointQn.toLowerCase().includes(flowName!.toLowerCase()),
-            );
-            if (match) flow = match;
           }
         }
 
         if (!flow) {
+          // Show sample entryPointQn values so the agent knows what format to use
+          const sampleFlows = await store.getFlows('criticality', 10);
+          const samples = sampleFlows.map((f: any) => ({
+            name: f.name,
+            entryPointQn: f.entryPointQn,
+          }));
           return JSON.stringify({
             status: 'not_found',
-            summary: 'No flow found matching the given criteria.',
+            summary: `No flow found matching "${flowId ?? flowName}".`,
+            hint: 'Use list_flows first to get exact flow names/IDs. ' +
+              'flowName matches against both the bare function name (e.g. "POST") ' +
+              'and the full entryPointQn (e.g. "src/app/api/checkout/route.ts::POST"). ' +
+              'If the entry point is a generic HTTP method (GET/POST/PUT/DELETE), ' +
+              'pass just the method name e.g. flowName="POST", or use flowId from list_flows.',
+            sampleFlows: samples,
           }, null, 2);
         }
 
@@ -854,10 +942,22 @@ export function createKnowledgeGraphTools(prisma: any, repositoryId: string) {
       name: 'get_flow',
       description:
         'Get full details of a single execution flow including every step in the call path. ' +
-        'Provide flowId (exact ID from list_flows) or flowName (partial match).',
+        'PREFERRED: use flowId (exact ID from list_flows) for precise lookup. ' +
+        'flowName searches against: (1) the bare entry-point function name stored in the flow ' +
+        '(e.g. "POST", "GET", "handler", "createOrder") AND (2) the full entryPointQn ' +
+        '(e.g. "src/app/api/checkout/route.ts::POST"). ' +
+        'Either format works. If multiple flows share the same name (e.g. many "GET" handlers), ' +
+        'the highest-criticality one is returned — use flowId for a specific one.',
       schema: z.object({
-        flowId: z.string().optional().describe('Exact flow ID (from list_flows)'),
-        flowName: z.string().optional().describe('Partial name to search for'),
+        flowId: z.string().optional()
+          .describe('Exact flow ID from list_flows output — most reliable lookup method'),
+        flowName: z.string().optional()
+          .describe(
+            'Partial match against flow name or entryPointQn. ' +
+            'Examples: "POST", "createOrder", "checkout", ' +
+            '"src/app/api/checkout/route.ts::POST". ' +
+            'Run list_flows first if unsure of exact names.',
+          ),
       }),
     },
   );
