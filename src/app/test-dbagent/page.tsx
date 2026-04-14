@@ -28,6 +28,8 @@ interface RepoRecord {
     };
 }
 
+type AgentVariant = "legacy" | "graph";
+
 interface ToolCall {
     name: string;
     args: Record<string, unknown>;
@@ -41,6 +43,7 @@ interface Message {
 }
 
 interface AgentOutput {
+    variant?: AgentVariant;
     report: Record<string, unknown> | null;
     intermediateSteps: Message[];
     totalToolCalls: number;
@@ -65,6 +68,7 @@ interface StreamEvent {
     executionTimeMs?: number;
     error?: string;
     // result event fields
+    variant?: AgentVariant;
     intermediateSteps?: Message[];
 }
 
@@ -205,7 +209,7 @@ function FindingCard({ finding }: { finding: Record<string, unknown> }) {
                             <p className="text-sm text-emerald-300">{finding.fix as string}</p>
                         </div>
                     </div>
-                    {finding.evidence && Object.keys(finding.evidence as object).length > 0 && (
+                    {Boolean(finding.evidence) && Object.keys(finding.evidence as object).length > 0 && (
                         <div>
                             <Label>Evidence</Label>
                             <pre className="text-xs bg-black/40 rounded p-3 overflow-auto max-h-40 text-gray-300">
@@ -277,7 +281,7 @@ const EVENT_CONFIG: Record<string, { icon: string; label: string; color: string;
     done: { icon: "🏁", label: "Done", color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20" },
 };
 
-function LiveEventRow({ event, index }: { event: StreamEvent; index: number }) {
+function LiveEventRow({ event }: { event: StreamEvent }) {
     const [open, setOpen] = useState(false);
     const config = EVENT_CONFIG[event.type] ?? { icon: "📋", label: event.type, color: "text-gray-400", bg: "bg-gray-500/10 border-gray-500/20" };
 
@@ -364,7 +368,7 @@ function LiveEventRow({ event, index }: { event: StreamEvent; index: number }) {
             {open && (
                 <div className="border-t border-white/5">
                     {/* Tool Input */}
-                    {event.toolInput && (
+                    {event.toolInput !== undefined && event.toolInput !== null && (
                         <div className="px-3 py-2">
                             <p className="text-[10px] font-bold uppercase text-blue-400 mb-1">Input</p>
                             <pre className="text-xs bg-black/40 rounded p-2.5 overflow-auto max-h-48 text-gray-300 whitespace-pre-wrap break-all">
@@ -441,6 +445,7 @@ export default function TestDbAgentPage() {
     const [reposError, setReposError] = useState<string | null>(null);
 
     const [selectedRepoId, setSelectedRepoId] = useState<string>("");
+    const [agentVariant, setAgentVariant] = useState<AgentVariant>("legacy");
     const [archetypeScore, setArchetypeScore] = useState<number>(0.5);
     const [accessTokenOverride, setAccessTokenOverride] = useState<string>("");
     const [useTokenOverride, setUseTokenOverride] = useState(false);
@@ -521,6 +526,7 @@ export default function TestDbAgentPage() {
                     repositoryId: selectedRepo.repositoryId,
                     ...(oauthToken ? { accessToken: oauthToken } : { installationId }),
                     archetypeScore,
+                    agentVariant,
                 }),
             });
 
@@ -556,6 +562,7 @@ export default function TestDbAgentPage() {
                         if (event.type === "result") {
                             // Final result with report + intermediateSteps
                             setResult({
+                                variant: event.variant ?? agentVariant,
                                 report: event.report ?? null,
                                 intermediateSteps: event.intermediateSteps ?? [],
                                 totalToolCalls: event.totalToolCalls ?? 0,
@@ -618,7 +625,7 @@ export default function TestDbAgentPage() {
         } finally {
             setRunning(false);
         }
-    }, [selectedRepo, useTokenOverride, accessTokenOverride, archetypeScore]);
+    }, [selectedRepo, useTokenOverride, accessTokenOverride, archetypeScore, agentVariant]);
 
     // ─── Render ───────────────────────────────────────────────────────────────
 
@@ -652,7 +659,7 @@ export default function TestDbAgentPage() {
                         Agent Configuration
                     </h2>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                         {/* Repository Selector */}
                         <div>
                             <Label>Repository</Label>
@@ -675,6 +682,24 @@ export default function TestDbAgentPage() {
                                     ))}
                                 </select>
                             )}
+                        </div>
+
+                        {/* Agent Variant */}
+                        <div>
+                            <Label>Agent Variant</Label>
+                            <select
+                                className="w-full bg-gray-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                                value={agentVariant}
+                                onChange={(e) => setAgentVariant(e.target.value as AgentVariant)}
+                            >
+                                <option value="legacy">Legacy Agent</option>
+                                <option value="graph">Knowledge Graph Agent</option>
+                            </select>
+                            <p className="text-xs text-gray-500 mt-1">
+                                {agentVariant === "graph"
+                                    ? "Graph-backed investigation with graph-first tools."
+                                    : "Baseline agent using the pre-graph toolchain."}
+                            </p>
                         </div>
 
                         {/* Archetype Score */}
@@ -703,7 +728,7 @@ export default function TestDbAgentPage() {
 
                     {/* Selected repo info */}
                     {selectedRepo && (
-                        <div className="mt-4 p-3 bg-gray-800/60 rounded-lg grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                        <div className="mt-4 p-3 bg-gray-800/60 rounded-lg grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
                             <div>
                                 <p className="text-gray-500 mb-0.5">Repository ID</p>
                                 <p className="font-mono text-gray-300 truncate">{selectedRepo.repositoryId}</p>
@@ -717,6 +742,10 @@ export default function TestDbAgentPage() {
                                 <p className="text-gray-300">{selectedRepo.framework ?? "unknown"}</p>
                             </div>
                             <div>
+                                <p className="text-gray-500 mb-0.5">Agent Variant</p>
+                                <p className="text-gray-300">{agentVariant}</p>
+                            </div>
+                            <div>
                                 <p className="text-gray-500 mb-0.5">Auth Method</p>
                                 {selectedRepo.user.githubAccessToken ? (
                                     <p className="text-emerald-400">✓ OAuth token</p>
@@ -727,7 +756,7 @@ export default function TestDbAgentPage() {
                                 )}
                             </div>
                             {selectedRepo.archetypes && selectedRepo.archetypes.length > 0 && (
-                                <div className="col-span-2 sm:col-span-4">
+                                <div className="col-span-2 sm:col-span-5">
                                     <p className="text-gray-500 mb-1">Archetypes</p>
                                     <div className="flex flex-wrap gap-2">
                                         {selectedRepo.archetypes.map((a) => (
@@ -946,7 +975,7 @@ export default function TestDbAgentPage() {
                                     {/* Event list */}
                                     <div className="space-y-1 max-h-[700px] overflow-y-auto rounded-lg" id="live-log-container">
                                         {liveEvents.map((ev, i) => (
-                                            <LiveEventRow key={i} event={ev} index={i} />
+                                            <LiveEventRow key={i} event={ev} />
                                         ))}
                                         {liveEvents.length === 0 && !running && (
                                             <Card className="text-center py-10">

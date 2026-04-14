@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { runDatabaseAgent, StreamEvent } from "../../../../../actions/agents/db";
+import { runDatabaseGraphAgent } from "../../../../../actions/agents/db-graph";
 import { generateInstallationToken } from "@/lib/github";
 
 /**
@@ -7,12 +8,18 @@ import { generateInstallationToken } from "@/lib/github";
  * Runs the Database Agent for a given repository.
  * Returns a Server-Sent Events stream with live agent events.
  *
- * Body: { repositoryId: string, accessToken?: string, installationId?: string, archetypeScore?: number }
+ * Body: {
+ *   repositoryId: string,
+ *   accessToken?: string,
+ *   installationId?: string,
+ *   archetypeScore?: number,
+ *   agentVariant?: "legacy" | "graph"
+ * }
  */
 export async function POST(req: NextRequest) {
     try {
         const body = await req.json();
-        const { repositoryId, accessToken, installationId, archetypeScore } = body;
+        const { repositoryId, accessToken, installationId, archetypeScore, agentVariant } = body;
 
         if (!repositoryId) {
             return new Response(
@@ -37,6 +44,11 @@ export async function POST(req: NextRequest) {
             );
         }
 
+        const variant = agentVariant === "graph" ? "graph" : "legacy";
+        const runAgent = variant === "graph"
+            ? runDatabaseGraphAgent
+            : runDatabaseAgent;
+
         const encoder = new TextEncoder();
 
         const stream = new ReadableStream({
@@ -52,7 +64,7 @@ export async function POST(req: NextRequest) {
                 };
 
                 try {
-                    const output = await runDatabaseAgent({
+                    const output = await runAgent({
                         repositoryId: String(repositoryId),
                         accessToken: resolvedToken,
                         archetypeScore: typeof archetypeScore === "number" ? archetypeScore : 0.5,
@@ -65,6 +77,7 @@ export async function POST(req: NextRequest) {
                         controller.enqueue(
                             encoder.encode(`data: ${JSON.stringify({
                                 type: "result",
+                                variant,
                                 report: output.report,
                                 intermediateSteps: output.intermediateSteps,
                                 totalToolCalls: output.totalToolCalls,

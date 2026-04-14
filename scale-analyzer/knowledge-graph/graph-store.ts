@@ -373,6 +373,17 @@ export class GraphStore {
     });
   }
 
+  /** Search flows by partial name match (Postgres ILIKE). Returns up to `limit` results. */
+  async searchFlowsByName(partialName: string, limit: number = 10): Promise<any[]> {
+    return this.prisma.codeFlow.findMany({
+      where: {
+        repositoryId: this.repositoryId,
+        name: { contains: partialName, mode: 'insensitive' },
+      },
+      orderBy: { criticality: 'desc' },
+      take: limit,
+    });
+  }
 
   // ─── Helpers ───────────────────────────────────────────────────────────
 

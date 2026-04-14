@@ -784,13 +784,20 @@ export function createKnowledgeGraphTools(prisma: any, repositoryId: string) {
           // Look up by ID directly
           flow = await store.getFlowById(flowId);
         } else if (flowName) {
-          // Search by partial name match across top 500 flows
-          const allFlows: any[] = await store.getFlows('criticality', 500);
-          const match = allFlows.find(
-            (f: any) => f.name.toLowerCase().includes(flowName!.toLowerCase()),
-          );
-          if (match) {
-            flow = await store.getFlowById(match.id);
+          // Search by partial name match directly in Postgres (no JS-side scan limit)
+          const nameMatches = await store.searchFlowsByName(flowName, 5);
+          if (nameMatches.length > 0) {
+            // nameMatches already ordered by criticality desc — take the best
+            flow = nameMatches[0];
+          } else {
+            // Fallback: search by entryPointQn containing the name
+            const allFlows: any[] = await store.getFlows('criticality', 500);
+            const match = allFlows.find(
+              (f: any) =>
+                f.name.toLowerCase().includes(flowName!.toLowerCase()) ||
+                f.entryPointQn.toLowerCase().includes(flowName!.toLowerCase()),
+            );
+            if (match) flow = match;
           }
         }
 
