@@ -1184,32 +1184,58 @@ export async function runDatabaseGraphAgent(
 
                             const generation = output.generations?.[0]?.[0];
                             const message = (generation as any)?.message;
-                            const fnCall = message?.additional_kwargs?.function_call;
-                            if (fnCall) {
-                                console.log(`[Step ${stepCounter}] Agent selecting: ${fnCall.name}`);
-                            } else {
-                                const content = String(message?.content ?? "").trim();
-                                if (content.length > 0) {
-                                    agentLog.steps.push({
-                                        stepNumber: stepCounter,
-                                        type: "agent_thought",
-                                        timestamp: new Date().toISOString(),
-                                        reasoning: content.slice(0, 1000),
-                                    });
-                                    console.log(`[Step ${stepCounter}] Agent thought: ${content.slice(0, 300)}`);
 
-                                    emit({
-                                        type: "agent_thought",
-                                        stepNumber: stepCounter,
-                                        timestamp: new Date().toISOString(),
-                                        elapsedMs: Date.now() - startTime,
-                                        reasoning: content.slice(0, 2000),
-                                        cumulativeTokens: {
-                                            inputTokens: cumulativeInputTokens,
-                                            outputTokens: cumulativeOutputTokens,
-                                            totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
-                                        },
-                                    });
+                            // ── Extract reasoning text ──────────────────────────────
+                            // With modern tool-calling models (GPT-4o-mini), the assistant
+                            // message often contains content text ALONGSIDE tool_calls.
+                            // This is the model "thinking out loud" before/while selecting tools.
+                            // Previously we only captured content when there were NO tool_calls,
+                            // which meant we missed all mid-investigation reasoning.
+                            const content = String(message?.content ?? "").trim();
+                            const hasFnCall = Boolean(message?.additional_kwargs?.function_call);
+                            const hasToolCalls = Array.isArray(message?.tool_calls) && message.tool_calls.length > 0;
+                            const hasToolCallsAlt = Array.isArray(message?.additional_kwargs?.tool_calls) && message.additional_kwargs.tool_calls.length > 0;
+                            const isSelectingTool = hasFnCall || hasToolCalls || hasToolCallsAlt;
+
+                            if (content.length > 0) {
+                                // Include reasoning whether or not a tool is also being called
+                                const label = isSelectingTool
+                                    ? `[selecting: ${message?.tool_calls?.[0]?.function?.name ?? message?.additional_kwargs?.function_call?.name ?? "tool"}]\n\n${content}`
+                                    : content;
+
+                                agentLog.steps.push({
+                                    stepNumber: stepCounter,
+                                    type: "agent_thought",
+                                    timestamp: new Date().toISOString(),
+                                    reasoning: label,
+                                });
+                                console.log(`[Step ${stepCounter}] Agent reasoning${isSelectingTool ? " (pre-tool)" : ""}: ${content.slice(0, 300)}`);
+
+                                emit({
+                                    type: "agent_thought",
+                                    stepNumber: stepCounter,
+                                    timestamp: new Date().toISOString(),
+                                    elapsedMs: Date.now() - startTime,
+                                    reasoning: label,
+                                    toolName: isSelectingTool
+                                        ? (message?.tool_calls?.[0]?.function?.name
+                                            ?? message?.additional_kwargs?.function_call?.name
+                                            ?? undefined)
+                                        : undefined,
+                                    cumulativeTokens: {
+                                        inputTokens: cumulativeInputTokens,
+                                        outputTokens: cumulativeOutputTokens,
+                                        totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                                    },
+                                });
+                            } else if (isSelectingTool) {
+                                // No prose content, but we can still log the tool name selection
+                                const toolName =
+                                    message?.tool_calls?.[0]?.function?.name
+                                    ?? message?.additional_kwargs?.function_call?.name
+                                    ?? null;
+                                if (toolName) {
+                                    console.log(`[Step ${stepCounter}] Agent selecting tool: ${toolName} (no reasoning text)`);
                                 }
                             }
 
