@@ -4,7 +4,7 @@ import { PromptTemplate } from "@langchain/core/prompts";
 import { JsonOutputParser } from "@langchain/core/output_parsers";
 import { gpt4oMini } from "@/lib/llm";
 import { getRepoTreeTool } from "./agent-tools";
-import prisma from "@/lib/prisma";
+import { findRepositoryByAnyId } from "./repositoryLookup";
 
 const MAX_FILE_SIZE = 500 * 1024;
 
@@ -183,9 +183,9 @@ export const resolveImportsTool = tool(
 
         try {
             // 1. Read repository metadata from DB
-            const repository = await prisma.repository.findUnique({
-                where: { repositoryId },
-                select: { fullName: true, defaultBranch: true },
+            const repository = await findRepositoryByAnyId(repositoryId, {
+                fullName: true,
+                defaultBranch: true,
             });
 
             if (!repository) {

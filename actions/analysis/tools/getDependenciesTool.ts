@@ -3,7 +3,7 @@ import { tool } from "langchain";
 import { PromptTemplate } from "@langchain/core/prompts";
 import { JsonOutputParser } from "@langchain/core/output_parsers";
 import { gpt4oMini } from "@/lib/llm";
-import prisma from "@/lib/prisma";
+import { findRepositoryByAnyId } from "./repositoryLookup";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -345,13 +345,10 @@ export const getDependenciesTool = tool(
 
         try {
             // 1. Read packageJson from the database
-            const repository = await prisma.repository.findUnique({
-                where: { repositoryId },
-                select: {
-                    fullName: true,
-                    packageJson: true,
-                    defaultBranch: true,
-                },
+            const repository = await findRepositoryByAnyId(repositoryId, {
+                fullName: true,
+                packageJson: true,
+                defaultBranch: true,
             });
 
             if (!repository) {

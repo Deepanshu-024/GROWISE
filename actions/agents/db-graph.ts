@@ -12,6 +12,7 @@ import { getDependenciesTool } from "../analysis/tools/getDependenciesTool";
 import { getSchemaDefinitionsTool } from "../analysis/tools/getSchemaDefinitionsTool";
 import { checkConnectionPoolTool } from "../analysis/tools/checkConnectionPoolTool";
 import { createKnowledgeGraphTools } from "../../scale-analyzer/knowledge-graph";
+import { findRepositoryByAnyId } from "../analysis/tools/repositoryLookup";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -121,6 +122,34 @@ interface AgentLog {
     steps: AgentLogStep[];
     finalReport?: unknown;
     error?: string;
+}
+
+function normalizeToolName(name: unknown): string | null {
+    if (typeof name !== "string") return null;
+
+    const trimmed = name.trim();
+    if (!trimmed) return null;
+
+    const lower = trimmed.toLowerCase();
+    if (lower === "dynamicstructuredtool" || lower === "structuredtool") {
+        return null;
+    }
+
+    return trimmed;
+}
+
+function resolveCallbackToolName(tool: any, fallback?: string): string {
+    const idCandidate = Array.isArray(tool?.id)
+        ? tool.id[tool.id.length - 1]
+        : tool?.id;
+
+    return (
+        normalizeToolName(tool?.name) ??
+        normalizeToolName(tool?.lc_kwargs?.name) ??
+        normalizeToolName(idCandidate) ??
+        normalizeToolName(fallback) ??
+        "unknown"
+    );
 }
 
 // ─── Final Report Tool (defined in-file) ──────────────────────────────────────
@@ -788,7 +817,7 @@ Phase 1:
 - Serverless plus no pooler or singleton makes pool issues critical.
 
 Phase 2:
-- Call list_flows with sortBy="criticality", limit=12, detailLevel="minimal".
+- Call list_flows with sortBy="criticality", detailLevel="minimal".
 - Call get_db_heavy_functions.
 - Only if still unclear, call get_critical_flows with a small limit.
 - Build one ranked shortlist of 3-6 targets from top critical flows plus top DB-heavy functions.
@@ -837,7 +866,7 @@ Final report rules:
 
 If time is running out, submit a partial but evidence-based report with finalReport.`;
 
-void SYSTEM_PROMPT;
+// void SYSTEM_PROMPT;
 
 const dbGraphSupportTools = [
     getDependenciesTool,
@@ -867,26 +896,25 @@ export async function runDatabaseGraphAgent(
     let cumulativeInputTokens = 0;
     let cumulativeOutputTokens = 0;
     let lastToolName = "unknown";
+    let pendingDecisionReasoning: string | null = null;
 
     const emit = (event: StreamEvent) => {
         try { onEvent?.(event); } catch { /* ignore stream errors */ }
     };
 
     try {
-        const repository = await prisma.repository.findUnique({
-            where: { repositoryId },
-            select: {
-                id: true,
-                fullName: true,
-                defaultBranch: true,
-                graphStatus: true,
-                graphBuiltAt: true,
-            },
+        const repository = await findRepositoryByAnyId(repositoryId, {
+            id: true,
+            repositoryId: true,
+            fullName: true,
+            defaultBranch: true,
+            graphStatus: true,
+            graphBuiltAt: true,
         });
 
         if (!repository) {
             const errorMessage =
-                `Repository with repositoryId "${repositoryId}" was not found.`;
+                `Repository "${repositoryId}" was not found by id or repositoryId.`;
 
             emit({
                 type: "error",
@@ -1021,7 +1049,9 @@ export async function runDatabaseGraphAgent(
                             `Repo: ${repo}. ` +
                             `Branch: ${branch}. ` +
                             `Full name: ${repository.fullName}. ` +
+                            `Legacy tools that ask for repositoryId should use ${repository.repositoryId}. ` +
                             `Knowledge graph repository row id: ${repository.id}. ` +
+                            `Never pass the knowledge graph repository row id into legacy tools. ` +
                             `Knowledge graph status: ${repository.graphStatus ?? "unknown"}. ` +
                             `Knowledge graph built at: ${repository.graphBuiltAt?.toISOString() ?? "unknown"}. ` +
                             `Knowledge graph node count: ${graphNodeCount}. ` +
@@ -1040,25 +1070,43 @@ export async function runDatabaseGraphAgent(
                     {
                         handleAgentAction(action: any) {
                             stepCounter++;
+                            const toolName = resolveCallbackToolName(action, action.tool);
+                            lastToolName = toolName;
+                            pendingDecisionReasoning =
+                                typeof action.log === "string" && action.log.trim().length > 0
+                                    ? action.log.trim()
+                                    : null;
                             agentLog.steps.push({
                                 stepNumber: stepCounter,
                                 type: "decision",
                                 timestamp: new Date().toISOString(),
-                                toolName: action.tool,
+                                toolName,
                                 toolInput: action.toolInput,
                                 reasoning: action.log,
                             });
                             console.log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
                             console.log(`[Step ${stepCounter}] AGENT DECISION`);
-                            console.log(`Tool: ${action.tool}`);
+                            console.log(`Tool: ${toolName}`);
                             console.log(`Reasoning: ${action.log}`);
                             console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                            if (pendingDecisionReasoning) {
+                                emit({
+                                    type: "agent_thought",
+                                    stepNumber: stepCounter,
+                                    timestamp: new Date().toISOString(),
+                                    elapsedMs: Date.now() - startTime,
+                                    toolName,
+                                    reasoning: pendingDecisionReasoning,
+                                    cumulativeTokens: {
+                                        inputTokens: cumulativeInputTokens,
+                                        outputTokens: cumulativeOutputTokens,
+                                        totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                                    },
+                                });
+                            }
                         },
                         handleToolStart(tool: any, input: string) {
-                            const toolName: string =
-                                tool.name ??
-                                (Array.isArray(tool.id) ? tool.id[tool.id.length - 1] : undefined) ??
-                                "unknown";
+                            const toolName = resolveCallbackToolName(tool, lastToolName);
                             lastToolName = toolName;
                             let parsedInput: unknown = input;
                             try {
@@ -1082,6 +1130,7 @@ export async function runDatabaseGraphAgent(
                                     totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
                                 },
                             });
+                            pendingDecisionReasoning = null;
                         },
                         handleToolEnd(output: any) {
                             const outputStr: string =

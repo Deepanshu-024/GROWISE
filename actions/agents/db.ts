@@ -122,6 +122,34 @@ interface AgentLog {
     error?: string;
 }
 
+function normalizeToolName(name: unknown): string | null {
+    if (typeof name !== "string") return null;
+
+    const trimmed = name.trim();
+    if (!trimmed) return null;
+
+    const lower = trimmed.toLowerCase();
+    if (lower === "dynamicstructuredtool" || lower === "structuredtool") {
+        return null;
+    }
+
+    return trimmed;
+}
+
+function resolveCallbackToolName(tool: any, fallback?: string): string {
+    const idCandidate = Array.isArray(tool?.id)
+        ? tool.id[tool.id.length - 1]
+        : tool?.id;
+
+    return (
+        normalizeToolName(tool?.name) ??
+        normalizeToolName(tool?.lc_kwargs?.name) ??
+        normalizeToolName(idCandidate) ??
+        normalizeToolName(fallback) ??
+        "unknown"
+    );
+}
+
 // ─── Final Report Tool (defined in-file) ──────────────────────────────────────
 
 const finalReportSchema = z.object({
@@ -780,6 +808,7 @@ export async function runDatabaseAgent(
     let cumulativeInputTokens = 0;
     let cumulativeOutputTokens = 0;
     let lastToolName = "unknown";
+    let pendingDecisionReasoning: string | null = null;
 
     const emit = (event: StreamEvent) => {
         try { onEvent?.(event); } catch { /* ignore stream errors */ }
@@ -828,25 +857,43 @@ export async function runDatabaseAgent(
                     {
                         handleAgentAction(action: any) {
                             stepCounter++;
+                            const toolName = resolveCallbackToolName(action, action.tool);
+                            lastToolName = toolName;
+                            pendingDecisionReasoning =
+                                typeof action.log === "string" && action.log.trim().length > 0
+                                    ? action.log.trim()
+                                    : null;
                             agentLog.steps.push({
                                 stepNumber: stepCounter,
                                 type: "decision",
                                 timestamp: new Date().toISOString(),
-                                toolName: action.tool,
+                                toolName,
                                 toolInput: action.toolInput,
                                 reasoning: action.log,
                             });
                             console.log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
                             console.log(`[Step ${stepCounter}] AGENT DECISION`);
-                            console.log(`Tool: ${action.tool}`);
+                            console.log(`Tool: ${toolName}`);
                             console.log(`Reasoning: ${action.log}`);
                             console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                            if (pendingDecisionReasoning) {
+                                emit({
+                                    type: "agent_thought",
+                                    stepNumber: stepCounter,
+                                    timestamp: new Date().toISOString(),
+                                    elapsedMs: Date.now() - startTime,
+                                    toolName,
+                                    reasoning: pendingDecisionReasoning,
+                                    cumulativeTokens: {
+                                        inputTokens: cumulativeInputTokens,
+                                        outputTokens: cumulativeOutputTokens,
+                                        totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                                    },
+                                });
+                            }
                         },
                         handleToolStart(tool: any, input: string) {
-                            const toolName: string =
-                                tool.name ??
-                                (Array.isArray(tool.id) ? tool.id[tool.id.length - 1] : undefined) ??
-                                "unknown";
+                            const toolName = resolveCallbackToolName(tool, lastToolName);
                             lastToolName = toolName;
                             let parsedInput: unknown = input;
                             try {
@@ -870,6 +917,7 @@ export async function runDatabaseAgent(
                                     totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
                                 },
                             });
+                            pendingDecisionReasoning = null;
                         },
                         handleToolEnd(output: any) {
                             const outputStr: string =

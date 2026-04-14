@@ -3,7 +3,7 @@ import { tool } from "langchain";
 import { PromptTemplate } from "@langchain/core/prompts";
 import { JsonOutputParser } from "@langchain/core/output_parsers";
 import { gpt4oMini } from "@/lib/llm";
-import prisma from "@/lib/prisma";
+import { findRepositoryByAnyId } from "./repositoryLookup";
 
 const MAX_FILE_SIZE = 500 * 1024;
 const MAX_MIDDLEWARE_FILES = 10;
@@ -538,9 +538,10 @@ export const getMiddlewareChainTool = tool(
     try {
       // ── Step 1: Read repository metadata from DB ──────────────────────────
 
-      const repository = await prisma.repository.findUnique({
-        where: { repositoryId },
-        select: { fullName: true, defaultBranch: true, framework: true },
+      const repository = await findRepositoryByAnyId(repositoryId, {
+        fullName: true,
+        defaultBranch: true,
+        framework: true,
       });
 
       if (!repository) {

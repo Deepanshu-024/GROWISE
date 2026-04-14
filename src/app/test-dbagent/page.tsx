@@ -326,16 +326,13 @@ function LiveEventRow({ event }: { event: StreamEvent }) {
                             ↓{formatTokens(event.tokenUsage.inputTokens)} ↑{formatTokens(event.tokenUsage.outputTokens)}
                         </span>
                     )}
-                    {event.type === "agent_thought" && (
+                    {event.reasoning && (
                         <span className="text-gray-400 ml-1 truncate">
                             {event.reasoning?.slice(0, 80)}…
                         </span>
                     )}
-                    {event.type === "error" && (
+                    {!event.reasoning && event.type === "error" && (
                         <span className="text-red-300 ml-1 truncate">{event.error}</span>
-                    )}
-                    {event.type === "agent_start" && (
-                        <span className="text-gray-300 ml-1">{event.reasoning}</span>
                     )}
                 </span>
 
@@ -397,7 +394,7 @@ function LiveEventRow({ event }: { event: StreamEvent }) {
                     )}
 
                     {/* Reasoning / Thought */}
-                    {event.reasoning && event.type === "agent_thought" && (
+                    {event.reasoning && (
                         <div className="px-3 py-2">
                             <p className="text-[10px] font-bold uppercase text-gray-400 mb-1">Reasoning</p>
                             <p className="text-xs text-gray-300 whitespace-pre-wrap leading-relaxed">
