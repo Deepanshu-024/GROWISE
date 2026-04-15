@@ -705,41 +705,30 @@ export function createKnowledgeGraphTools(prisma: any, repositoryId: string) {
         // Build enriched output per flow
         const enrichedFlows = flows.map((f: any) => {
           const routeLabel = buildRouteLabel(f.entryPointQn ?? f.name);
-          const priority = classifyPriority(routeLabel, f.entryPointQn ?? '');
           return {
             flowId: f.id,
             getFlowHint: `get_flow({ flowId: "${f.id}" })`,
             routeLabel,
-            priority,
             dbCallCount: f.dbCallCount ?? 0,
-            hasN1Risk: f.hasN1Risk ?? false,
             criticality: f.criticality,
             depth: f.depth,
             nodeCount: f.nodeCount,
             fileCount: f.fileCount,
-            // Keep raw fields for compatibility
             name: f.name,
             entryPointQn: f.entryPointQn,
           };
         });
 
         // Build summary sentence
-        const byCrit = enrichedFlows.filter((f) => f.priority === 'critical');
-        const byHigh = enrichedFlows.filter((f) => f.priority === 'high');
-        const n1Count = enrichedFlows.filter((f) => f.hasN1Risk).length;
-        // const topFlow = enrichedFlows[0];
+        const topFlow = enrichedFlows[0];
         const summaryParts: string[] = [
-          `Found ${enrichedFlows.length} DB-touching flows (critical: ${byCrit.length}, high: ${byHigh.length}).`,
+          `Found ${enrichedFlows.length} DB-touching flows.`,
         ];
         // if (topFlow) {
         //   summaryParts.push(
-        //     `Top: "${topFlow.routeLabel}" with ${topFlow.dbCallCount} DB calls` +
-        //     (topFlow.hasN1Risk ? ', N+1 risk detected' : '') + '.',
+        //     `Top: "${topFlow.routeLabel}" with ${topFlow.dbCallCount} DB calls.`,
         //   );
         // }
-        if (n1Count > 0) {
-          summaryParts.push(`${n1Count} flow(s) have N+1 risk.`);
-        }
         summaryParts.push(
           'Use flowId with get_flow() for full step-level details. ' +
           'Example: get_flow({ flowId: "<id>" })',
