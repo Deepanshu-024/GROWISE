@@ -359,17 +359,19 @@ export class GraphStore {
   }
 
   /** Get stored flows, sorted by the given column (descending).
-   *  When sortBy='dbCallCount', flows with zero DB calls are excluded
-   *  automatically — they are noise for database analysis.
+   *  @param sortBy  Column to sort by
+   *  @param limit   Max rows to return
+   *  @param minDbCalls  Only return flows with dbCallCount >= this value.
+   *                     0 = no filter (return all). Default 0 — caller decides.
    */
   async getFlows(
     sortBy: 'criticality' | 'depth' | 'nodeCount' | 'dbCallCount' = 'criticality',
     limit: number = 50,
+    minDbCalls: number = 0,
   ): Promise<any[]> {
     const where: any = { repositoryId: this.repositoryId };
-    // Exclude zero-DB-call flows when sorting by DB count — irrelevant for DB analysis
-    if (sortBy === 'dbCallCount') {
-      where.dbCallCount = { gt: 1 };
+    if (minDbCalls > 0) {
+      where.dbCallCount = { gte: minDbCalls };
     }
     return this.prisma.codeFlow.findMany({
       where,

@@ -682,11 +682,12 @@ export function createKnowledgeGraphTools(prisma: any, repositoryId: string) {
           ? (sortBy as 'criticality' | 'depth' | 'nodeCount' | 'dbCallCount')
           : 'dbCallCount';
 
-        // Fetch more when filtering by kind so we have enough after filtering
+        // Fetch from DB — minDbCalls applied at the query level (exact, efficient)
+        // When kind-filtering we fetch extra rows first, then apply kind filter, then trim to limit
         const fetchLimit = kind ? limit * 10 : limit;
-        let flows: any[] = await store.getFlows(validSort, fetchLimit);
+        let flows: any[] = await store.getFlows(validSort, fetchLimit, minDbCalls);
 
-        // Filter by entry point kind if requested
+        // Filter by entry point kind if requested (post-fetch, requires node lookup)
         if (kind) {
           const filtered: any[] = [];
           for (const f of flows) {
@@ -699,10 +700,6 @@ export function createKnowledgeGraphTools(prisma: any, repositoryId: string) {
           flows = filtered;
         }
 
-        // Apply minDbCalls filter (default 2 — exclude single-query flows)
-        if (minDbCalls > 0) {
-          flows = flows.filter((f: any) => (f.dbCallCount ?? 0) >= minDbCalls);
-        }
         flows = flows.slice(0, limit);
 
         // Build enriched output per flow
@@ -730,22 +727,22 @@ export function createKnowledgeGraphTools(prisma: any, repositoryId: string) {
         const byCrit = enrichedFlows.filter((f) => f.priority === 'critical');
         const byHigh = enrichedFlows.filter((f) => f.priority === 'high');
         const n1Count = enrichedFlows.filter((f) => f.hasN1Risk).length;
-        const topFlow = enrichedFlows[0];
+        // const topFlow = enrichedFlows[0];
         const summaryParts: string[] = [
           `Found ${enrichedFlows.length} DB-touching flows (critical: ${byCrit.length}, high: ${byHigh.length}).`,
         ];
-        if (topFlow) {
-          summaryParts.push(
-            `Top: "${topFlow.routeLabel}" with ${topFlow.dbCallCount} DB calls` +
-            (topFlow.hasN1Risk ? ', N+1 risk detected' : '') + '.',
-          );
-        }
+        // if (topFlow) {
+        //   summaryParts.push(
+        //     `Top: "${topFlow.routeLabel}" with ${topFlow.dbCallCount} DB calls` +
+        //     (topFlow.hasN1Risk ? ', N+1 risk detected' : '') + '.',
+        //   );
+        // }
         if (n1Count > 0) {
           summaryParts.push(`${n1Count} flow(s) have N+1 risk.`);
         }
         summaryParts.push(
           'Use flowId with get_flow() for full step-level details. ' +
-          'Example: ' + (topFlow?.getFlowHint ?? 'get_flow({ flowId: "<id>" })'),
+          'Example: get_flow({ flowId: "<id>" })',
         );
 
         return JSON.stringify({
