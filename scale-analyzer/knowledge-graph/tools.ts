@@ -13,7 +13,7 @@
  *   3.  get_function_callees   — find all callees of a function
  *   4.  get_file_summary       — file structure without reading the file
  *   5.  get_critical_flows     — flows sorted by scale-risk score
- *   6.  get_db_heavy_functions — functions with the most DB calls
+ *   6.  get_graph_stats        — aggregate graph statistics (mirrors list_graph_stats)
  *   7.  get_graph_stats        — aggregate graph statistics (mirrors list_graph_stats)
  *   8.  query_graph            — unified pattern query (callers_of, callees_of,
  *                                imports_of, importers_of, children_of,
@@ -352,55 +352,6 @@ export function createKnowledgeGraphTools(prisma: any, repositoryId: string) {
   // ─────────────────────────────────────────────────────────────────────
   // 6. DB-heavy functions
   // ─────────────────────────────────────────────────────────────────────
-  const getDbHeavyFunctions = tool(
-    async () => {
-      try {
-        const allEdges = await store.getEdgesByKind('CALLS');
-
-        // Count DB calls per source function
-        const dbCallCounts = new Map<string, number>();
-        for (const edge of allEdges) {
-          const targetName =
-            edge.targetQualified.split('::').pop()?.split('.').pop() ?? '';
-          if (DB_KEYWORDS.has(targetName)) {
-            const count = dbCallCounts.get(edge.sourceQualified) ?? 0;
-            dbCallCounts.set(edge.sourceQualified, count + 1);
-          }
-        }
-
-        // Sort by count
-        const sorted = [...dbCallCounts.entries()]
-          .sort((a, b) => b[1] - a[1])
-          .slice(0, 20);
-
-        const results = [];
-        for (const [qn, count] of sorted) {
-          const node = await store.getNode(qn);
-          results.push({
-            function: qn,
-            name: node?.name ?? qn.split('::').pop(),
-            file: node?.filePath,
-            dbCallCount: count,
-          });
-        }
-
-        return JSON.stringify(
-          { dbHeavyFunctions: results, total: results.length },
-          null, 2,
-        );
-      } catch (err) {
-        return `Error: ${err instanceof Error ? err.message : String(err)}`;
-      }
-    },
-    {
-      name: 'get_db_heavy_functions',
-      description:
-        'Find functions that make the most database calls. ' +
-        'These are prime candidates for N+1 query issues at scale.',
-      schema: z.object({}),
-    },
-  );
-
   // ─────────────────────────────────────────────────────────────────────
   // 7. Graph statistics  (mirrors list_graph_stats in query.py)
   // ─────────────────────────────────────────────────────────────────────
@@ -968,7 +919,6 @@ export function createKnowledgeGraphTools(prisma: any, repositoryId: string) {
     getFunctionCallees,
     getFileSummary,
     getCriticalFlows,
-    getDbHeavyFunctions,
     getGraphStats,
     queryGraph,
     listFlows,

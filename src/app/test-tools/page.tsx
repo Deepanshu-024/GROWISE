@@ -28,12 +28,6 @@ const TOOL_DEFS: ToolDef[] = [
         hint: "No args needed — good first test.",
     },
     {
-        name: "get_db_heavy_functions",
-        description: "Find functions that make the most database calls.",
-        params: [],
-        hint: "No args needed.",
-    },
-    {
         name: "get_critical_flows",
         description: "Get the most critical execution flows sorted by scale-risk score.",
         params: [
