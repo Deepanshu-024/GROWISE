@@ -27,9 +27,6 @@ export interface CategorizedPackage {
 
 export interface DependenciesOutput {
     capabilities: Record<string, CategorizedPackage[]>;
-    totalDeps: number;
-    categorizedCount: number;
-    uncategorizedCount: number;
 }
 
 // ─── Category Patterns (extensible config) ────────────────────────────────────
@@ -303,24 +300,18 @@ function applyLLMResults(categories: CategoryBuckets, llmMap: Record<string, Cat
 
 // ─── Build Structured Output ──────────────────────────────────────────────────
 
-function buildOutput(categories: CategoryBuckets, totalDeps: number): DependenciesOutput {
+function buildOutput(categories: CategoryBuckets): DependenciesOutput {
     const capabilities: Record<string, CategorizedPackage[]> = {};
 
     for (const category of VALID_CATEGORIES) {
+        // Skip uncategorized — not useful for the agent
+        if (category === "uncategorized") continue;
         if (categories[category].length > 0) {
             capabilities[category] = categories[category];
         }
     }
 
-    const uncategorizedCount = categories.uncategorized.length;
-    const categorizedCount = totalDeps - uncategorizedCount;
-
-    return {
-        capabilities,
-        totalDeps,
-        categorizedCount,
-        uncategorizedCount,
-    };
+    return { capabilities };
 }
 
 // ─── Tool Definition ──────────────────────────────────────────────────────────
@@ -367,12 +358,7 @@ export const getDependenciesTool = tool(
             const taggedDeps = mergeAndTagDeps(packageJson);
 
             if (taggedDeps.length === 0) {
-                return JSON.stringify({
-                    capabilities: {},
-                    totalDeps: 0,
-                    categorizedCount: 0,
-                    uncategorizedCount: 0,
-                } satisfies DependenciesOutput);
+                return JSON.stringify({ capabilities: {} } satisfies DependenciesOutput);
             }
 
             // 3. Pass 1 — regex/substring
@@ -387,7 +373,7 @@ export const getDependenciesTool = tool(
             }
 
             // 5. Build structured output
-            const output = buildOutput(categories, taggedDeps.length);
+            const output = buildOutput(categories);
             return JSON.stringify(output, null, 2);
 
         } catch (error) {

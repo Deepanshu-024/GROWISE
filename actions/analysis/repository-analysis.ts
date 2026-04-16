@@ -128,6 +128,7 @@ interface FrameworkAnalysisResult {
     packageJson?: any;
     defaultBranch?: string;
     baseDirectory?: string; // Path to directory containing package.json
+    repoSizeKB?: number;    // GitHub-reported repo size in KB
 }
 
 export async function checkPackageAndFramework(
@@ -180,6 +181,7 @@ export async function checkPackageAndFramework(
                 defaultBranch: existingRepo.defaultBranch || undefined,
                 baseDirectory: existingRepo.baseDirectory || undefined,
                 repoContent: existingRepo.repoContent as string[] | undefined,
+                repoSizeKB: (existingRepo as any).repoSizeKB ?? undefined,
             };
         }
 
@@ -222,6 +224,7 @@ export async function checkPackageAndFramework(
         // Get repository info to fetch default branch and size
         console.log("[SERVER] 📊 Fetching repository information...");
         let defaultBranch: string | null = null;
+        let repoSizeKB: number | null = null;
 
         try {
             const repoInfoResponse = await fetch(
@@ -253,7 +256,25 @@ export async function checkPackageAndFramework(
             }
 
             defaultBranch = repoInfo.default_branch;
+            repoSizeKB = repoInfo.size as number;
             console.log(`[SERVER] ✅ Default branch: ${defaultBranch}`);
+
+            // Persist repoSizeKB immediately — before framework detection
+            console.log(`[SERVER] 💾 Storing repo size (${repoSizeKB} KB) to database...`);
+            const [earlyOwner, earlyRepoName] = repoFullName.split("/");
+            await prisma.repository.upsert({
+                where: { repositoryId: repositoryId },
+                update: { repoSizeKB },
+                create: {
+                    repositoryId,
+                    name: earlyRepoName,
+                    fullName: repoFullName,
+                    owner: earlyOwner,
+                    repoSizeKB,
+                    userId,
+                },
+            });
+            console.log(`[SERVER] ✅ Repo size stored`);
         } catch (error) {
             console.error("[SERVER] ❌ Error fetching repository info:", error);
             return { isSupported: false, framework: "", error: "Failed to fetch repository information" };
@@ -331,6 +352,7 @@ export async function checkPackageAndFramework(
                     defaultBranch: defaultBranch || null,
                     baseDirectory: baseDirectory,
                     repoContent: repoContent || null,
+                    repoSizeKB: repoSizeKB ?? undefined,
                     updatedAt: new Date(),
                 },
                 create: {
@@ -344,6 +366,7 @@ export async function checkPackageAndFramework(
                     defaultBranch: defaultBranch || null,
                     baseDirectory: baseDirectory,
                     repoContent: repoContent || null,
+                    repoSizeKB: repoSizeKB ?? undefined,
                     userId: userId,
                 },
             });
@@ -363,6 +386,7 @@ export async function checkPackageAndFramework(
             packageJson: packageJson,
             defaultBranch: defaultBranch || undefined,
             baseDirectory: baseDirectory,
+            repoSizeKB: repoSizeKB ?? undefined,
         };
     } catch (error) {
         console.error("\n[SERVER] ❌ ERROR in checkPackageAndFramework:");

@@ -4,11 +4,12 @@ import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Github, Loader2 } from "lucide-react";
+import { Github, Loader2, HardDrive } from "lucide-react";
 import { toast } from "sonner";
 import { checkPackageAndFramework } from "../../actions/analysis/repository-analysis";
 import { classifyBusinessContext } from "../../actions/analysis/business-classification";
 import { getRepositoryById } from "../../actions/github/repository-queries";
+import { fetchAndStoreRepoSize } from "../../actions/analysis/repo-size";
 
 interface Repository {
     id: number;
@@ -32,6 +33,8 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
     const [analyzedRepoId, setAnalyzedRepoId] = useState<string | null>(null);
     const [classifying, setClassifying] = useState(false);
     const [checkingFramework, setCheckingFramework] = useState(false);
+    const [repoSizeKB, setRepoSizeKB] = useState<number | null>(null);
+    const [fetchingSize, setFetchingSize] = useState(false);
 
     useEffect(() => {
         if (open) {
@@ -62,6 +65,7 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
     const handleRepoChange = async (repoFullName: string) => {
         setSelectedRepo(repoFullName);
         setAnalyzedRepoId(null);
+        setRepoSizeKB(null);
         setCheckingFramework(true);
 
         const repository = repositories.find((repo) => repo.fullName === repoFullName);
@@ -75,13 +79,12 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
             const dbRepo = await getRepositoryById(repository.id.toString());
 
             if (dbRepo && dbRepo.isSupported && dbRepo.framework) {
-                // Repository already analyzed, enable business classification button
                 setAnalyzedRepoId(repository.id.toString());
+                // Restore cached size if available
+                if ((dbRepo as any).repoSizeKB) setRepoSizeKB((dbRepo as any).repoSizeKB);
                 toast.success(
                     `Framework already detected: ${dbRepo.framework.toUpperCase()}`,
-                    {
-                        description: "You can proceed with business classification",
-                    }
+                    { description: "You can proceed with business classification" }
                 );
             }
         } catch (error) {
@@ -197,6 +200,31 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
         }
     };
 
+    const handleGetRepoSize = async () => {
+        const repository = repositories.find((r) => r.fullName === selectedRepo);
+        if (!repository) return;
+        setFetchingSize(true);
+        try {
+            const result = await fetchAndStoreRepoSize(
+                repository.id.toString(),
+                repository.fullName,
+            );
+            if (result.sizeKB !== null) {
+                setRepoSizeKB(result.sizeKB);
+                const mb = (result.sizeKB / 1024).toFixed(1);
+                toast.success(`Repo size: ${result.sizeKB.toLocaleString()} KB (${mb} MB)`, {
+                    description: "Size stored to database",
+                });
+            } else {
+                toast.error("Could not fetch repo size", { description: result.error });
+            }
+        } catch (err) {
+            toast.error("Failed to fetch repo size");
+        } finally {
+            setFetchingSize(false);
+        }
+    };
+
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="sm:max-w-[500px]">
@@ -235,8 +263,33 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
                         </Select>
 
                         {selectedRepo && (
-                            <div className="text-sm text-muted-foreground">
-                                {repositories.find((r) => r.fullName === selectedRepo)?.description || "No description"}
+                            <div className="flex items-center justify-between">
+                                <div className="text-sm text-muted-foreground">
+                                    {repositories.find((r) => r.fullName === selectedRepo)?.description || "No description"}
+                                </div>
+                                {repoSizeKB !== null ? (
+                                    <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-muted text-muted-foreground shrink-0 ml-2">
+                                        <HardDrive className="h-3 w-3" />
+                                        {repoSizeKB >= 1024
+                                            ? `${(repoSizeKB / 1024).toFixed(1)} MB`
+                                            : `${repoSizeKB.toLocaleString()} KB`}
+                                    </span>
+                                ) : (
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="shrink-0 ml-2 h-7 text-xs"
+                                        onClick={handleGetRepoSize}
+                                        disabled={fetchingSize}
+                                    >
+                                        {fetchingSize ? (
+                                            <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                                        ) : (
+                                            <HardDrive className="h-3 w-3 mr-1" />
+                                        )}
+                                        {fetchingSize ? "Fetching..." : "Get Size"}
+                                    </Button>
+                                )}
                             </div>
                         )}
 
