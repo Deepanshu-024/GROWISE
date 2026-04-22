@@ -331,6 +331,17 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
                                             "Classify Business Context"
                                         )}
                                     </Button>
+                                    <Button
+                                        variant="outline"
+                                        onClick={() => {
+                                            setAnalyzedRepoId(null);
+                                            handleSelect();
+                                        }}
+                                        disabled={classifying}
+                                        className="w-full"
+                                    >
+                                        Re-analyze Framework
+                                    </Button>
                                 </div>
                             </div>
                         )}

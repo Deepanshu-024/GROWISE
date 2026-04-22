@@ -84,14 +84,39 @@ async function findPackageJsonRecursively(
                         console.log(`[SERVER] ✅ Successfully parsed package.json from ${displayPath}`);
                         console.log(`[SERVER] Package name: ${packageJson.name || "N/A"}`);
 
-                        // Log the directory contents where package.json was found
-                        const contentNames = contents.map((item: any) => item.name);
-                        console.log(`[SERVER] 📁 Directory contents at ${displayPath}:`, contentNames.join(", "));
+                        // Fetch the FULL recursive file tree (not just this directory)
+                        let fullTree: string[] = [];
+                        try {
+                            const treeUrl = `https://api.github.com/repos/${repoFullName}/git/trees/HEAD?recursive=1`;
+                            const treeResponse = await fetch(treeUrl, {
+                                headers: {
+                                    Authorization: `Bearer ${authToken}`,
+                                    Accept: "application/vnd.github.v3+json",
+                                    "User-Agent": "Lovable-Clone-App",
+                                },
+                            });
+
+                            if (treeResponse.ok) {
+                                const treeData = await treeResponse.json();
+                                console.log("treeData", treeData);
+                                // Only include blobs (files), not tree entries (directories)
+                                fullTree = treeData.tree
+                                    .filter((node: any) => node.type === "blob")
+                                    .map((node: any) => node.path);
+                                console.log(`[SERVER] 🌳 Full repo tree: ${fullTree.length} files`);
+                            } else {
+                                console.warn(`[SERVER] ⚠️ Tree API returned ${treeResponse.status}, falling back to directory listing`);
+                                fullTree = contents.map((item: any) => item.name);
+                            }
+                        } catch (treeError) {
+                            console.warn("[SERVER] ⚠️ Tree API failed, falling back to directory listing:", treeError);
+                            fullTree = contents.map((item: any) => item.name);
+                        }
 
                         return {
                             packageJson,
                             path: path || "root",
-                            directoryContents: contentNames,
+                            directoryContents: fullTree,
                         };
                     }
                 }

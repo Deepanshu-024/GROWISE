@@ -18,20 +18,6 @@ interface GitHubTreeResponse {
   truncated: boolean;
 }
 
-interface GitHubFileResponse {
-  name: string;
-  path: string;
-  sha: string;
-  size: number;
-  url: string;
-  html_url: string;
-  git_url: string;
-  download_url: string;
-  type: string;
-  content: string;
-  encoding: string;
-}
-
 interface GitHubSearchResponse {
   total_count: number;
   incomplete_results: boolean;
@@ -54,18 +40,43 @@ interface GitHubSearchResponse {
 // Maximum file size limit (500 KB)
 const MAX_FILE_SIZE = 500 * 1024;
 
-// Note: All tools now return strings instead of complex objects for LangChain compatibility
+// ─── Context schema shared by all GitHub tools ─────────────────────────────────
+// Agents pass these values once at invocation time via `context`,
+// so the LLM never needs to guess or repeat them in every tool call.
 
-/**
- * Tool 1: Get Repository Tree
- * Fetches the complete file structure of a GitHub repository
- */
+export const githubContextSchema = z.object({
+  owner: z.string().describe("Repository owner/organization name"),
+  repo: z.string().describe("Repository name"),
+  branch: z.string().describe("Branch name (e.g. 'main')"),
+  accessToken: z.string().describe("GitHub access token"),
+});
+
+export type GitHubContext = z.infer<typeof githubContextSchema>;
+
+// Helper to extract GitHub context from tool config
+function getGitHubContext(config: any): GitHubContext {
+  const ctx = config?.context;
+  if (!ctx?.owner || !ctx?.repo || !ctx?.accessToken) {
+    throw new Error(
+      "GitHub context missing. Agent must be invoked with context: { owner, repo, branch, accessToken }."
+    );
+  }
+  return {
+    owner: ctx.owner,
+    repo: ctx.repo,
+    branch: ctx.branch ?? "main",
+    accessToken: ctx.accessToken,
+  };
+}
+
+// ─── Tool 1: Get Repository Tree ──────────────────────────────────────────────
+// No input needed — reads owner/repo/branch/accessToken from context.
+
 export const getRepoTreeTool = tool(
-  async (input): Promise<string> => {
-    const { owner, repo, branch, accessToken } = input as { owner: string, repo: string, branch?: string, accessToken: string };
-    const effectiveBranch = branch || "main"; // Handle default here instead of in schema
+  async (_input, config): Promise<string> => {
+    const { owner, repo, branch, accessToken } = getGitHubContext(config);
     try {
-      const url = `https://api.github.com/repos/${owner}/${repo}/git/trees/${effectiveBranch}?recursive=1`;
+      const url = `https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`;
 
       const response = await fetch(url, {
         headers: {
@@ -78,7 +89,7 @@ export const getRepoTreeTool = tool(
       if (!response.ok) {
         if (response.status === 404) {
           // Try 'master' branch if 'main' fails
-          if (effectiveBranch === "main") {
+          if (branch === "main") {
             const masterUrl = `https://api.github.com/repos/${owner}/${repo}/git/trees/master?recursive=1`;
             const masterResponse = await fetch(masterUrl, {
               headers: {
@@ -113,7 +124,7 @@ Summary: Found ${result.totalFiles} files and ${result.totalDirectories} directo
 ${masterData.truncated ? 'Note: Tree was truncated by GitHub API.' : ''}`;
             }
           }
-          throw new Error(`Repository or branch not found: ${owner}/${repo}/${effectiveBranch}`);
+          throw new Error(`Repository or branch not found: ${owner}/${repo}/${branch}`);
         }
         throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
       }
@@ -141,7 +152,7 @@ ${masterData.truncated ? 'Note: Tree was truncated by GitHub API.' : ''}`;
         tree: formattedTree
       };
 
-      return `Repository tree structure for ${owner}/${repo} (${effectiveBranch} branch):
+      return `Repository tree structure for ${owner}/${repo} (${branch} branch):
 ${JSON.stringify(result, null, 2)}
 
 Summary: Found ${result.totalFiles} files and ${result.totalDirectories} directories.
@@ -153,23 +164,18 @@ ${data.truncated ? 'Note: Tree was truncated by GitHub API.' : ''}`;
   },
   {
     name: "getRepoTree",
-    description: "Get the complete file tree structure of a GitHub repository recursively. Returns all files and directories in the repository.",
-    schema: z.object({
-      owner: z.string().describe("Repository owner/organization name"),
-      repo: z.string().describe("Repository name"),
-      branch: z.string().nullable().describe("Branch name (optional, defaults to 'main' if not provided)"),
-      accessToken: z.string().describe("GitHub access token for authentication (OAuth or installation token)"),
-    }),
+    description: "Get the complete file tree structure of the repository. No input needed — repo details are provided via context.",
+    schema: z.object({}),
   }
 );
 
-/**
- * Tool 2: Get File Content
- * Fetches the raw content of a specific file from a GitHub repository
- */
+// ─── Tool 2: Get File Content ─────────────────────────────────────────────────
+// Agent only specifies the file path — owner/repo/branch/accessToken come from context.
+
 export const getFileContentTool = tool(
-  async (input): Promise<string> => {
-    const { owner, repo, path, accessToken, branch } = input as { owner: string, repo: string, path: string, accessToken: string, branch: string };
+  async (input, config): Promise<string> => {
+    const { owner, repo, branch, accessToken } = getGitHubContext(config);
+    const { path } = input as { path: string };
     try {
       let url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}`;
       if (branch) {
@@ -214,24 +220,25 @@ ${content}`;
   },
   {
     name: "getFileContent",
-    description: "Get the raw content of a specific file from a GitHub repository. Has a 500KB size limit to prevent memory issues.",
+    description: "Get the raw content of a specific file from the repository. Only specify the file path — repo details come from context.",
     schema: z.object({
-      owner: z.string().describe("Repository owner/organization name"),
-      repo: z.string().describe("Repository name"),
       path: z.string().describe("File path within the repository (e.g., 'src/app/page.tsx')"),
-      accessToken: z.string().describe("GitHub access token for authentication (OAuth or installation token)"),
-      branch: z.string().nullable().describe("Branch name (optional, uses default branch if not specified)"),
     }),
   }
 );
 
-/**
- * Tool 3: Search Code
- * Searches for specific keywords or patterns within a GitHub repository
- */
+// ─── Tool 3: Search Code ──────────────────────────────────────────────────────
+// Agent specifies search query + optional filters — owner/repo/accessToken come from context.
+
 export const searchCodeTool = tool(
-  async (input): Promise<string> => {
-    const { owner, repo, query, accessToken, language, extension, path } = input as { owner: string, repo: string, query: string, accessToken: string, language: string, extension: string, path: string };
+  async (input, config): Promise<string> => {
+    const { owner, repo, accessToken } = getGitHubContext(config);
+    const { query, language, extension, path } = input as {
+      query: string;
+      language?: string | null;
+      extension?: string | null;
+      path?: string | null;
+    };
     try {
       // Build search query with filters
       let searchQuery = `${query} repo:${owner}/${repo}`;
@@ -307,15 +314,12 @@ Search query used: ${searchQuery}`;
   },
   {
     name: "searchCode",
-    description: "Search for specific keywords, patterns, or code within a GitHub repository. Useful for finding framework usage, specific functions, or patterns.",
+    description: "Search for specific keywords, patterns, or code within the repository. Only specify the search query — repo details come from context.",
     schema: z.object({
-      owner: z.string().describe("Repository owner/organization name"),
-      repo: z.string().describe("Repository name"),
-      query: z.string().describe("Search query (e.g., 'useEffect', '@nestjs/', 'function component')"),
-      accessToken: z.string().describe("GitHub access token for authentication (OAuth or installation token)"),
-      language: z.string().nullable().describe("Filter by programming language (e.g., 'typescript', 'javascript')"),
-      extension: z.string().nullable().describe("Filter by file extension (e.g., 'ts', 'tsx', 'js')"),
-      path: z.string().nullable().describe("Filter by file path pattern (e.g., 'src/', 'components/')"),
+      query: z.string().describe("Search query (e.g., 'PrismaClient', 'findMany', '$transaction')"),
+      language: z.string().nullable().optional().describe("Filter by programming language (e.g., 'typescript')"),
+      extension: z.string().nullable().optional().describe("Filter by file extension (e.g., 'ts', 'tsx')"),
+      path: z.string().nullable().optional().describe("Filter by file path pattern (e.g., 'src/', 'api/')"),
     }),
   }
 );
@@ -346,19 +350,15 @@ export async function validateGitHubToken(accessToken: string): Promise<boolean>
  * body without fetching the full file — typically 80-90% fewer tokens.
  */
 export const getCodeBlockTool = tool(
-  async (input): Promise<string> => {
-    const { owner, repo, filePath, lineStart, lineEnd, accessToken, branch } = input as {
-      owner: string;
-      repo: string;
+  async (input, config): Promise<string> => {
+    const { owner, repo, branch, accessToken } = getGitHubContext(config);
+    const { filePath, lineStart, lineEnd } = input as {
       filePath: string;
       lineStart: number;
       lineEnd: number;
-      accessToken: string;
-      branch?: string;
     };
     try {
-      const ref = branch ?? 'main';
-      const url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(filePath)}?ref=${encodeURIComponent(ref)}`;
+      const url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(filePath)}?ref=${encodeURIComponent(branch)}`;
 
       const response = await fetch(url, {
         headers: {
@@ -370,7 +370,7 @@ export const getCodeBlockTool = tool(
 
       if (!response.ok) {
         // Try default branch if specified branch fails
-        if (branch && response.status === 404) {
+        if (response.status === 404) {
           const fallbackUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(filePath)}`;
           const fallbackResp = await fetch(fallbackUrl, {
             headers: {
@@ -385,7 +385,6 @@ export const getCodeBlockTool = tool(
           const fallbackContent = await fallbackResp.text();
           return sliceLines(fallbackContent, filePath, lineStart, lineEnd);
         }
-        if (response.status === 404) throw new Error(`File not found: ${filePath}`);
         throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
       }
 
@@ -399,19 +398,14 @@ export const getCodeBlockTool = tool(
   {
     name: 'getCodeBlock',
     description:
-      'Fetch a specific line range from a file in a GitHub repository. ' +
+      'Fetch a specific line range from a file in the repository. ' +
       'PREFERRED over getFileContent when you have lineStart/lineEnd from get_flow step data. ' +
-      'Returns only the requested lines with line numbers prepended — ' +
-      'uses ~80-90% fewer tokens than reading the full file. ' +
-      'Use lineStart/lineEnd from the "steps" array in get_flow output.',
+      'Returns only the requested lines with line numbers — uses ~80-90% fewer tokens than reading the full file. ' +
+      'Only specify filePath and line range — repo details come from context.',
     schema: z.object({
-      owner: z.string().describe('Repository owner/organization name'),
-      repo: z.string().describe('Repository name'),
       filePath: z.string().describe('File path within the repository (e.g. "src/app/api/checkout/route.ts")'),
-      lineStart: z.number().describe('First line to include (1-indexed, from get_flow step.lineStart)'),
-      lineEnd: z.number().describe('Last line to include (1-indexed, from get_flow step.lineEnd)'),
-      accessToken: z.string().describe('GitHub access token for authentication'),
-      branch: z.string().optional().describe('Branch name (optional, uses default branch if not specified)'),
+      lineStart: z.number().describe('First line to include (1-indexed)'),
+      lineEnd: z.number().describe('Last line to include (1-indexed)'),
     }),
   }
 );
@@ -438,4 +432,3 @@ function sliceLines(content: string, filePath: string, lineStart: number, lineEn
     ...numbered,
   ].join('\n');
 }
-
