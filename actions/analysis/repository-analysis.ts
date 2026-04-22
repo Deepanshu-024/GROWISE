@@ -98,7 +98,7 @@ async function findPackageJsonRecursively(
 
                             if (treeResponse.ok) {
                                 const treeData = await treeResponse.json();
-                                console.log("treeData", treeData);
+                                // console.log("treeData", treeData);
                                 // Only include blobs (files), not tree entries (directories)
                                 fullTree = treeData.tree
                                     .filter((node: any) => node.type === "blob")

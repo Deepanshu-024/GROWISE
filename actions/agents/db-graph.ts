@@ -7,10 +7,8 @@ import { tool } from "langchain";
 import { z } from "zod";
 import { gpt5Mini } from "@/lib/llm";
 import prisma from "@/lib/prisma";
-import { getRepoTreeTool, searchCodeTool, getCodeBlockTool } from "../analysis/tools/agent-tools";
+import { getRepoTreeTool, searchCodeTool, getCodeBlockTool, githubContextSchema } from "../analysis/tools/agent-tools";
 import { getDependenciesTool } from "../analysis/tools/getDependenciesTool";
-import { getSchemaDefinitionsTool } from "../analysis/tools/getSchemaDefinitionsTool";
-import { checkConnectionPoolTool } from "../analysis/tools/checkConnectionPoolTool";
 import { createKnowledgeGraphTools } from "../../scale-analyzer/knowledge-graph";
 import { findRepositoryByAnyId } from "../analysis/tools/repositoryLookup";
 
@@ -299,13 +297,11 @@ GRAPH TOOLS (prefer these):
   query_graph           — raw graph query: callers_of, callees_of, file_summary, impact
   get_route_call_chain  — route handler → full callee chain in one call
 
-NON-GRAPH TOOLS (use sparingly):
+NON-GRAPH TOOLS (use sparingly — repo details are injected via context, no need to pass owner/repo/branch/accessToken):
   getDependencies       — ORM, auth, payment, cache libs from package.json
-  getRepoTree           — find schema file path (call ONCE in Phase 1, ignore non-schema files)
-  searchCode            — confirm specific token presence in a known hot file
-  getCodeBlock          — read exact lines from a file (use ONLY with lineStart/lineEnd from get_flow)
-  getSchemaDefinitions  — extract Prisma/SQL schema models and indexes
-  checkConnectionPool   — detect pool config, singleton pattern, serverless mismatch
+  getRepoTree           — find schema file path (call ONCE in Phase 1, no input needed)
+  searchCode            — confirm specific token presence in a known hot file (just pass query)
+  getCodeBlock          — read exact lines from a file (just pass filePath + lineStart + lineEnd)
   finalReport           — submit the completed report (call EXACTLY ONCE at the end)
 
 ═══════════════════════════════════════════════════════════════
@@ -374,15 +370,19 @@ For each shortlisted flow:
 - Use searchCode ONLY for confirming a specific keyword in a specific file — not for broad discovery.
 - Stop investigating a flow the moment you have enough evidence for one concrete finding.
 
-## Phase 4 — SCHEMA & CONNECTION AUDIT (2 calls max)
-You already have the schema file path and connection file path from Phase 1's getRepoTree.
-1. Call getSchemaDefinitions(schemaFiles=[path from Phase 1]) → check:
-   - Foreign keys missing @@index → table scan on joins
-   - Columns used as filters in hot flows from Phase 3 — are they indexed?
-2. Call checkConnectionPool(connectionFiles=[path from Phase 1]) → check:
-   - No pool size limit → connection exhaustion at scale
-   - No singleton pattern in serverless → new PrismaClient() per request
-   - No external pooler (PgBouncer/Supabase) in serverless
+## Phase 4 — SCHEMA & CONNECTION AUDIT (2 getCodeBlock calls max)
+You already know the schema file path (e.g. prisma/schema.prisma) and the DB connection file path (e.g. src/lib/prisma.ts) from Phase 1's getRepoTree output. Do NOT call getRepoTree again.
+
+1. Read the SCHEMA file with getCodeBlock(filePath=<schema path>, lineStart=1, lineEnd=500) → analyze the raw schema yourself:
+   - Check every relation field — does the model have a corresponding @@index on the foreign key column?
+   - Cross-reference with hot flows from Phase 3: columns used as filters/sorts in those flows — are they indexed?
+   - Look for models with many relations but no composite indexes
+
+2. Read the CONNECTION file with getCodeBlock(filePath=<connection path>, lineStart=1, lineEnd=100) → analyze the raw code yourself:
+   - Is there a singleton/global pattern? (e.g. \`globalThis.prisma ??= new PrismaClient()\`)
+   - Are pool size limits configured? (look for: connection_limit, pool_size, PgBouncer URL params)
+   - Is Prisma Accelerate or a connection pooler URL used? (look for: prisma://accelerate, ?pgbouncer=true)
+   - Serverless + no singleton + no pooler = CRITICAL finding
 
 After Phase 4 → call finalReport IMMEDIATELY. Do not go back to Phase 3.
 
@@ -437,8 +437,6 @@ If investigation is incomplete → submit partial report with lower confidence. 
 
 const dbGraphSupportTools = [
     getDependenciesTool,
-    getSchemaDefinitionsTool,
-    checkConnectionPoolTool,
     getRepoTreeTool,
     searchCodeTool,
     getCodeBlockTool,
@@ -600,6 +598,7 @@ export async function runDatabaseGraphAgent(
             model: gpt5Mini,
             tools: dbGraphTools,
             systemPrompt: GRAPH_SYSTEM_PROMPT,
+            contextSchema: githubContextSchema,
         });
 
         // NOTE: intermediateSteps and agentLog contain the raw accessToken
@@ -612,11 +611,7 @@ export async function runDatabaseGraphAgent(
                     {
                         role: "user",
                         content:
-                            `Analyze the database layer of repository ${repositoryId}. ` +
-                            `Owner: ${owner}. ` +
-                            `Repo: ${repo}. ` +
-                            `Branch: ${branch}. ` +
-                            `Full name: ${repository.fullName}. ` +
+                            `Analyze the database layer of repository ${repository.fullName}. ` +
                             `Legacy tools that ask for repositoryId should use ${repository.repositoryId}. ` +
                             `Knowledge graph repository row id: ${repository.id}. ` +
                             `Never pass the knowledge graph repository row id into legacy tools. ` +
@@ -624,15 +619,16 @@ export async function runDatabaseGraphAgent(
                             `Knowledge graph built at: ${repository.graphBuiltAt?.toISOString() ?? "unknown"}. ` +
                             `Knowledge graph node count: ${graphNodeCount}. ` +
                             `Knowledge graph flow count: ${graphFlowCount}. ` +
-                            `Access token: ${accessToken}. ` +
                             `Archetype score: ${archetypeScore} (0-1, higher means more DB heavy). ` +
                             `Analyze performance against these scale targets: 10k, 100k, 1M users. ` +
+                            `Tools already know the repo owner, name, branch, and access token — no need to pass them. ` +
                             `Use the knowledge graph as your primary context source and only use non-graph tools for gaps the graph cannot answer. ` +
                             `When investigation is complete call finalReport with your findings.`,
                     },
                 ],
             },
             {
+                context: { owner, repo, branch, accessToken },
                 recursionLimit: 150,
                 callbacks: [
                     {
@@ -770,13 +766,13 @@ export async function runDatabaseGraphAgent(
                             let inputTokens = 0;
                             let outputTokens = 0;
                             if (usageMeta) {
-                                inputTokens  = usageMeta.input_tokens  ?? usageMeta.inputTokens  ?? 0;
+                                inputTokens = usageMeta.input_tokens ?? usageMeta.inputTokens ?? 0;
                                 outputTokens = usageMeta.output_tokens ?? usageMeta.outputTokens ?? 0;
                             } else if (legacyUsage) {
-                                inputTokens  = legacyUsage.promptTokens     ?? legacyUsage.prompt_tokens     ?? legacyUsage.inputTokens  ?? legacyUsage.input_tokens  ?? 0;
+                                inputTokens = legacyUsage.promptTokens ?? legacyUsage.prompt_tokens ?? legacyUsage.inputTokens ?? legacyUsage.input_tokens ?? 0;
                                 outputTokens = legacyUsage.completionTokens ?? legacyUsage.completion_tokens ?? legacyUsage.outputTokens ?? legacyUsage.output_tokens ?? 0;
                             }
-                            cumulativeInputTokens  += inputTokens;
+                            cumulativeInputTokens += inputTokens;
                             cumulativeOutputTokens += outputTokens;
 
                             // Tool name(s) from standard LangChain AIMessage format

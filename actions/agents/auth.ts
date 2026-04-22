@@ -1,19 +1,20 @@
 // agents/auth/index.ts
 
-import { tool } from "@langchain/core/tools";
+import { tool } from "langchain";
+import { createAgent } from "langchain";
 import { z } from "zod";
-import { createReactAgent } from "@langchain/langgraph/prebuilt";
-import { gpt4oMini } from "@/lib/llm";
+import { gpt5Mini } from "@/lib/llm";
 import prisma from "@/lib/prisma";
-import { HumanMessage } from "@langchain/core/messages";
 import * as fs from "fs";
 import * as path from "path";
 
-import { getRepoTreeTool, searchCodeTool } from "../analysis/tools/agent-tools";
-import { getDependenciesTool } from "../analysis/tools/getDependenciesTool";
-import { getRouteMapTool } from "../analysis/tools/getRouteMapTool";
-import { getMiddlewareChainTool } from "../analysis/tools/getMiddlewareChainTool";
-import { getSchemaDefinitionsTool } from "../analysis/tools/getSchemaDefinitionsTool";
+import {
+  getRepoTreeTool,
+  getFileContentTool,
+  searchCodeTool,
+  getCodeBlockTool,
+  githubContextSchema,
+} from "../analysis/tools/agent-tools";
 
 // ─── Output Types ────────────────────────────────────────────────────────────
 
@@ -150,79 +151,80 @@ const finalReportTool = tool(
 
 const SYSTEM_PROMPT = `You are an Auth Specialist Agent. Your job is to analyze a GitHub repository's authentication implementation and identify scale bottlenecks — issues that will cause performance degradation or failures under load.
 
-You have access to these tools:
-- getDependencies: detect auth provider from package.json
-- getRepoTree: fetch full file tree
-- getRouteMap: extract auth status per route (YOU pass route files)
-- getMiddlewareChain: extract middleware coverage (tool discovers files internally)
-- getSchemaDefinitions: check indexes on auth-related columns (YOU pass schema files)
-- searchCode: find specific code patterns
-- finalReport: submit your completed report (call ONCE at the end)
+AVAILABLE TOOLS (repo details are injected automatically via context — just pass the relevant parameters):
+1. **getRepoTree()** — No input needed. Returns full project file tree.
+2. **getFileContent(path)** — Just pass the file path. For reading middleware, route handlers, auth configs, schema files.
+3. **searchCode(query)** — Just pass the search query. For locating patterns: clerkId, session, bcrypt, jwt.verify, webhook, rateLimit.
+4. **getCodeBlock(filePath, lineStart, lineEnd)** — Read a specific line range from a file. More efficient than getFileContent when you only need a section.
+5. **finalReport(...)** — Submit your completed report. Call ONCE at the end.
 
-════════════════════════════════════════
+═══════════════════════════════════════════
 INVESTIGATION PHASES
-════════════════════════════════════════
+═══════════════════════════════════════════
 
-PHASE 1 — Detect Auth Stack (getDependencies)
-  → Identify auth provider: clerk | nextauth | auth0 | supabase | jwt | session | custom | none
+PHASE 1 — Detect Auth Stack (from package.json + root structure provided in context)
+  → Infer auth provider from dependencies: clerk, nextauth, auth0, supabase, passport, jwt, bcrypt, etc.
   → Determine mode:
-    third-party: clerk, nextauth, auth0, supabase
-    self-managed: jwt, bcrypt, sessions, passport
+    third-party: @clerk/nextjs, next-auth, @auth0/nextjs-auth0, @supabase/ssr
+    self-managed: jsonwebtoken, bcrypt, express-session, passport
   → Record completed phase: [1]
 
 PHASE 2 — Get File Tree (getRepoTree)
-  → Identify all route files:
-    App Router: app/**/route.ts, app/**/page.tsx (server components with DB calls)
-    Pages Router: pages/api/**/*.ts
-  → Identify schema files: prisma/schema.prisma or similar
-  → Identify middleware files (for context — getMiddlewareChainTool discovers them internally)
+  → Only call if the root structure provided in context is insufficient
+  → Identify key files:
+    Route files: app/**/route.ts, pages/api/**/*.ts
+    Middleware: middleware.ts or src/middleware.ts
+    Schema: prisma/schema.prisma or equivalent
+    Auth config: auth.ts, [...nextauth], clerk middleware wrapper
   → Record completed phase: [1,2]
 
-PHASE 3 — Route Map (getRouteMapTool)
-  → Pass ALL route files found in Phase 2
-  → For detectedAuthProvider, pass what you found in Phase 1
-  → Note which routes are unprotected, especially sensitive ones (/api/admin, /api/user, /api/payment, /api/order, /api/account, /api/settings, /api/profile)
+PHASE 3 — Middleware & Route Protection Analysis (getFileContent + searchCode)
+  → Read the middleware file (middleware.ts) with getFileContent to understand:
+    - Which routes are protected by the middleware matcher
+    - Which auth provider is used in middleware (clerk, nextauth, etc.)
+    - Whether there are public route exclusions
+  → Use searchCode to find route handlers that do their own auth checks:
+    - searchCode("auth()") or searchCode("currentUser") for clerk
+    - searchCode("getServerSession") for nextauth
+    - searchCode("getSession") for supabase
+  → Cross-reference: routes NOT covered by middleware AND NOT doing their own auth checks = unprotected
+  → Only flag as unprotected if BOTH checks confirm it — middleware may protect globally
   → Record completed phase: [1,2,3]
 
-PHASE 4 — Middleware Chain (getMiddlewareChainTool)
-  → Pass knownRoutes: array of route paths from Phase 3
-  → Tool discovers middleware files internally
-  → Cross-reference: which routes have NO middleware coverage AND are unprotected per Phase 3?
-  → These are confirmed unprotected sensitive routes — HIGH/CRITICAL finding
-  → Record completed phase: [1,2,3,4]
-
-PHASE 5 — Schema Index Check (getSchemaDefinitionsTool)
-  → Pass schema files from Phase 2
+PHASE 4 — Schema & Index Check (getFileContent on schema file)
+  → Read the schema file (e.g. prisma/schema.prisma) with getFileContent
   → Look specifically for:
     Third-party mode: clerkId, auth0Id, supabaseId, providerId, externalId columns — are they indexed?
     Self-managed mode: sessionId, userId in sessions table — are they indexed?
   → Missing index on provider user ID column = CRITICAL finding (full table scan on every auth'd request)
+  → Record completed phase: [1,2,3,4]
+
+PHASE 5 — Deep Pattern Analysis (searchCode + getFileContent)
+  Third-party mode searches:
+    1. searchCode("findUnique") or searchCode("findFirst") near auth lookups — DB lookup after every auth check
+    2. searchCode("webhook") — find webhook handlers, then read them with getFileContent to check for:
+       - Signature verification (svix, crypto.createHmac, stripe.webhooks.constructEvent)
+       - Idempotency checks (checking if event already processed)
+  Self-managed mode searches:
+    1. searchCode("session") in DB models — session stored in DB (not Redis)?
+    2. searchCode("bcrypt.compare") or searchCode("compareSync") — is it async or sync?
+    3. searchCode("jwt.verify") — synchronous JWT verification blocking event loop?
+    4. searchCode("rateLimit") or searchCode("rate-limit") — missing rate limiting on login?
   → Record completed phase: [1,2,3,4,5]
 
-PHASE 6 — Pattern Search (searchCode)
-  Third-party mode searches:
-    1. Search: "findUnique clerkId" OR "findFirst clerkId" — DB lookup after every auth check
-    2. Search: "webhook" — find webhook handlers, check for idempotency + signature verification
-  Self-managed mode searches:
-    1. Search: "session" in DB models — session stored in DB (not Redis)?
-    2. Search: "bcrypt.compare" OR "compareSync" — is it async or sync?
-    3. Search: "jwt.verify" — synchronous JWT verification blocking event loop?
-    4. Search: "rate" OR "rateLimit" in login route files — missing rate limiting on login?
-  → Record completed phase: [1,2,3,4,5,6]
-
-PHASE 7 — Submit Report (finalReport)
-  → Call finalReport immediately after Phase 6
+PHASE 6 — Submit Report (finalReport)
+  → Call finalReport immediately after Phase 5
   → ALWAYS call finalReport — a partial report beats a timeout
   → Set timedOut: true if submitting early
 
-════════════════════════════════════════
+═══════════════════════════════════════════
 SEVERITY GUIDELINES
-════════════════════════════════════════
+═══════════════════════════════════════════
 
 CRITICAL:
   - Missing index on provider user ID (clerkId, auth0Id) → full table scan per request → breaks at ~10k users
   - Session stored in DB without cache → DB hit on every request → breaks at ~500 req/s
-  - Unprotected sensitive routes confirmed by BOTH route map AND middleware gap
+  - Unprotected sensitive routes confirmed by BOTH middleware analysis AND route-level check
 
 HIGH:
   - DB lookup after every auth check (user sync pattern with no caching)
@@ -238,16 +240,27 @@ LOW:
   - Unprotected non-sensitive routes
   - Missing indexes on rarely-queried auth columns
 
-════════════════════════════════════════
+═══════════════════════════════════════════
 RULES
-════════════════════════════════════════
+═══════════════════════════════════════════
 1. Complete phases in order. Do not skip Phase 1 — mode detection determines everything.
-2. Always cross-reference Phase 3 (route map) + Phase 4 (middleware) before flagging unprotected routes. Both must agree.
-3. Never flag a route as unprotected based on Phase 3 alone — middleware may protect it globally.
-4. Call finalReport ONCE and ONLY ONCE — immediately after Phase 6.
+2. Always cross-reference middleware + route-level checks before flagging unprotected routes.
+3. Never flag a route as unprotected based on a single check — middleware may protect it globally.
+4. Call finalReport ONCE and ONLY ONCE — immediately after Phase 5.
 5. Partial report beats timeout. If approaching recursion limit, call finalReport now.
-6. Do not invent findings. Only report what tools confirmed.
+6. Do not invent findings. Only report what you confirmed by reading actual code.
+7. Tools already know the repo — just pass file paths or search queries, not owner/repo/branch/token.
 `;
+
+// ─── Tools ────────────────────────────────────────────────────────────────────
+
+const authAgentTools = [
+  getRepoTreeTool,
+  getFileContentTool,
+  searchCodeTool,
+  getCodeBlockTool,
+  finalReportTool,
+];
 
 // ─── Agent Runner ─────────────────────────────────────────────────────────────
 
@@ -258,44 +271,55 @@ export async function runAuthAgent(
   // Load repo metadata
   const repo = await prisma.repository.findUniqueOrThrow({
     where: { repositoryId },
-    select: { fullName: true, defaultBranch: true },
+    select: {
+      fullName: true,
+      defaultBranch: true,
+      packageJson: true,
+      repoContent: true,
+      framework: true,
+    },
   });
 
   const [owner, repoName] = repo.fullName.split("/");
+  const branch = repo.defaultBranch ?? "main";
+  const framework = repo.framework ?? "unknown";
+  const packageJsonStr = repo.packageJson
+    ? JSON.stringify(repo.packageJson).slice(0, 3000)
+    : "Not available";
+  const repoContentStr = repo.repoContent
+    ? JSON.stringify(repo.repoContent)
+    : "Not available";
 
-  // Build agent
-  const agent = createReactAgent({
-    llm: gpt4oMini,
-    tools: [
-      getDependenciesTool,
-      getRepoTreeTool,
-      getRouteMapTool,
-      getMiddlewareChainTool,
-      getSchemaDefinitionsTool,
-      searchCodeTool,
-      finalReportTool,
-    ],
-    messageModifier: SYSTEM_PROMPT,
+  console.log(`[AuthAgent] Repo: ${repo.fullName} (${branch})`);
+
+  // Build agent with context schema
+  const agent = createAgent({
+    model: gpt5Mini,
+    tools: authAgentTools,
+    systemPrompt: SYSTEM_PROMPT,
+    contextSchema: githubContextSchema,
   });
 
-  const userMessage = `
-Analyze the authentication implementation of this repository for scale bottlenecks.
+  const userMessage = `Analyze the authentication implementation of ${repo.fullName} for scale bottlenecks.
 
-Repository ID: ${repositoryId}
-Owner: ${owner}
-Repo: ${repoName}
-Branch: ${repo.defaultBranch}
-Access Token: ${accessToken}
+REPOSITORY CONTEXT:
+- Framework: ${framework}
+- Package.json dependencies: ${packageJsonStr}
+- Root directory structure: ${repoContentStr}
 
-Follow all 7 investigation phases in order. Call finalReport after Phase 6.
-`.trim();
+Start with Phase 1: infer the auth provider from the package.json above (no tool call needed).
+Then proceed through the remaining phases using tools.
+Call finalReport after Phase 5.`;
 
   let rawMessages: unknown[] = [];
 
   try {
     const result = await agent.invoke(
-      { messages: [new HumanMessage(userMessage)] },
-      { recursionLimit: 100 }
+      { messages: [{ role: "user", content: userMessage }] },
+      {
+        context: { owner, repo: repoName, branch, accessToken },
+        recursionLimit: 100,
+      }
     );
     rawMessages = result.messages ?? [];
   } catch (err) {
@@ -308,10 +332,17 @@ Follow all 7 investigation phases in order. Call finalReport after Phase 6.
   for (const msg of rawMessages) {
     const m = msg as {
       _getType?: () => string;
+      role?: string;
       name?: string;
       content?: unknown;
+      tool_calls?: Array<{ name: string; args: unknown }>;
     };
-    if (m._getType?.() === "tool" && m.name === "finalReport") {
+
+    // Check tool response messages
+    if (
+      (m._getType?.() === "tool" || m.role === "tool") &&
+      m.name === "finalReport"
+    ) {
       try {
         const parsed =
           typeof m.content === "string" ? JSON.parse(m.content) : m.content;
@@ -332,6 +363,34 @@ Follow all 7 investigation phases in order. Call finalReport after Phase 6.
         };
       } catch {
         console.error("[AuthAgent] Failed to parse finalReport content");
+      }
+    }
+
+    // Fallback: check tool_calls on assistant messages
+    if (!report && m.tool_calls) {
+      for (const tc of m.tool_calls) {
+        if (tc.name === "finalReport" && tc.args) {
+          try {
+            const inner =
+              typeof tc.args === "string" ? JSON.parse(tc.args) : tc.args;
+            report = {
+              repositoryId,
+              authMode: (inner as any).authMode ?? "unknown",
+              authProvider: (inner as any).authProvider ?? "none",
+              findings: (inner as any).findings ?? [],
+              scaleAnalysis: (inner as any).scaleAnalysis ?? {
+                overallRisk: "low",
+                estimatedBreakpoint: "unknown",
+                bottlenecks: [],
+              },
+              summary: (inner as any).summary ?? "",
+              completedPhases: (inner as any).completedPhases ?? [],
+              timedOut: (inner as any).timedOut ?? false,
+            };
+          } catch {
+            // continue
+          }
+        }
       }
     }
   }
