@@ -44,7 +44,7 @@ interface Message {
 
 interface AgentOutput {
     variant?: AgentVariant;
-    report: Record<string, unknown> | null;
+    rawFindings: string | null;
     intermediateSteps: Message[];
     totalToolCalls: number;
     executionTimeMs: number;
@@ -64,6 +64,7 @@ interface StreamEvent {
     tokenUsage?: { inputTokens: number; outputTokens: number; totalTokens: number };
     cumulativeTokens?: { inputTokens: number; outputTokens: number; totalTokens: number };
     report?: Record<string, unknown> | null;
+    rawFindings?: string | null;
     totalToolCalls?: number;
     executionTimeMs?: number;
     error?: string;
@@ -560,7 +561,7 @@ export default function TestDbAgentPage() {
                             // Final result with report + intermediateSteps
                             setResult({
                                 variant: event.variant ?? agentVariant,
-                                report: event.report ?? null,
+                                rawFindings: event.rawFindings ?? null,
                                 intermediateSteps: event.intermediateSteps ?? [],
                                 totalToolCalls: event.totalToolCalls ?? 0,
                                 executionTimeMs: event.executionTimeMs ?? 0,
@@ -588,9 +589,9 @@ export default function TestDbAgentPage() {
 
                         // If this is a done event, also set result
                         if (event.type === "done") {
-                            if (event.report || event.error) {
+                            if (event.rawFindings || event.error) {
                                 setResult(prev => prev ?? {
-                                    report: event.report ?? null,
+                                    rawFindings: event.rawFindings ?? null,
                                     intermediateSteps: [],
                                     totalToolCalls: event.totalToolCalls ?? 0,
                                     executionTimeMs: event.executionTimeMs ?? 0,
@@ -606,7 +607,7 @@ export default function TestDbAgentPage() {
         } catch (e) {
             const errorMsg = e instanceof Error ? e.message : "Unknown error";
             setResult({
-                report: null,
+                rawFindings: null,
                 intermediateSteps: [],
                 totalToolCalls: 0,
                 executionTimeMs: 0,
@@ -883,12 +884,12 @@ export default function TestDbAgentPage() {
                     <div className="space-y-4">
                         {/* Meta stats */}
                         {result && (
-                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                                 {[
                                     {
                                         label: "Status",
-                                        value: result.error ? "Error" : result.report ? "Success" : "No report",
-                                        color: result.error ? "text-red-400" : result.report ? "text-emerald-400" : "text-amber-400",
+                                        value: result.error ? "Error" : result.rawFindings ? "Success" : "No findings",
+                                        color: result.error ? "text-red-400" : result.rawFindings ? "text-emerald-400" : "text-amber-400",
                                     },
                                     {
                                         label: "Tool Calls",
@@ -899,13 +900,6 @@ export default function TestDbAgentPage() {
                                         label: "Execution Time",
                                         value: `${(result.executionTimeMs / 1000).toFixed(1)}s`,
                                         color: "text-purple-400",
-                                    },
-                                    {
-                                        label: "Confidence",
-                                        value: result.report
-                                            ? `${((result.report.confidence as number) * 100).toFixed(0)}%`
-                                            : "—",
-                                        color: "text-yellow-400",
                                     },
                                 ].map((s) => (
                                     <Card key={s.label} className="p-4!">
@@ -943,7 +937,7 @@ export default function TestDbAgentPage() {
                                         {tab === "live"
                                             ? `📡 Live Logs (${liveEvents.length})`
                                             : tab === "report"
-                                                ? `📊 Report (${(result?.report?.findings as unknown[])?.length ?? 0} findings)`
+                                                ? `📊 Findings${result?.rawFindings ? ` (${Math.round(result.rawFindings.length / 1000)}k chars)` : ""}`
                                                 : `🔧 Tool Steps (${result?.intermediateSteps?.length ?? 0})`}
                                     </button>
                                 ))}
@@ -1041,115 +1035,22 @@ export default function TestDbAgentPage() {
                                 </div>
                             )}
 
-                            {/* Report tab */}
-                            {activeTab === "report" && result?.report && (
-                                <div className="space-y-5">
-                                    {/* Summary strip */}
-                                    <Card>
-                                        <div className="flex items-center gap-3 mb-4">
-                                            <h3 className="text-sm font-semibold text-gray-200 flex-1">
-                                                Summary
-                                            </h3>
-                                            <span
-                                                className={`text-xs font-bold uppercase px-2 py-0.5 rounded-full ${(result.report.summary as Record<string, unknown>).overallRisk === "critical"
-                                                    ? "bg-red-500/20 text-red-400"
-                                                    : (result.report.summary as Record<string, unknown>).overallRisk === "warning"
-                                                        ? "bg-amber-500/20 text-amber-400"
-                                                        : "bg-emerald-500/20 text-emerald-400"
-                                                    }`}
-                                            >
-                                                {String((result.report.summary as Record<string, unknown>).overallRisk)} risk
-                                            </span>
-                                        </div>
-                                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center">
-                                            {[
-                                                { label: "Total", value: (result.report.summary as Record<string, unknown>).totalFindings, color: "text-gray-200" },
-                                                { label: "Critical", value: (result.report.summary as Record<string, unknown>).criticalCount, color: "text-red-400" },
-                                                { label: "Warning", value: (result.report.summary as Record<string, unknown>).warningCount, color: "text-amber-400" },
-                                                { label: "Info", value: (result.report.summary as Record<string, unknown>).infoCount, color: "text-blue-400" },
-                                            ].map((s) => (
-                                                <div key={s.label}>
-                                                    <p className={`text-2xl font-bold ${s.color}`}>
-                                                        {String(s.value)}
-                                                    </p>
-                                                    <p className="text-xs text-gray-500">{s.label}</p>
-                                                </div>
-                                            ))}
-                                        </div>
-                                        <div className="mt-4 pt-4 border-t border-white/5 grid sm:grid-cols-2 gap-3 text-sm">
-                                            <div>
-                                                <Label>Top Concern</Label>
-                                                <p className="text-gray-300">
-                                                    {String((result.report.summary as Record<string, unknown>).topConcern)}
-                                                </p>
-                                            </div>
-                                            <div>
-                                                <Label>Estimated Scale Ceiling</Label>
-                                                <p className="text-orange-300 font-semibold">
-                                                    {String((result.report.summary as Record<string, unknown>).estimatedScaleCeiling)}
-                                                </p>
-                                            </div>
-                                        </div>
-                                    </Card>
-
-                                    {/* Scale analysis */}
-                                    <div>
-                                        <h3 className="text-sm font-semibold text-gray-400 mb-2 uppercase tracking-wider">
-                                            Scale Analysis
-                                        </h3>
-                                        <div className="grid sm:grid-cols-3 gap-3">
-                                            {Object.entries(result.report.scaleAnalysis as Record<string, { verdict: string; primaryIssues: string[] }>).map(
-                                                ([tier, data]) => (
-                                                    <ScaleTierCard key={tier} tier={tier} data={data} />
-                                                )
-                                            )}
-                                        </div>
-                                    </div>
-
-                                    {/* Findings */}
-                                    <div>
-                                        <h3 className="text-sm font-semibold text-gray-400 mb-2 uppercase tracking-wider">
-                                            Findings
-                                        </h3>
-                                        <div className="space-y-2">
-                                            {((result.report.findings as Record<string, unknown>[]) ?? []).map(
-                                                (f, i) => (
-                                                    <FindingCard key={i} finding={f} />
-                                                )
-                                            )}
-                                            {((result.report.findings as unknown[]) ?? []).length === 0 && (
-                                                <p className="text-sm text-gray-500 text-center py-6">
-                                                    No findings reported.
-                                                </p>
-                                            )}
-                                        </div>
-                                    </div>
-
-                                    {/* Tools used */}
-                                    {(result.report.toolsUsed as string[])?.length > 0 && (
-                                        <Card>
-                                            <Label>Tools Used by Agent</Label>
-                                            <div className="flex flex-wrap gap-2 mt-1">
-                                                {(result.report.toolsUsed as string[]).map((t) => (
-                                                    <span
-                                                        key={t}
-                                                        className="px-2 py-0.5 rounded-md bg-gray-700 text-xs font-mono text-gray-300"
-                                                    >
-                                                        {t}
-                                                    </span>
-                                                ))}
-                                            </div>
-                                        </Card>
-                                    )}
-                                </div>
+                            {/* Report tab — shows raw findings */}
+                            {activeTab === "report" && result?.rawFindings && (
+                                <Card>
+                                    <h3 className="text-sm font-semibold text-gray-200 mb-3">Agent Findings</h3>
+                                    <pre className="text-sm text-gray-300 whitespace-pre-wrap leading-relaxed max-h-[800px] overflow-y-auto">
+                                        {result.rawFindings}
+                                    </pre>
+                                </Card>
                             )}
 
-                            {activeTab === "report" && !result?.report && !result?.error && (
+                            {activeTab === "report" && !result?.rawFindings && !result?.error && (
                                 <Card className="text-center py-10">
                                     <p className="text-gray-500">
                                         {running
-                                            ? "Agent is running — report will appear when complete."
-                                            : "Agent completed but did not produce a final report."}
+                                            ? "Agent is running — findings will appear when complete."
+                                            : "Agent completed but did not produce findings."}
                                     </p>
                                     <p className="text-xs text-gray-600 mt-1">
                                         Switch to Live Logs to inspect events.

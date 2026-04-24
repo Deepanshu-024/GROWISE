@@ -73,7 +73,7 @@ export interface StreamEvent {
     tokenUsage?: { inputTokens: number; outputTokens: number; totalTokens: number };
     cumulativeTokens?: { inputTokens: number; outputTokens: number; totalTokens: number };
     // done event fields
-    report?: DbAgentReport | null;
+    rawFindings?: string | null;
     totalToolCalls?: number;
     executionTimeMs?: number;
     error?: string;
@@ -87,7 +87,7 @@ export interface DbAgentInput {
 }
 
 export interface DbAgentOutput {
-    report: DbAgentReport | null;
+    rawFindings: string | null;
     intermediateSteps: any[];
     totalToolCalls: number;
     executionTimeMs: number;
@@ -270,17 +270,18 @@ REPOSITORY CONTEXT:
 - Framework: {framework} (React/Next.js confirmed)
 - Default Branch: {defaultBranch}
 - Package.json Dependencies: {packageJson}
-- Root Structure: {repoContent}
+- Full Repository File Tree: {repoContent}
 
 STRATEGIC TOOL USAGE PHILOSOPHY:
 🎯 **Use tools ONLY when critical information cannot be inferred from existing context**
-- Start with provided package.json and root structure
+- Start with provided package.json and repository file tree
+- The file tree above is the FULL project structure — use it to identify targets before making any tool calls
 - Make educated assumptions based on React/Next.js patterns
 - Tool calls should be surgical, not exhaustive
 - Maximum 8 tool calls total across all phases — spend them wisely
 
 AVAILABLE TOOLS (Use Sparingly — repo details are injected automatically via context):
-1. **getRepoTree()** - No input needed. Returns full project file tree (use only if root content above is insufficient)
+1. **getRepoTree()** - No input needed. Returns full project file tree (only if the tree in context is incomplete or truncated)
 2. **getFileContent(path)** - Just pass the file path. For reading schema, ORM config, API routes, server actions
 3. **searchCode(query)** - Just pass the search query. For locating patterns: PrismaClient, $transaction, findMany, N+1
 
@@ -490,10 +491,7 @@ Deliver a comprehensive database scale analysis structured as:
 6. **Connection Pool Assessment**
    - Current setup, risk level, recommendation
 
-7. **Scale Ceiling Estimate**
-   - Based on most critical finding: "This codebase will begin failing under real load at approximately X concurrent users unless..."
-
-8. **Priority Fix Order**
+7. **Priority Fix Order**
    - Ranked list of what to fix first for maximum scale improvement
 
 **Quality standards:**
@@ -502,8 +500,11 @@ Deliver a comprehensive database scale analysis structured as:
 - Prioritize by traffic reality: a bug in /checkout matters 10× more than a bug in /admin/export
 - Do not report findings for seed routes
 - Focus entirely on what breaks the user experience under scale
+- Do NOT estimate overall scale ceilings or breakpoints — the orchestrator agent will handle that
 
-Remember: Tool efficiency is paramount. Make intelligent inferences from package.json and root structure before reading files. Every tool call should answer a question you cannot answer from context alone.`;
+Remember: Tool efficiency is paramount. Make intelligent inferences from package.json and the file tree before reading files. Every tool call should answer a question you cannot answer from context alone.
+
+When your investigation is complete, output your findings as your final message. Just return the findings as structured text in your last response.`;
 
 // ─── Tools ────────────────────────────────────────────────────────────────────
 
@@ -511,7 +512,6 @@ const dbAgentTools = [
     getRepoTreeTool,
     searchCodeTool,
     getFileContentTool,
-    finalReportTool,
 ];
 
 // ─── Main Exported Function ───────────────────────────────────────────────────
@@ -529,7 +529,7 @@ export async function runDatabaseAgent(
         totalSteps: 0,
         steps: [],
     };
-    let stepCounter = 0;
+    let stepCounter = 0; // updated from langgraph_step metadata in callbacks
     let cumulativeInputTokens = 0;
     let cumulativeOutputTokens = 0;
     let lastToolName = "unknown";
@@ -570,7 +570,7 @@ export async function runDatabaseAgent(
 
         if (!repository || !repository.fullName) {
             return {
-                report: null,
+                rawFindings: null,
                 intermediateSteps: [],
                 totalToolCalls: 0,
                 executionTimeMs: Date.now() - startTime,
@@ -614,7 +614,7 @@ REPOSITORY CONTEXT:
 - Framework: ${framework}
 - Archetype score: ${archetypeScore} (0-1, higher = more DB heavy)
 - Package.json dependencies: ${packageJsonStr}
-- Root directory structure: ${repoContentStr}
+- Full repository file tree: ${repoContentStr}
 
 **Primary Objectives:**
 1. **N+1 Detection** — Find DB calls inside loops on high-traffic routes and actions
@@ -624,26 +624,31 @@ REPOSITORY CONTEXT:
 5. **Connection Pool Risk** — Assess whether the connection strategy survives serverless cold starts at scale
 
 **Analysis Approach:**
-- Start with the package.json and root structure provided above — infer stack and project type immediately (Phase 1, no tools needed)
+- Start with the package.json and file tree provided above — identify API routes, schema files, and lib files immediately (Phase 1, no tools needed)
 - Classify routes and actions by traffic priority before reading any files
 - Use getFileContent(path) strategically on high-priority targets only
 - Use searchCode(query) to validate patterns (singleton usage, transaction usage, import frequency)
 - Read schema file once to cross-reference all query findings at once
 - Tools already know the repo details — just pass the file path or search query
 
-**Constraint:** Minimize tool usage — leverage the package.json and root structure above first, then make targeted tool calls only for confirmed high-traffic files.
+**Constraint:** Minimize tool usage — leverage the file tree and package.json above first, then make targeted tool calls only for confirmed high-traffic files.
 
-When investigation is complete, call finalReport with your findings.`,
+Return your findings as your final message. Do not call any report tool.`,
                     },
                 ],
             },
             {
                 context: { owner, repo, branch, accessToken },
-                recursionLimit: 150,
+                recursionLimit: 40,
                 callbacks: [
                     {
-                        handleAgentAction(action: any) {
-                            stepCounter++;
+                        handleAgentAction(action: any, _runId: string, _parentRunId?: string, _tags?: string[], metadata?: Record<string, any>) {
+                            // Use LangGraph's built-in step counter if available
+                            if (metadata?.langgraph_step != null) {
+                                stepCounter = metadata.langgraph_step;
+                            } else {
+                                stepCounter++;
+                            }
                             const toolName = resolveCallbackToolName(action, action.tool);
                             lastToolName = toolName;
                             pendingDecisionReasoning =
@@ -679,7 +684,10 @@ When investigation is complete, call finalReport with your findings.`,
                                 });
                             }
                         },
-                        handleToolStart(tool: any, input: string) {
+                        handleToolStart(tool: any, input: string, _runId?: string, _parentRunId?: string, _tags?: string[], metadata?: Record<string, any>) {
+                            if (metadata?.langgraph_step != null) {
+                                stepCounter = metadata.langgraph_step;
+                            }
                             const toolName = resolveCallbackToolName(tool, lastToolName);
                             lastToolName = toolName;
                             let parsedInput: unknown = input;
@@ -688,7 +696,7 @@ When investigation is complete, call finalReport with your findings.`,
                             } catch {
                                 // keep raw string
                             }
-                            console.log(`\n[Step ${stepCounter}] → Calling ${toolName}`);
+                            console.log(`\n[Step ${stepCounter}/50] → Calling ${toolName}`);
                             console.log(`Input: ${JSON.stringify(parsedInput, null, 2).slice(0, 300)}`);
 
                             emit({
@@ -740,7 +748,12 @@ When investigation is complete, call finalReport with your findings.`,
                                 },
                             });
                         },
-                        handleLLMEnd(output: any) {
+                        handleLLMEnd(output: any, _runId?: string, _parentRunId?: string, _tags?: string[], metadata?: Record<string, any>) {
+                            // Sync step counter from LangGraph metadata
+                            if (metadata?.langgraph_step != null) {
+                                stepCounter = metadata.langgraph_step;
+                            }
+
                             // Extract token usage from LangChain output metadata
                             const usage = output?.llmOutput?.tokenUsage
                                 ?? output?.llmOutput?.usage
@@ -833,78 +846,49 @@ When investigation is complete, call finalReport with your findings.`,
             }
         );
 
-        // Extract tool calls from message history
+        // ── Extract findings from the agent's final AI message ──────────
         const messages = result.messages ?? [];
         const toolMessages = messages.filter(
             (msg: any) => msg.role === "tool" || msg.tool_calls?.length > 0
         );
         const totalToolCalls = toolMessages.length;
 
-        // Find the finalReport tool call in messages
-        let report: DbAgentReport | null = null;
+        // The agent returns its findings as the content of its last AI message
+        const lastAiMessage = [...messages]
+            .reverse()
+            .find((msg: any) => msg._getType?.() === "ai" || msg.role === "assistant");
 
-        for (const msg of messages) {
-            // Tool response messages carry the tool name and content
-            if ((msg as any).role === "tool" && (msg as any).name === "finalReport") {
-                try {
-                    report = JSON.parse(
-                        typeof (msg as any).content === "string"
-                            ? (msg as any).content
-                            : JSON.stringify((msg as any).content)
-                    );
-                } catch {
-                    // Try next match
-                }
-            }
-        }
-
-        // Fallback: check tool_calls on assistant messages
-        if (!report) {
-            for (const msg of [...messages].reverse()) {
-                const toolCalls = (msg as any).tool_calls ?? [];
-                for (const tc of toolCalls) {
-                    if (tc.name === "finalReport" && tc.args) {
-                        try {
-                            report = typeof tc.args === "string"
-                                ? JSON.parse(tc.args)
-                                : tc.args;
-                        } catch {
-                            // continue
-                        }
-                    }
-                }
-                if (report) break;
-            }
-        }
+        const rawFindings: string =
+            typeof lastAiMessage?.content === "string"
+                ? lastAiMessage.content
+                : JSON.stringify(lastAiMessage?.content ?? "");
 
         const executionTimeMs = Date.now() - startTime;
 
-        if (!report) {
+        if (!rawFindings || rawFindings.trim().length === 0) {
             console.error(
-                "[dbAgent] Error: Agent completed without calling FINAL_REPORT"
+                "[dbAgent] Error: Agent completed without returning any findings"
             );
             return {
-                report: null,
+                rawFindings: null,
                 intermediateSteps: messages,
                 totalToolCalls,
                 executionTimeMs,
                 error:
-                    "Agent completed without calling FINAL_REPORT. " +
+                    "Agent completed without returning findings. " +
                     "Check intermediate steps for partial investigation.",
             };
         }
 
-        const { criticalCount, warningCount, infoCount } = report.summary;
-
         console.log(
-            `[dbAgent] Complete. ${criticalCount} critical, ${warningCount} warnings, ${infoCount} info`
+            `[dbAgent] Complete. Findings length: ${rawFindings.length} chars, ${totalToolCalls} tool calls`
         );
         console.log(`[dbAgent] Execution time: ${executionTimeMs}ms`);
 
         // Finalize log
         agentLog.endTime = new Date().toISOString();
         agentLog.totalSteps = stepCounter;
-        agentLog.finalReport = report;
+        agentLog.finalReport = { rawFindings };
 
         // Write to JSON file
         const logDir = path.join(process.cwd(), "agent-logs");
@@ -928,7 +912,7 @@ When investigation is complete, call finalReport with your findings.`,
             stepNumber: stepCounter,
             timestamp: new Date().toISOString(),
             elapsedMs: executionTimeMs,
-            report,
+            rawFindings,
             totalToolCalls,
             executionTimeMs,
             cumulativeTokens: {
@@ -939,7 +923,7 @@ When investigation is complete, call finalReport with your findings.`,
         });
 
         return {
-            report,
+            rawFindings,
             intermediateSteps: messages,
             totalToolCalls,
             executionTimeMs,
@@ -971,7 +955,7 @@ When investigation is complete, call finalReport with your findings.`,
             stepNumber: stepCounter,
             timestamp: new Date().toISOString(),
             elapsedMs: executionTimeMs,
-            report: null,
+            rawFindings: null,
             totalToolCalls: 0,
             executionTimeMs,
             error: message,
@@ -983,7 +967,7 @@ When investigation is complete, call finalReport with your findings.`,
         });
 
         return {
-            report: null,
+            rawFindings: null,
             intermediateSteps: [],
             totalToolCalls: 0,
             executionTimeMs,

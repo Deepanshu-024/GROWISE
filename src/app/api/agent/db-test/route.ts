@@ -74,16 +74,16 @@ export async function POST(req: NextRequest) {
                     // Send the final result as a special "result" event
                     // This contains the full intermediateSteps and report
                     try {
-                        controller.enqueue(
-                            encoder.encode(`data: ${JSON.stringify({
-                                type: "result",
-                                variant,
-                                report: output.report,
-                                intermediateSteps: output.intermediateSteps,
-                                totalToolCalls: output.totalToolCalls,
-                                executionTimeMs: output.executionTimeMs,
-                                error: output.error,
-                            })}\n\n`)
+                            controller.enqueue(
+                                encoder.encode(`data: ${JSON.stringify({
+                                    type: "result",
+                                    variant,
+                                    rawFindings: (output as any).rawFindings ?? null,
+                                    intermediateSteps: output.intermediateSteps,
+                                    totalToolCalls: output.totalToolCalls,
+                                    executionTimeMs: output.executionTimeMs,
+                                    error: output.error,
+                                })}\n\n`)
                         );
                     } catch {
                         // stream closed
