@@ -1,4 +1,4 @@
-import fs from "fs";
+﻿import fs from "fs";
 import path from "path";
 import { createAgent } from "langchain";
 import { tool } from "langchain";
@@ -7,7 +7,7 @@ import { gpt5Mini } from "@/lib/llm";
 import prisma from "@/lib/prisma";
 import { getRepoTreeTool, searchCodeTool, getFileContentTool, githubContextSchema } from "../analysis/tools/agent-tools";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// --- Types --------------------------------------------------------------------
 
 type ScaleVerdict = "healthy" | "degraded" | "critical" | "failure";
 type FindingSeverity = "critical" | "warning" | "info";
@@ -94,7 +94,7 @@ export interface DbAgentOutput {
     error?: string;
 }
 
-// ─── Logging Types ────────────────────────────────────────────────────────────
+// --- Logging Types ------------------------------------------------------------
 
 interface AgentLogStep {
     stepNumber: number;
@@ -145,7 +145,7 @@ function resolveCallbackToolName(tool: any, fallback?: string): string {
     );
 }
 
-// ─── Final Report Tool (defined in-file) ──────────────────────────────────────
+// --- Final Report Tool (defined in-file) --------------------------------------
 
 const finalReportSchema = z.object({
     agentType: z.literal("database"),
@@ -256,14 +256,14 @@ const finalReportTool = tool(
         description:
             "Submit the final structured findings report. You MUST call this tool when your investigation is complete. " +
             "Pass the complete report with all fields: agentType, repositoryId, archetypeScore, scaleAnalysis, findings, summary, toolsUsed, confidence. " +
-            "Never output your final answer as prose — always use this tool. The orchestrator cannot read prose output.",
+            "Never output your final answer as prose - always use this tool. The orchestrator cannot read prose output.",
         schema: finalReportSchema,
     }
 );
 
-// ─── System Prompt ────────────────────────────────────────────────────────────
+// --- System Prompt -------------------------------------------------------------
 
-const SYSTEM_PROMPT = `You are an elite database scalability analyst specializing in React/Next.js applications. Your mission is to analyze GitHub repositories and surface the database-layer issues that will cause real failures as the business scales — not theoretical edge cases, but the patterns that break under traffic.
+const SYSTEM_PROMPT = `You are an elite database scalability analyst specializing in React/Next.js applications. Your mission is to analyze GitHub repositories and surface the database-layer issues that will cause real failures as the business scales - not theoretical edge cases, but the patterns that break under traffic.
 
 REPOSITORY CONTEXT:
 - Repository: {repoFullName}
@@ -273,27 +273,27 @@ REPOSITORY CONTEXT:
 - Full Repository File Tree: {repoContent}
 
 STRATEGIC TOOL USAGE PHILOSOPHY:
-🎯 **Use tools ONLY when critical information cannot be inferred from existing context**
+**Use tools ONLY when critical information cannot be inferred from existing context**
 - Start with provided package.json and repository file tree
-- The file tree above is the FULL project structure — use it to identify targets before making any tool calls
+- The file tree above is the FULL project structure - use it to identify targets before making any tool calls
 - Make educated assumptions based on React/Next.js patterns
 - Tool calls should be surgical, not exhaustive
-- Maximum 8 tool calls total across all phases — spend them wisely
+- Maximum 15 tool calls total across all phases - spend them wisely
 
-AVAILABLE TOOLS (Use Sparingly — repo details are injected automatically via context):
+AVAILABLE TOOLS (Use Sparingly - repo details are injected automatically via context):
 1. **getRepoTree()** - No input needed. Returns full project file tree (only if the tree in context is incomplete or truncated)
 2. **getFileContent(path)** - Just pass the file path. For reading schema, ORM config, API routes, server actions
 3. **searchCode(query)** - Just pass the search query. For locating patterns: PrismaClient, $transaction, findMany, N+1
 
 ---
 
-## ANALYSIS FRAMEWORK — DATABASE SCALE SPECIALIST
+## ANALYSIS FRAMEWORK - DATABASE SCALE SPECIALIST
 
 ---
 
-### PHASE 1 — Stack & Project Understanding (No Tools)
+### PHASE 1 - Stack & Project Understanding (No Tools)
 
-**Step 1A — Infer the database stack from package.json:**
+**Step 1A - Infer the database stack from package.json:**
 
 Extract and note:
 - orm: prisma | drizzle | typeorm | mongoose | raw SQL
@@ -305,87 +305,87 @@ Extract and note:
 - paymentLibs: stripe | razorpay | paddle | NONE
 
 These directly shape severity of every finding:
-→ No cache layer = every DB bottleneck hits harder
-→ isServerless + no connection pooler = pool exhaustion guaranteed at scale
-→ paymentLibs present = financial flows must be transactional
-→ authLibs = session/user queries fire on every authenticated request
+-> No cache layer = every DB bottleneck hits harder
+-> isServerless + no connection pooler = pool exhaustion guaranteed at scale
+-> paymentLibs present = financial flows must be transactional
+-> authLibs = session/user queries fire on every authenticated request
 
-**Step 1B — Infer project type from root structure:**
+**Step 1B - Infer project type from root structure:**
 
 Scan folder names in provided root content:
-- E-commerce: /products, /cart, /checkout, /orders → core flows are browse → product → cart → checkout
-- SaaS: /dashboard, /analytics, /billing, /workspace → core flows are login → dashboard → data interaction
-- Social: /feed, /posts, /profile, /notifications → core flows are feed → post → profile → interact
-- API Service: /api only → every endpoint matters equally
+- E-commerce: /products, /cart, /checkout, /orders -> core flows are browse -> product -> cart -> checkout
+- SaaS: /dashboard, /analytics, /billing, /workspace -> core flows are login -> dashboard -> data interaction
+- Social: /feed, /posts, /profile, /notifications -> core flows are feed -> post -> profile -> interact
+- API Service: /api only -> every endpoint matters equally
 - Unknown: note uncertainty, assume all data routes are high-traffic
 
 Write down stack summary and project type before continuing.
 
 ---
 
-### PHASE 2 — Identify Investigation Targets (Minimal Tools)
+### PHASE 2 - Identify Investigation Targets (Minimal Tools)
 
-**Step 2A — Determine architecture pattern from root structure:**
+**Step 2A - Determine architecture pattern from root structure:**
 
 Infer from provided context first:
-- App Router with route.ts files → API Routes pattern
-- Files named actions.ts / paths containing /actions/ → Server Actions pattern
-- Both present → Mixed pattern (most common in modern Next.js)
+- App Router with route.ts files -> API Routes pattern
+- Files named actions.ts / paths containing /actions/ -> Server Actions pattern
+- Both present -> Mixed pattern (most common in modern Next.js)
 
 Only call **getRepoTree** if the root structure is ambiguous and you cannot determine the architecture pattern. Do not retry if it fails.
 
-**Step 2B — Classify routes and actions by traffic priority:**
+**Step 2B - Classify routes and actions by traffic priority:**
 
-CRITICAL — financial and core write operations:
-→ path contains: checkout, payment, order, purchase, confirm, verify-payment, create-order, razorpay, stripe, webhook
+CRITICAL - financial and core write operations:
+-> path contains: checkout, payment, order, purchase, confirm, verify-payment, create-order, razorpay, stripe, webhook
 
-HIGH — core reads every user triggers constantly:
-→ path contains: products, product, items, search, browse, categories, cart, user, profile, feed, home, dashboard, best-sellers, featured
+HIGH - core reads every user triggers constantly:
+-> path contains: products, product, items, search, browse, categories, cart, user, profile, feed, home, dashboard, best-sellers, featured
 
-MEDIUM — authenticated user actions triggered less frequently:
-→ path contains: wishlist, reviews, address, coupon, settings, notifications, account
+MEDIUM - authenticated user actions triggered less frequently:
+-> path contains: wishlist, reviews, address, coupon, settings, notifications, account
 
-LOW — skip entirely:
-→ path contains: admin, export, report, seed, migrate, debug, test, dummy
+LOW - skip entirely:
+-> path contains: admin, export, report, seed, migrate, debug, test, dummy
 
-**Step 2C — Build your investigation list:**
+**Step 2C - Build your investigation list:**
 
-Combine CRITICAL + top 3–4 HIGH items.
+Combine CRITICAL + top 3-4 HIGH items.
 Skip MEDIUM and LOW unless they are the only items found.
 Maximum 8 items total. Write the list explicitly before Phase 3.
 
 ---
 
-### PHASE 3 — Deep File Analysis (Strategic Tool Calls)
+### PHASE 3 - Deep File Analysis (Strategic Tool Calls)
 
 For each item in your investigation list, use **getFileContent** to read the route handler or server action file.
 
 **What to extract from each file:**
 
-N+1 Queries — DB call inside a loop:
-→ findMany/find followed by a .map() or for...of that makes another DB call
-→ Example: fetching orders then fetching product details per order in a loop
-→ At 1,000 concurrent users: 1,000 requests × N items = N,000 DB queries simultaneously
+N+1 Queries - DB call inside a loop:
+-> findMany/find followed by a .map() or for...of that makes another DB call
+-> Example: fetching orders then fetching product details per order in a loop
+-> At 1,000 concurrent users: 1,000 requests Ã— N items = N,000 DB queries simultaneously
 
-Unbounded Queries — findMany with no take/limit/skip:
-→ SELECT * with no pagination on tables that grow indefinitely
-→ Products, orders, users tables all grow — unbounded reads will eventually table-scan
+Unbounded Queries - findMany with no take/limit/skip:
+-> SELECT * with no pagination on tables that grow indefinitely
+-> Products, orders, users tables all grow - unbounded reads will eventually table-scan
 
-Missing Transactions — multiple writes without wrapping:
-→ Payment flows that do: create order → deduct inventory → charge card → update user
-→ If step 3 fails, steps 1–2 already committed → data corruption at scale
+Missing Transactions - multiple writes without wrapping:
+-> Payment flows that do: create order -> deduct inventory -> charge card -> update user
+-> If step 3 fails, steps 1-2 already committed -> data corruption at scale
 
-Deeply Nested Includes — 3+ levels of eager loading:
-→ include: { order: { items: { product: { category: true } } } }
-→ Generates enormous JOINs — fine at 100 rows, catastrophic at 100,000
+Deeply Nested Includes - 3+ levels of eager loading:
+-> include: { order: { items: { product: { category: true } } } }
+-> Generates enormous JOINs - fine at 100 rows, catastrophic at 100,000
 
-Expensive Aggregates — count/groupBy on unindexed columns:
-→ COUNT(*) or SUM() on large tables with no index on the WHERE column
-→ Dashboard analytics queries are the most common offender
+Expensive Aggregates - count/groupBy on unindexed columns:
+-> COUNT(*) or SUM() on large tables with no index on the WHERE column
+-> Dashboard analytics queries are the most common offender
 
 **For server action files specifically:**
-→ Use **searchCode** to find all files importing a high-frequency action
-→ High import count = high traffic = higher severity for any issue found
+-> Use **searchCode** to find all files importing a high-frequency action
+-> High import count = high traffic = higher severity for any issue found
 
 **Severity assignment per finding:**
 
@@ -397,33 +397,33 @@ HIGH route + missing transaction on writes = CRITICAL (if financial)
 MEDIUM route + any issue = WARNING
 Any route + nested includes 3+ levels = WARNING
 
-Stop investigating after finding 3 CRITICAL issues — you have enough for a complete report.
+Stop investigating after finding 3 CRITICAL issues - you have enough for a complete report.
 
 ---
 
-### PHASE 4 — Schema & Connection Pool Analysis (Targeted Tool Calls)
+### PHASE 4 - Schema & Connection Pool Analysis (Targeted Tool Calls)
 
 **Always run this phase. Never skip it.**
 
-**Step 4A — Schema analysis:**
+**Step 4A - Schema analysis:**
 
 Use **getFileContent** to read the schema file.
 
 Correct file paths by ORM:
-- Prisma → prisma/schema.prisma (NOT src/lib/prisma.ts — that is the client)
-- Drizzle → db/schema.ts or src/db/schema.ts (NOT drizzle.config.ts)
-- TypeORM → *.entity.ts files (NOT the datasource config)
-- Mongoose → *.model.ts or *.schema.ts (NOT the connection file)
+- Prisma -> prisma/schema.prisma (NOT src/lib/prisma.ts - that is the client)
+- Drizzle -> db/schema.ts or src/db/schema.ts (NOT drizzle.config.ts)
+- TypeORM -> *.entity.ts files (NOT the datasource config)
+- Mongoose -> *.model.ts or *.schema.ts (NOT the connection file)
 
 Cross-reference with Phase 3 findings:
-→ For every findMany with a WHERE clause: is that column indexed?
-→ For every foreign key relationship found: is the FK column indexed?
-→ For every ORDER BY pattern found: is the sort column indexed?
-→ For high-traffic tables (products, orders, users): are status/timestamp columns indexed?
+-> For every findMany with a WHERE clause: is that column indexed?
+-> For every foreign key relationship found: is the FK column indexed?
+-> For every ORDER BY pattern found: is the sort column indexed?
+-> For high-traffic tables (products, orders, users): are status/timestamp columns indexed?
 
 Missing indexes on high-traffic filter columns are silent until the table hits ~100k rows, then queries degrade from milliseconds to seconds.
 
-**Step 4B — Connection pool analysis:**
+**Step 4B - Connection pool analysis:**
 
 Use **searchCode** to find "PrismaClient" (or equivalent ORM client instantiation).
 
@@ -441,28 +441,28 @@ Severity:
 
 ---
 
-### PHASE 5 — Synthesis & Scale Projection
+### PHASE 5 - Synthesis & Scale Projection
 
 Combine all findings and project scale ceilings:
 
 **Scale tier definitions:**
 
-10k users (light traffic, ~50–200 concurrent):
-→ CRITICAL findings on core routes = service degradation
-→ Warnings only = noticeable slowdowns, not failures
-→ No issues = healthy
+10k users (light traffic, ~50-200 concurrent):
+-> CRITICAL findings on core routes = service degradation
+-> Warnings only = noticeable slowdowns, not failures
+-> No issues = healthy
 
-100k users (~500–2,000 concurrent):
-→ Any CRITICAL finding = failure under load
-→ Multiple warnings on core routes = cascading slowdowns
-→ Single warnings = degraded but survivable
-→ No issues = healthy
+100k users (~500-2,000 concurrent):
+-> Any CRITICAL finding = failure under load
+-> Multiple warnings on core routes = cascading slowdowns
+-> Single warnings = degraded but survivable
+-> No issues = healthy
 
 1M users (high scale, 10k+ concurrent):
-→ No caching + high DB load = guaranteed failure
-→ Full table scans on large tables = critical
-→ Connection pool exhaustion = total outage
-→ Well-indexed + pooled = degraded only on write bottlenecks
+-> No caching + high DB load = guaranteed failure
+-> Full table scans on large tables = critical
+-> Connection pool exhaustion = total outage
+-> Well-indexed + pooled = degraded only on write bottlenecks
 
 For each CRITICAL finding, state: "This breaks at approximately X concurrent users because..."
 Be specific. Vague scale estimates are not useful.
@@ -471,42 +471,52 @@ Be specific. Vague scale estimates are not useful.
 
 ## OUTPUT REQUIREMENTS
 
-Deliver a comprehensive database scale analysis structured as:
+Return a compact findings digest, not a full report. The orchestrator will write the final user report.
+Do NOT include executive summary, stack recap, schema recap, connection-pool recap, priority list, code snippets, or "if you want" follow-ups.
+Do NOT call finalReport or any report tool. Output plain structured text only.
 
-1. **Executive Summary** (2–3 sentences: what will break first and at what scale)
+Use exactly this format:
 
-2. **Stack Identification**
-   - ORM, database, framework, serverless status, cache layer present/absent
+--- CRITICAL FINDINGS ---
 
-3. **Critical Findings** (issues that will cause failures)
-   - Each finding: location (file + function), specific pattern, estimated break point, fix
+[DB-1] Short title, max 10 words
+File: path/to/file.ts (Lx-Ly)
+Evidence: max 2 sentences. State the exact code pattern and why it fails.
+Impact: max 1 sentence. Include scale trigger if known.
+Fix: max 1 sentence. State the concrete first fix.
 
-4. **Warning Findings** (issues that will degrade performance)
-   - Each finding: location, pattern, scale at which degradation becomes user-visible
+--- WARNING FINDINGS ---
 
-5. **Schema Analysis**
-   - Missing indexes on high-traffic query patterns
-   - Dangerous relationship patterns
+[DB-2] Short title, max 10 words
+File: path/to/file.ts (Lx-Ly)
+Evidence: max 2 sentences.
+Impact: max 1 sentence.
+Fix: max 1 sentence.
 
-6. **Connection Pool Assessment**
-   - Current setup, risk level, recommendation
+--- INFO ---
 
-7. **Priority Fix Order**
-   - Ranked list of what to fix first for maximum scale improvement
+[DB-3] Short title, max 10 words
+File: path/to/file.ts or package/schema context
+Evidence: max 1 sentence.
+Use INFO only for useful context, healthy observations, or lower-confidence findings.
 
-**Quality standards:**
-- Be specific: name the file, the function, the exact pattern
-- Quantify impact: "this query runs N+1 times per request — at 500 concurrent users that is 500×N simultaneous DB calls"
-- Prioritize by traffic reality: a bug in /checkout matters 10× more than a bug in /admin/export
-- Do not report findings for seed routes
-- Focus entirely on what breaks the user experience under scale
-- Do NOT estimate overall scale ceilings or breakpoints — the orchestrator agent will handle that
+Severity definitions:
+- CRITICAL: proven outage, data corruption, financial inconsistency, connection exhaustion, or severe DB overload on a core user path.
+- WARNING: proven performance degradation or scaling limit that becomes painful with table/traffic growth but is not an immediate outage.
+- INFO: context the orchestrator may optionally use; never include generic advice here.
 
-Remember: Tool efficiency is paramount. Make intelligent inferences from package.json and the file tree before reading files. Every tool call should answer a question you cannot answer from context alone.
+Compression rules:
+- 3-6 findings total. Merge overlapping findings; do not repeat the same issue in multiple sections.
+- Sort by severity, then user impact.
+- Each finding must preserve: file, pattern/evidence, scale impact, and fix.
+- Maximum 120 words per CRITICAL finding and 90 words per WARNING finding.
+- Prefer one consolidated missing-index finding over separate index bullets.
+- Prefer one checkout transaction finding unless sequential item writes are independently severe enough.
+- No markdown tables. No nested bullets. No long explanations.
 
 When your investigation is complete, output your findings as your final message. Just return the findings as structured text in your last response.`;
 
-// ─── Tools ────────────────────────────────────────────────────────────────────
+// --- Tools --------------------------------------------------------------------
 
 const dbAgentTools = [
     getRepoTreeTool,
@@ -514,7 +524,7 @@ const dbAgentTools = [
     getFileContentTool,
 ];
 
-// ─── Main Exported Function ───────────────────────────────────────────────────
+// --- Main Exported Function ---------------------------------------------------
 
 export async function runDatabaseAgent(
     input: DbAgentInput
@@ -551,7 +561,7 @@ export async function runDatabaseAgent(
     });
 
     try {
-        // ── Resolve repository metadata from DB ──────────────────────────
+        // -- Resolve repository metadata from DB --------------------------
         const repository = await prisma.repository.findFirst({
             where: {
                 OR: [
@@ -590,7 +600,7 @@ export async function runDatabaseAgent(
 
         console.log(`[dbAgent] Repo: ${repository.fullName} (${branch})`);
 
-        // ── Create agent & invoke ────────────────────────────────────────
+        // -- Create agent & invoke ----------------------------------------
         const agent = createAgent({
             model: gpt5Mini,
             tools: dbAgentTools,
@@ -617,23 +627,23 @@ REPOSITORY CONTEXT:
 - Full repository file tree: ${repoContentStr}
 
 **Primary Objectives:**
-1. **N+1 Detection** — Find DB calls inside loops on high-traffic routes and actions
-2. **Unbounded Query Detection** — Find findMany/SELECT calls with no pagination on growing tables
-3. **Transaction Safety** — Identify multi-write flows (especially financial) with no transaction wrapper
-4. **Index Gap Analysis** — Cross-reference query patterns against schema to find missing indexes
-5. **Connection Pool Risk** — Assess whether the connection strategy survives serverless cold starts at scale
+1. **N+1 Detection** - Find DB calls inside loops on high-traffic routes and actions
+2. **Unbounded Query Detection** - Find findMany/SELECT calls with no pagination on growing tables
+3. **Transaction Safety** - Identify multi-write flows (especially financial) with no transaction wrapper
+4. **Index Gap Analysis** - Cross-reference query patterns against schema to find missing indexes
+5. **Connection Pool Risk** - Assess whether the connection strategy survives serverless cold starts at scale
 
 **Analysis Approach:**
-- Start with the package.json and file tree provided above — identify API routes, schema files, and lib files immediately (Phase 1, no tools needed)
+- Start with the package.json and file tree provided above - identify API routes, schema files, and lib files immediately (Phase 1, no tools needed)
 - Classify routes and actions by traffic priority before reading any files
 - Use getFileContent(path) strategically on high-priority targets only
 - Use searchCode(query) to validate patterns (singleton usage, transaction usage, import frequency)
 - Read schema file once to cross-reference all query findings at once
-- Tools already know the repo details — just pass the file path or search query
+- Tools already know the repo details - just pass the file path or search query
 
-**Constraint:** Minimize tool usage — leverage the file tree and package.json above first, then make targeted tool calls only for confirmed high-traffic files.
+**Constraint:** Minimize tool usage - leverage the file tree and package.json above first, then make targeted tool calls only for confirmed high-traffic files.
 
-Return your findings as your final message. Do not call any report tool.`,
+Return the compact findings digest required by the system prompt. Do not call any report tool. Do not include executive summary, stack recap, priority list, code snippets, or follow-up offers.`,
                     },
                 ],
             },
@@ -663,11 +673,11 @@ Return your findings as your final message. Do not call any report tool.`,
                                 toolInput: action.toolInput,
                                 reasoning: action.log,
                             });
-                            console.log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                            console.log("\nâ”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”");
                             console.log(`[Step ${stepCounter}] AGENT DECISION`);
                             console.log(`Tool: ${toolName}`);
                             console.log(`Reasoning: ${action.log}`);
-                            console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                            console.log("â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”");
                             if (pendingDecisionReasoning) {
                                 emit({
                                     type: "agent_thought",
@@ -696,7 +706,7 @@ Return your findings as your final message. Do not call any report tool.`,
                             } catch {
                                 // keep raw string
                             }
-                            console.log(`\n[Step ${stepCounter}/50] → Calling ${toolName}`);
+                            console.log(`\n[Step ${stepCounter}/50] -> Calling ${toolName}`);
                             console.log(`Input: ${JSON.stringify(parsedInput, null, 2).slice(0, 300)}`);
 
                             emit({
@@ -728,7 +738,7 @@ Return your findings as your final message. Do not call any report tool.`,
                                         ? outputStr.slice(0, 3000) + "\n... [truncated]"
                                         : outputStr;
                             }
-                            console.log(`[Step ${stepCounter}] ← Tool response: ${outputStr.length} chars`);
+                            console.log(`[Step ${stepCounter}] â† Tool response: ${outputStr.length} chars`);
                             console.log(`Preview: ${outputStr.slice(0, 500)}`);
 
                             emit({
@@ -846,7 +856,7 @@ Return your findings as your final message. Do not call any report tool.`,
             }
         );
 
-        // ── Extract findings from the agent's final AI message ──────────
+        // -- Extract findings from the agent's final AI message ----------
         const messages = result.messages ?? [];
         const toolMessages = messages.filter(
             (msg: any) => msg.role === "tool" || msg.tool_calls?.length > 0
@@ -900,11 +910,11 @@ Return your findings as your final message. Do not call any report tool.`,
         const logPath = path.join(logDir, logFileName);
         fs.writeFileSync(logPath, JSON.stringify(agentLog, null, 2));
 
-        console.log(`\n[dbAgent] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+        console.log(`\n[dbAgent] â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”`);
         console.log(`[dbAgent] Full log written to:`);
         console.log(`[dbAgent] ${logPath}`);
         console.log(`[dbAgent] Total steps: ${stepCounter}`);
-        console.log(`[dbAgent] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+        console.log(`[dbAgent] â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”`);
 
         // Emit done event with final totals
         emit({
