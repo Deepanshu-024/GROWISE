@@ -1,8 +1,6 @@
 // agents/auth/index.ts
 
-import { tool } from "langchain";
 import { createAgent } from "langchain";
-import { z } from "zod";
 import { gpt5Mini } from "@/lib/llm";
 import prisma from "@/lib/prisma";
 import * as fs from "fs";
@@ -12,11 +10,10 @@ import {
   getRepoTreeTool,
   getFileContentTool,
   searchCodeTool,
-  getCodeBlockTool,
   githubContextSchema,
 } from "../analysis/tools/agent-tools";
 
-// ─── Output Types ────────────────────────────────────────────────────────────
+// --- Output Types -------------------------------------------------------------
 
 export type AuthMode = "third-party" | "self-managed" | "unknown";
 
@@ -34,20 +31,20 @@ export interface AuthFinding {
   id: string;
   severity: "critical" | "high" | "medium" | "low";
   category:
-    | "missing-index"
-    | "db-lookup-on-every-request"
-    | "missing-route-protection"
-    | "no-rate-limit"
-    | "session-in-db"
-    | "sync-jwt-verify"
-    | "webhook-no-idempotency"
-    | "webhook-no-signature"
-    | "session-not-invalidated"
-    | "other";
+  | "missing-index"
+  | "db-lookup-on-every-request"
+  | "missing-route-protection"
+  | "no-rate-limit"
+  | "session-in-db"
+  | "sync-jwt-verify"
+  | "webhook-no-idempotency"
+  | "webhook-no-signature"
+  | "session-not-invalidated"
+  | "other";
   title: string;
   description: string;
   affectedFiles: string[];
-  scaleBreakpoint?: string; // e.g. "~10k users", "~500 req/s"
+  scaleBreakpoint?: string;
   recommendation: string;
 }
 
@@ -68,207 +65,195 @@ export interface AuthAgentReport {
   timedOut: boolean;
 }
 
-// ─── Final Report Tool ────────────────────────────────────────────────────────
+export interface AuthAgentOutput {
+  rawFindings: string | null;
+  intermediateSteps: unknown[];
+  totalToolCalls: number;
+  executionTimeMs: number;
+  error?: string;
+}
 
-const finalReportTool = tool(
-  async (input): Promise<string> => {
-    return JSON.stringify({ status: "report_submitted", report: input });
-  },
-  {
-    name: "finalReport",
-    description:
-      "Submit the completed auth analysis report. Call this exactly once after all investigation phases are complete, or immediately if a timeout is likely. A partial report is always better than no report.",
-    schema: z.object({
-      authMode: z
-        .enum(["third-party", "self-managed", "unknown"])
-        .describe("Detected authentication mode"),
-      authProvider: z
-        .enum([
-          "clerk",
-          "nextauth",
-          "auth0",
-          "supabase",
-          "jwt",
-          "session",
-          "custom",
-          "none",
-        ])
-        .describe("Specific auth provider or mechanism detected"),
-      findings: z
-        .array(
-          z.object({
-            id: z.string(),
-            severity: z.enum(["critical", "high", "medium", "low"]),
-            category: z.enum([
-              "missing-index",
-              "db-lookup-on-every-request",
-              "missing-route-protection",
-              "no-rate-limit",
-              "session-in-db",
-              "sync-jwt-verify",
-              "webhook-no-idempotency",
-              "webhook-no-signature",
-              "session-not-invalidated",
-              "other",
-            ]),
-            title: z.string(),
-            description: z.string(),
-            affectedFiles: z.array(z.string()),
-            scaleBreakpoint: z.string().optional(),
-            recommendation: z.string(),
-          })
-        )
-        .describe("List of auth scale findings"),
-      scaleAnalysis: z.object({
-        overallRisk: z.enum(["critical", "high", "medium", "low"]),
-        estimatedBreakpoint: z
-          .string()
-          .describe(
-            "Estimated scale at which auth will become the bottleneck, e.g. '~10k users'"
-          ),
-        bottlenecks: z
-          .array(z.string())
-          .describe("Ordered list of auth bottlenecks by severity"),
-      }),
-      summary: z
-        .string()
-        .describe(
-          "2-3 sentence plain-English summary of auth scale risk for this repo"
-        ),
-      completedPhases: z
-        .array(z.number())
-        .describe("Which investigation phases were completed, e.g. [1,2,3,4]"),
-      timedOut: z
-        .boolean()
-        .describe(
-          "True if agent is submitting a partial report due to time/recursion constraints"
-        ),
-    }),
-  }
-);
+interface AgentMessageLike {
+  role?: string;
+  content?: unknown;
+  tool_calls?: unknown[];
+  _getType?: () => string;
+}
 
-// ─── System Prompt ────────────────────────────────────────────────────────────
+// --- System Prompt ------------------------------------------------------------
 
-const SYSTEM_PROMPT = `You are an Auth Specialist Agent. Your job is to analyze a GitHub repository's authentication implementation and identify scale bottlenecks — issues that will cause performance degradation or failures under load.
+const SYSTEM_PROMPT = `You are an elite authentication scalability analyst specializing in React/Next.js applications. Your mission is to analyze GitHub repositories and surface auth-layer issues that will cause real failures as the business scales - not theoretical edge cases, but the patterns that break under traffic.
 
-AVAILABLE TOOLS (repo details are injected automatically via context — just pass the relevant parameters):
-1. **getRepoTree()** — No input needed. Returns full project file tree.
-2. **getFileContent(path)** — Just pass the file path. For reading middleware, route handlers, auth configs, schema files.
-3. **searchCode(query)** — Just pass the search query. For locating patterns: clerkId, session, bcrypt, jwt.verify, webhook, rateLimit.
-4. **getCodeBlock(filePath, lineStart, lineEnd)** — Read a specific line range from a file. More efficient than getFileContent when you only need a section.
-5. **finalReport(...)** — Submit your completed report. Call ONCE at the end.
+REPOSITORY CONTEXT:
+- Repository: {repoFullName}
+- Framework: {framework} (React/Next.js expected)
+- Default Branch: {defaultBranch}
+- Package.json Dependencies: {packageJson}
+- Full Repository File Tree: {repoContent}
 
-═══════════════════════════════════════════
-INVESTIGATION PHASES
-═══════════════════════════════════════════
+STRATEGIC TOOL USAGE PHILOSOPHY:
+**Use tools ONLY when critical information cannot be inferred from existing context**
+- Start with provided package.json and repository file tree
+- The file tree above is the FULL project structure - use it to identify targets before making any tool calls
+- Make educated assumptions based on React/Next.js auth patterns
+- Tool calls should be surgical, not exhaustive
+- Maximum 15 tool calls total across all phases - spend them wisely
 
-PHASE 1 — Detect Auth Stack (from package.json + root structure provided in context)
-  → Infer auth provider from dependencies: clerk, nextauth, auth0, supabase, passport, jwt, bcrypt, etc.
-  → Determine mode:
-    third-party: @clerk/nextjs, next-auth, @auth0/nextjs-auth0, @supabase/ssr
-    self-managed: jsonwebtoken, bcrypt, express-session, passport
-  → Record completed phase: [1]
+AVAILABLE TOOLS (Use Sparingly - repo details are injected automatically via context):
+1. **getRepoTree()** - No input needed. Returns full project file tree (only if the tree in context is incomplete or truncated)
+2. **getFileContent(path)** - Just pass the file path. For reading middleware, route handlers, auth configs, schema files, and webhook handlers
+3. **searchCode(query)** - Just pass the search query. For locating patterns: auth(), currentUser, getServerSession, clerkId, session, bcrypt, jwt.verify, webhook, rateLimit
 
-PHASE 2 — Get File Tree (getRepoTree)
-  → Only call if the root structure provided in context is insufficient
-  → Identify key files:
-    Route files: app/**/route.ts, pages/api/**/*.ts
-    Middleware: middleware.ts or src/middleware.ts
-    Schema: prisma/schema.prisma or equivalent
-    Auth config: auth.ts, [...nextauth], clerk middleware wrapper
-  → Record completed phase: [1,2]
+---
 
-PHASE 3 — Middleware & Route Protection Analysis (getFileContent + searchCode)
-  → Read the middleware file (middleware.ts) with getFileContent to understand:
-    - Which routes are protected by the middleware matcher
-    - Which auth provider is used in middleware (clerk, nextauth, etc.)
-    - Whether there are public route exclusions
-  → Use searchCode to find route handlers that do their own auth checks:
-    - searchCode("auth()") or searchCode("currentUser") for clerk
-    - searchCode("getServerSession") for nextauth
-    - searchCode("getSession") for supabase
-  → Cross-reference: routes NOT covered by middleware AND NOT doing their own auth checks = unprotected
-  → Only flag as unprotected if BOTH checks confirm it — middleware may protect globally
-  → Record completed phase: [1,2,3]
+## ANALYSIS FRAMEWORK - AUTH SCALE SPECIALIST
 
-PHASE 4 — Schema & Index Check (getFileContent on schema file)
-  → Read the schema file (e.g. prisma/schema.prisma) with getFileContent
-  → Look specifically for:
-    Third-party mode: clerkId, auth0Id, supabaseId, providerId, externalId columns — are they indexed?
-    Self-managed mode: sessionId, userId in sessions table — are they indexed?
-  → Missing index on provider user ID column = CRITICAL finding (full table scan on every auth'd request)
-  → Record completed phase: [1,2,3,4]
+---
 
-PHASE 5 — Deep Pattern Analysis (searchCode + getFileContent)
-  Third-party mode searches:
-    1. searchCode("findUnique") or searchCode("findFirst") near auth lookups — DB lookup after every auth check
-    2. searchCode("webhook") — find webhook handlers, then read them with getFileContent to check for:
-       - Signature verification (svix, crypto.createHmac, stripe.webhooks.constructEvent)
-       - Idempotency checks (checking if event already processed)
-  Self-managed mode searches:
-    1. searchCode("session") in DB models — session stored in DB (not Redis)?
-    2. searchCode("bcrypt.compare") or searchCode("compareSync") — is it async or sync?
-    3. searchCode("jwt.verify") — synchronous JWT verification blocking event loop?
-    4. searchCode("rateLimit") or searchCode("rate-limit") — missing rate limiting on login?
-  → Record completed phase: [1,2,3,4,5]
+### PHASE 1 - Auth Stack & Project Understanding (No Tools)
 
-PHASE 6 — Submit Report (finalReport)
-  → Call finalReport immediately after Phase 5
-  → ALWAYS call finalReport — a partial report beats a timeout
-  → Set timedOut: true if submitting early
+Infer from package.json and file tree:
+- authProvider: clerk | nextauth | auth0 | supabase | jwt | session | custom | none
+- authMode: third-party | self-managed | unknown
+- framework: Next.js App Router | Pages Router | mixed
+- isServerless: true if Next.js/Vercel-style deployment is likely
+- sessionStorage: jwt | database | redis | provider-managed | unknown
+- cacheLayer: redis | memcached | NONE
+- projectType: e-commerce | SaaS | social | API service | unknown
 
-═══════════════════════════════════════════
-SEVERITY GUIDELINES
-═══════════════════════════════════════════
+These shape severity:
+-> DB-backed sessions without cache hit the database on every request
+-> Missing indexes on provider IDs turn every auth lookup into table scans
+-> Login, webhook, and protected dashboard routes become auth hotspots
+-> Self-managed password/JWT flows need rate limits and non-blocking verification
 
-CRITICAL:
-  - Missing index on provider user ID (clerkId, auth0Id) → full table scan per request → breaks at ~10k users
-  - Session stored in DB without cache → DB hit on every request → breaks at ~500 req/s
-  - Unprotected sensitive routes confirmed by BOTH middleware analysis AND route-level check
+### PHASE 2 - Identify Investigation Targets (Minimal Tools)
 
-HIGH:
-  - DB lookup after every auth check (user sync pattern with no caching)
-  - Webhook handler missing signature verification → security + reliability risk at scale
-  - No rate limiting on login/auth endpoints → brute force = DB overload
+Infer architecture from the provided tree first:
+- Middleware: middleware.ts or src/middleware.ts
+- Auth config: auth.ts, auth.config.ts, [...nextauth], clerk middleware wrapper, supabase server client
+- Sensitive routes: dashboard, account, profile, user, admin, billing, checkout, order, payment, settings, api
+- Auth endpoints: login, signup, callback, session, logout, webhook, clerk, stripe, auth
+- Schema files: prisma/schema.prisma, db/schema.ts, src/db/schema.ts, models
 
-MEDIUM:
-  - Synchronous bcrypt.compare or jwt.verify → event loop blocking under load
-  - Webhook handler missing idempotency → duplicate processing under retry load
-  - Session not invalidated on logout → stale sessions accumulate in DB
+Only call **getRepoTree** if the tree in context is incomplete or ambiguous. Do not retry if it fails.
+Build an investigation list of middleware/auth config, schema, webhook/auth endpoints, and top 3-4 sensitive routes. Maximum 8 items total.
 
-LOW:
-  - Unprotected non-sensitive routes
-  - Missing indexes on rarely-queried auth columns
+### PHASE 3 - Middleware & Route Protection Analysis
 
-═══════════════════════════════════════════
-RULES
-═══════════════════════════════════════════
-1. Complete phases in order. Do not skip Phase 1 — mode detection determines everything.
-2. Always cross-reference middleware + route-level checks before flagging unprotected routes.
-3. Never flag a route as unprotected based on a single check — middleware may protect it globally.
-4. Call finalReport ONCE and ONLY ONCE — immediately after Phase 5.
-5. Partial report beats timeout. If approaching recursion limit, call finalReport now.
-6. Do not invent findings. Only report what you confirmed by reading actual code.
-7. Tools already know the repo — just pass file paths or search queries, not owner/repo/branch/token.
-`;
+Use **getFileContent** for middleware and selected route/action files.
+Use **searchCode** only to validate provider-specific route checks:
+- Clerk: auth(), currentUser, clerkMiddleware, auth.protect
+- NextAuth: getServerSession, auth(), getToken
+- Supabase: getSession, getUser, createServerClient
+- Custom: verify, jwt.verify, session lookup, cookies()
 
-// ─── Tools ────────────────────────────────────────────────────────────────────
+Flag missing route protection only when both are true:
+-> Middleware does not protect the sensitive route
+-> The route/action does not perform its own auth check
+
+Never flag a route as unprotected from file path alone; middleware may protect it globally.
+
+### PHASE 4 - Schema & Auth Lookup Analysis
+
+Always run this phase when a schema file is visible.
+Use **getFileContent** to read the schema once.
+
+Check:
+- Third-party IDs: clerkId, auth0Id, supabaseId, providerId, externalId are unique or indexed
+- Session tables: sessionToken, sessionId, userId, expires are indexed for lookup/cleanup patterns
+- Account tables: provider + providerAccountId have a compound unique/index
+- User lookup columns used in auth paths match schema indexes
+
+Missing index on a provider/session lookup used during auth is CRITICAL or WARNING depending on traffic path.
+
+### PHASE 5 - Deep Auth Pattern Analysis
+
+Third-party auth checks:
+-> DB lookup immediately after currentUser/auth() on every request with no cache
+-> User sync or upsert in hot paths instead of webhook/background sync
+-> Webhook handlers without signature verification or idempotency
+
+Self-managed auth checks:
+-> Database-backed sessions with no Redis/cache layer
+-> bcrypt.compareSync or synchronous jwt.verify in request paths
+-> Login/signup endpoints with no rate limiting
+-> Logout that does not invalidate server-side session state
+
+Severity assignment:
+- CRITICAL: proven auth outage, full table scan per authenticated request, sensitive route exposed, webhook signature missing on a trust boundary, or DB-backed sessions guaranteed to overload a core path.
+- WARNING: proven auth scaling limit that becomes painful with traffic/table growth, including uncached per-request user lookups, missing idempotency, missing login rate limits, or sync verification in hot paths.
+- INFO: useful context, healthy observations, or lower-confidence findings only.
+
+After finding 3 CRITICAL issues, stop expanding the investigation to new non-required files. Still complete required schema and auth infrastructure checks, and report every finding already discovered. Never omit a discovered finding just to hit a preferred finding count; compress wording instead.
+
+---
+
+## OUTPUT REQUIREMENTS
+
+Return a compact findings digest, not a full report. The orchestrator will write the final user report.
+Do NOT include executive summary, stack recap, schema recap, route priority list, code snippets, or "if you want" follow-ups.
+Do NOT call finalReport or any report tool. Output plain structured text only.
+
+Use exactly this format:
+
+--- CRITICAL FINDINGS ---
+
+[AUTH-1] Short title, max 10 words
+File: path/to/file.ts (Lx-Ly)
+Evidence: max 2 sentences. State the exact code pattern and why it fails.
+Impact: max 1 sentence. Include scale trigger if known.
+Fix: max 1 sentence. State the concrete first fix.
+
+--- WARNING FINDINGS ---
+
+[AUTH-2] Short title, max 10 words
+File: path/to/file.ts (Lx-Ly)
+Evidence: max 2 sentences.
+Impact: max 1 sentence.
+Fix: max 1 sentence.
+
+--- INFO ---
+
+[AUTH-3] Short title, max 10 words
+File: path/to/file.ts or package/schema context
+Evidence: max 1 sentence.
+Use INFO only for useful context, healthy observations, or lower-confidence findings.
+
+Severity definitions:
+- CRITICAL: proven auth outage, sensitive data exposure, trust-boundary failure, session exhaustion, or severe auth DB overload on a core user path.
+- WARNING: proven performance degradation or scaling limit that becomes painful with table/traffic growth but is not an immediate outage.
+- INFO: context the orchestrator may optionally use; never include generic advice here.
+
+Compression rules:
+- Report every distinct finding you discovered. Do not drop, hide, or silently discard a discovered finding because of the output budget or preferred count.
+- Keep the digest compact by merging only genuinely overlapping instances of the same root cause; do not merge unrelated findings.
+- Target 3-6 findings when possible, but exceeding that is required if you discovered more distinct findings.
+- Sort by severity, then user impact.
+- Each finding must preserve: file, pattern/evidence, scale impact, and fix.
+- Maximum 120 words per CRITICAL finding and 90 words per WARNING finding; if there are many findings, shorten each field rather than omitting findings.
+- Prefer one consolidated missing-index finding over separate index bullets.
+- Prefer one consolidated route-protection finding unless routes expose different sensitive surfaces.
+- No markdown tables. No nested bullets. No long explanations.
+
+When your investigation is complete, output your findings as your final message. Just return the findings as structured text in your last response.`;
+
+// --- Tools --------------------------------------------------------------------
 
 const authAgentTools = [
   getRepoTreeTool,
   getFileContentTool,
   searchCodeTool,
-  getCodeBlockTool,
-  finalReportTool,
 ];
 
-// ─── Agent Runner ─────────────────────────────────────────────────────────────
+// --- Agent Runner -------------------------------------------------------------
 
 export async function runAuthAgent(
   repositoryId: string,
   accessToken: string
-): Promise<AuthAgentReport> {
-  // Load repo metadata
+): Promise<AuthAgentOutput> {
+  const startTime = Date.now();
+
   const repo = await prisma.repository.findUniqueOrThrow({
     where: { repositoryId },
     select: {
@@ -292,7 +277,6 @@ export async function runAuthAgent(
 
   console.log(`[AuthAgent] Repo: ${repo.fullName} (${branch})`);
 
-  // Build agent with context schema
   const agent = createAgent({
     model: gpt5Mini,
     tools: authAgentTools,
@@ -300,16 +284,32 @@ export async function runAuthAgent(
     contextSchema: githubContextSchema,
   });
 
-  const userMessage = `Analyze the authentication implementation of ${repo.fullName} for scale bottlenecks.
+  const userMessage = `Analyze the repository ${repo.fullName} for authentication scalability risks.
 
 REPOSITORY CONTEXT:
 - Framework: ${framework}
 - Package.json dependencies: ${packageJsonStr}
-- Root directory structure: ${repoContentStr}
+- Full repository file tree: ${repoContentStr}
 
-Start with Phase 1: infer the auth provider from the package.json above (no tool call needed).
-Then proceed through the remaining phases using tools.
-Call finalReport after Phase 5.`;
+**Primary Objectives:**
+1. **Auth Stack Detection** - Identify provider, mode, session strategy, and auth hotspots
+2. **Route Protection** - Confirm sensitive routes are protected by middleware or route-level checks
+3. **Auth Lookup Scaling** - Find per-request DB auth lookups, missing provider/session indexes, and uncached user sync patterns
+4. **Webhook Safety** - Check auth/provider webhooks for signature verification and idempotency
+5. **Self-Managed Auth Risk** - Check rate limiting, synchronous verification, and server-side session invalidation where applicable
+
+**Analysis Approach:**
+- Start with the package.json and file tree provided above - identify middleware, auth config, schema files, and sensitive routes immediately (Phase 1, no tools needed)
+- Classify auth files and sensitive routes by traffic priority before reading any files
+- Use getFileContent(path) strategically on high-priority targets only
+- Use searchCode(query) to validate patterns (auth checks, provider IDs, webhook handlers, session lookups, rate limits)
+- Read schema file once to cross-reference all auth lookup findings at once
+- Tools already know the repo details - just pass the file path or search query
+
+**Constraint:** Minimize tool usage - leverage the file tree and package.json above first, then make targeted tool calls only for confirmed high-traffic auth files.
+**Reporting constraint:** If you discover a distinct finding, you must report it. Do not drop findings to satisfy a preferred count or budget; keep within budget by compressing wording and merging only genuinely overlapping duplicates.
+
+Return the compact findings digest required by the system prompt. Do not call any report tool. Do not include executive summary, stack recap, priority list, code snippets, or follow-up offers.`;
 
   let rawMessages: unknown[] = [];
 
@@ -318,103 +318,44 @@ Call finalReport after Phase 5.`;
       { messages: [{ role: "user", content: userMessage }] },
       {
         context: { owner, repo: repoName, branch, accessToken },
-        recursionLimit: 100,
+        recursionLimit: 40,
       }
     );
     rawMessages = result.messages ?? [];
   } catch (err) {
+    const executionTimeMs = Date.now() - startTime;
+    const message = err instanceof Error ? err.message : "Unknown error occurred";
     console.error("[AuthAgent] Agent invocation error:", err);
-  }
 
-  // ─── Extract finalReport from tool messages ──────────────────────────────
-  let report: AuthAgentReport | null = null;
-
-  for (const msg of rawMessages) {
-    const m = msg as {
-      _getType?: () => string;
-      role?: string;
-      name?: string;
-      content?: unknown;
-      tool_calls?: Array<{ name: string; args: unknown }>;
-    };
-
-    // Check tool response messages
-    if (
-      (m._getType?.() === "tool" || m.role === "tool") &&
-      m.name === "finalReport"
-    ) {
-      try {
-        const parsed =
-          typeof m.content === "string" ? JSON.parse(m.content) : m.content;
-        const inner = parsed?.report ?? parsed;
-        report = {
-          repositoryId,
-          authMode: inner.authMode ?? "unknown",
-          authProvider: inner.authProvider ?? "none",
-          findings: inner.findings ?? [],
-          scaleAnalysis: inner.scaleAnalysis ?? {
-            overallRisk: "low",
-            estimatedBreakpoint: "unknown",
-            bottlenecks: [],
-          },
-          summary: inner.summary ?? "",
-          completedPhases: inner.completedPhases ?? [],
-          timedOut: inner.timedOut ?? false,
-        };
-      } catch {
-        console.error("[AuthAgent] Failed to parse finalReport content");
-      }
-    }
-
-    // Fallback: check tool_calls on assistant messages
-    if (!report && m.tool_calls) {
-      for (const tc of m.tool_calls) {
-        if (tc.name === "finalReport" && tc.args) {
-          try {
-            const inner =
-              typeof tc.args === "string" ? JSON.parse(tc.args) : tc.args;
-            report = {
-              repositoryId,
-              authMode: (inner as any).authMode ?? "unknown",
-              authProvider: (inner as any).authProvider ?? "none",
-              findings: (inner as any).findings ?? [],
-              scaleAnalysis: (inner as any).scaleAnalysis ?? {
-                overallRisk: "low",
-                estimatedBreakpoint: "unknown",
-                bottlenecks: [],
-              },
-              summary: (inner as any).summary ?? "",
-              completedPhases: (inner as any).completedPhases ?? [],
-              timedOut: (inner as any).timedOut ?? false,
-            };
-          } catch {
-            // continue
-          }
-        }
-      }
-    }
-  }
-
-  // ─── Fallback if agent never called finalReport ──────────────────────────
-  if (!report) {
-    console.warn("[AuthAgent] finalReport never called — returning empty report");
-    report = {
-      repositoryId,
-      authMode: "unknown",
-      authProvider: "none",
-      findings: [],
-      scaleAnalysis: {
-        overallRisk: "low",
-        estimatedBreakpoint: "unknown",
-        bottlenecks: [],
-      },
-      summary: "Agent did not complete analysis.",
-      completedPhases: [],
-      timedOut: true,
+    return {
+      rawFindings: null,
+      intermediateSteps: rawMessages,
+      totalToolCalls: 0,
+      executionTimeMs,
+      error: message,
     };
   }
 
-  // ─── Write log file ──────────────────────────────────────────────────────
+  const toolMessages = rawMessages.filter((msg) => {
+    const message = msg as AgentMessageLike;
+    return message.role === "tool" || (message.tool_calls?.length ?? 0) > 0;
+  });
+  const totalToolCalls = toolMessages.length;
+
+  const lastAiMessage = [...rawMessages]
+    .reverse()
+    .find((msg) => {
+      const message = msg as AgentMessageLike;
+      return message._getType?.() === "ai" || message.role === "assistant";
+    }) as AgentMessageLike | undefined;
+
+  const rawFindings =
+    typeof lastAiMessage?.content === "string"
+      ? lastAiMessage.content
+      : JSON.stringify(lastAiMessage?.content ?? "");
+
+  const executionTimeMs = Date.now() - startTime;
+
   try {
     const logDir = path.join(process.cwd(), "agent-logs");
     fs.mkdirSync(logDir, { recursive: true });
@@ -422,12 +363,27 @@ Call finalReport after Phase 5.`;
     const logPath = path.join(logDir, `auth-${repositoryId}-${timestamp}.json`);
     fs.writeFileSync(
       logPath,
-      JSON.stringify({ report, messages: rawMessages }, null, 2)
+      JSON.stringify({ rawFindings, messages: rawMessages }, null, 2)
     );
     console.log(`[AuthAgent] Log written to ${logPath}`);
   } catch (err) {
     console.error("[AuthAgent] Failed to write log file:", err);
   }
 
-  return report;
+  if (!rawFindings || rawFindings.trim().length === 0) {
+    return {
+      rawFindings: null,
+      intermediateSteps: rawMessages,
+      totalToolCalls,
+      executionTimeMs,
+      error: "Agent completed without returning findings.",
+    };
+  }
+
+  return {
+    rawFindings,
+    intermediateSteps: rawMessages,
+    totalToolCalls,
+    executionTimeMs,
+  };
 }
