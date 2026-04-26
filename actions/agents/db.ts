@@ -397,7 +397,7 @@ HIGH route + missing transaction on writes = CRITICAL (if financial)
 MEDIUM route + any issue = WARNING
 Any route + nested includes 3+ levels = WARNING
 
-Stop investigating after finding 3 CRITICAL issues - you have enough for a complete report.
+After finding 3 CRITICAL issues, stop expanding the investigation to new non-required files. Still complete required schema and connection-pool checks, and report every finding already discovered. Never omit a discovered finding just to hit a preferred finding count.
 
 ---
 
@@ -506,10 +506,12 @@ Severity definitions:
 - INFO: context the orchestrator may optionally use; never include generic advice here.
 
 Compression rules:
-- 3-6 findings total. Merge overlapping findings; do not repeat the same issue in multiple sections.
+- Report every distinct finding you discovered. Do not drop, hide, or silently discard a discovered finding because of the output budget or preferred count.
+- Keep the digest compact by merging only genuinely overlapping instances of the same root cause; do not merge unrelated findings.
+- Target 3-6 findings when possible, but exceeding that is required if you discovered more distinct findings.
 - Sort by severity, then user impact.
 - Each finding must preserve: file, pattern/evidence, scale impact, and fix.
-- Maximum 120 words per CRITICAL finding and 90 words per WARNING finding.
+- Maximum 120 words per CRITICAL finding and 90 words per WARNING finding; if there are many findings, shorten each field rather than omitting findings.
 - Prefer one consolidated missing-index finding over separate index bullets.
 - Prefer one checkout transaction finding unless sequential item writes are independently severe enough.
 - No markdown tables. No nested bullets. No long explanations.
@@ -642,6 +644,7 @@ REPOSITORY CONTEXT:
 - Tools already know the repo details - just pass the file path or search query
 
 **Constraint:** Minimize tool usage - leverage the file tree and package.json above first, then make targeted tool calls only for confirmed high-traffic files.
+**Reporting constraint:** If you discover a distinct finding, you must report it. Do not drop findings to satisfy a preferred count or budget; keep within budget by compressing wording and merging only genuinely overlapping duplicates.
 
 Return the compact findings digest required by the system prompt. Do not call any report tool. Do not include executive summary, stack recap, priority list, code snippets, or follow-up offers.`,
                     },
