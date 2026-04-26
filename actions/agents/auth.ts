@@ -154,6 +154,24 @@ AVAILABLE TOOLS (Use Sparingly - repo details are injected automatically via con
 
 ---
 
+### NON-NEGOTIABLE SCOPE GATE - AUTH ONLY
+
+Only investigate and report findings that directly affect authentication, authorization, session handling, identity-provider integration, auth webhooks, auth-specific rate limiting, or auth-related database lookups.
+
+Before reading a file, decide whether it is an auth target. A file is in scope only when it contains or directly configures one of these:
+-> login, signup, logout, callback, session, password reset, token refresh, or account-linking flows
+-> middleware or route-level authorization checks for sensitive routes
+-> calls such as auth(), currentUser(), getServerSession(), getToken(), getSession(), getUser(), jwt.verify, bcrypt, cookies used for sessions, or provider SDK auth checks
+-> user/session/account schema fields used for auth lookups or session cleanup
+-> auth-provider webhooks or user-sync paths
+
+Ignore and do not report non-auth findings, even if they are real scalability, security, or database issues. Examples to exclude:
+-> generic N+1 queries, missing indexes, slow queries, or transaction issues unrelated to auth/session/user identity lookups
+-> payment, checkout, order, product, content, analytics, upload, email, or cache issues unless the code path is an auth provider webhook or auth/session gate
+-> general input validation, CORS, CSRF, logging, secrets, dependency, or deployment concerns unless they directly compromise auth/session handling
+
+If a possible issue is only adjacent to auth, ask: "Would fixing this change authentication correctness, authorization enforcement, session scalability, or identity-provider safety?" If no, discard it silently. Do not include it as INFO.
+
 ### PHASE 1 - Auth Stack & Project Understanding (No Tools)
 
 Infer from package.json and file tree:
@@ -270,7 +288,7 @@ Severity definitions:
 - INFO: context the orchestrator may optionally use; never include generic advice here.
 
 Compression rules:
-- Report every distinct finding you discovered. Do not drop, hide, or silently discard a discovered finding because of the output budget or preferred count.
+- Report every distinct in-scope auth finding you discovered. Drop non-auth findings silently, even when they are valid issues for another specialist agent.
 - Keep the digest compact by merging only genuinely overlapping instances of the same root cause; do not merge unrelated findings.
 - Target 3-6 findings when possible, but exceeding that is required if you discovered more distinct findings.
 - Sort by severity, then user impact.
@@ -366,7 +384,8 @@ REPOSITORY CONTEXT:
 - Tools already know the repo details - just pass the file path or search query
 
 **Constraint:** Minimize tool usage - leverage the file tree and package.json above first, then make targeted tool calls only for confirmed high-traffic auth files.
-**Reporting constraint:** If you discover a distinct finding, you must report it. Do not drop findings to satisfy a preferred count or budget; keep within budget by compressing wording and merging only genuinely overlapping duplicates.
+**Scope constraint:** Only investigate and report findings that directly affect authentication, authorization, session handling, identity-provider integration, auth webhooks, auth-specific rate limiting, or auth-related database lookups. Ignore non-auth findings silently; do not include them as INFO.
+**Reporting constraint:** If you discover a distinct in-scope auth finding, you must report it. Do not drop auth findings to satisfy a preferred count or budget; keep within budget by compressing wording and merging only genuinely overlapping duplicates.
 
 Return the compact findings digest required by the system prompt. Do not call any report tool. Do not include executive summary, stack recap, priority list, code snippets, or follow-up offers.`;
 
