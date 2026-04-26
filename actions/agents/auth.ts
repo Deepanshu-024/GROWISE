@@ -80,6 +80,50 @@ interface AgentMessageLike {
   _getType?: () => string;
 }
 
+// --- Logging Types ------------------------------------------------------------
+
+interface AgentLogStep {
+  stepNumber: number;
+  type: "decision" | "tool_call" | "tool_response" | "agent_thought" | "error";
+  timestamp: string;
+  toolName?: string;
+  toolInput?: unknown;
+  toolOutput?: string;
+  reasoning?: string;
+}
+
+interface AgentLog {
+  repositoryId: string;
+  startTime: string;
+  endTime?: string;
+  totalSteps: number;
+  steps: AgentLogStep[];
+  finalReport?: unknown;
+  error?: string;
+}
+
+function normalizeToolName(name: unknown): string | null {
+  if (typeof name !== "string") return null;
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  const lower = trimmed.toLowerCase();
+  if (lower === "dynamicstructuredtool" || lower === "structuredtool") return null;
+  return trimmed;
+}
+
+function resolveCallbackToolName(tool: any, fallback?: string): string {
+  const idCandidate = Array.isArray(tool?.id)
+    ? tool.id[tool.id.length - 1]
+    : tool?.id;
+  return (
+    normalizeToolName(tool?.name) ??
+    normalizeToolName(tool?.lc_kwargs?.name) ??
+    normalizeToolName(idCandidate) ??
+    normalizeToolName(fallback) ??
+    "unknown"
+  );
+}
+
 // --- System Prompt ------------------------------------------------------------
 
 const SYSTEM_PROMPT = `You are an elite authentication scalability analyst specializing in React/Next.js applications. Your mission is to analyze GitHub repositories and surface auth-layer issues that will cause real failures as the business scales - not theoretical edge cases, but the patterns that break under traffic.
@@ -254,37 +298,52 @@ export async function runAuthAgent(
 ): Promise<AuthAgentOutput> {
   const startTime = Date.now();
 
-  const repo = await prisma.repository.findUniqueOrThrow({
-    where: { repositoryId },
-    select: {
-      fullName: true,
-      defaultBranch: true,
-      packageJson: true,
-      repoContent: true,
-      framework: true,
-    },
-  });
+  const agentLog: AgentLog = {
+    repositoryId,
+    startTime: new Date().toISOString(),
+    totalSteps: 0,
+    steps: [],
+  };
+  let stepCounter = 0;
+  let cumulativeInputTokens = 0;
+  let cumulativeOutputTokens = 0;
+  let lastToolName = "unknown";
+  let pendingDecisionReasoning: string | null = null;
 
-  const [owner, repoName] = repo.fullName.split("/");
-  const branch = repo.defaultBranch ?? "main";
-  const framework = repo.framework ?? "unknown";
-  const packageJsonStr = repo.packageJson
-    ? JSON.stringify(repo.packageJson).slice(0, 3000)
-    : "Not available";
-  const repoContentStr = repo.repoContent
-    ? JSON.stringify(repo.repoContent)
-    : "Not available";
+  console.log(`[authAgent] Starting investigation for: ${repositoryId}`);
 
-  console.log(`[AuthAgent] Repo: ${repo.fullName} (${branch})`);
+  try {
+    const repo = await prisma.repository.findUniqueOrThrow({
+      where: { repositoryId },
+      select: {
+        fullName: true,
+        defaultBranch: true,
+        packageJson: true,
+        repoContent: true,
+        framework: true,
+      },
+    });
 
-  const agent = createAgent({
-    model: gpt5Mini,
-    tools: authAgentTools,
-    systemPrompt: SYSTEM_PROMPT,
-    contextSchema: githubContextSchema,
-  });
+    const [owner, repoName] = repo.fullName.split("/");
+    const branch = repo.defaultBranch ?? "main";
+    const framework = repo.framework ?? "unknown";
+    const packageJsonStr = repo.packageJson
+      ? JSON.stringify(repo.packageJson).slice(0, 3000)
+      : "Not available";
+    const repoContentStr = repo.repoContent
+      ? JSON.stringify(repo.repoContent)
+      : "Not available";
 
-  const userMessage = `Analyze the repository ${repo.fullName} for authentication scalability risks.
+    console.log(`[authAgent] Repo: ${repo.fullName} (${branch})`);
+
+    const agent = createAgent({
+      model: gpt5Mini,
+      tools: authAgentTools,
+      systemPrompt: SYSTEM_PROMPT,
+      contextSchema: githubContextSchema,
+    });
+
+    const userMessage = `Analyze the repository ${repo.fullName} for authentication scalability risks.
 
 REPOSITORY CONTEXT:
 - Framework: ${framework}
@@ -311,79 +370,215 @@ REPOSITORY CONTEXT:
 
 Return the compact findings digest required by the system prompt. Do not call any report tool. Do not include executive summary, stack recap, priority list, code snippets, or follow-up offers.`;
 
-  let rawMessages: unknown[] = [];
-
-  try {
+    // NOTE: intermediateSteps and agentLog contain the raw accessToken
+    // passed via context. These logs are for local debugging only.
+    // Never persist agentLog to a database or external service.
+    // Delete log files after debugging is complete.
     const result = await agent.invoke(
       { messages: [{ role: "user", content: userMessage }] },
       {
         context: { owner, repo: repoName, branch, accessToken },
         recursionLimit: 40,
+        callbacks: [
+          {
+            handleAgentAction(action: any, _runId: string, _parentRunId?: string, _tags?: string[], metadata?: Record<string, any>) {
+              if (metadata?.langgraph_step != null) {
+                stepCounter = metadata.langgraph_step;
+              } else {
+                stepCounter++;
+              }
+              const toolName = resolveCallbackToolName(action, action.tool);
+              lastToolName = toolName;
+              pendingDecisionReasoning =
+                typeof action.log === "string" && action.log.trim().length > 0
+                  ? action.log.trim()
+                  : null;
+              agentLog.steps.push({
+                stepNumber: stepCounter,
+                type: "decision",
+                timestamp: new Date().toISOString(),
+                toolName,
+                toolInput: action.toolInput,
+                reasoning: action.log,
+              });
+              console.log("\n──────────────────────────────────────────");
+              console.log(`[Step ${stepCounter}] AGENT DECISION`);
+              console.log(`Tool: ${toolName}`);
+              console.log(`Reasoning: ${action.log}`);
+              console.log("──────────────────────────────────────────");
+            },
+            handleToolStart(tool: any, input: string, _runId?: string, _parentRunId?: string, _tags?: string[], metadata?: Record<string, any>) {
+              if (metadata?.langgraph_step != null) {
+                stepCounter = metadata.langgraph_step;
+              }
+              const toolName = resolveCallbackToolName(tool, lastToolName);
+              lastToolName = toolName;
+              let parsedInput: unknown = input;
+              try {
+                parsedInput = JSON.parse(input);
+              } catch {
+                // keep raw string
+              }
+              console.log(`\n[Step ${stepCounter}/50] -> Calling ${toolName}`);
+              console.log(`Input: ${JSON.stringify(parsedInput, null, 2).slice(0, 300)}`);
+              pendingDecisionReasoning = null;
+            },
+            handleToolEnd(output: any) {
+              const outputStr: string =
+                typeof output === "string"
+                  ? output
+                  : JSON.stringify(output, null, 2) ?? "";
+              const lastDecisionStep = [...agentLog.steps]
+                .reverse()
+                .find((s) => s.type === "decision");
+              if (lastDecisionStep) {
+                lastDecisionStep.toolOutput =
+                  outputStr.length > 3000
+                    ? outputStr.slice(0, 3000) + "\n... [truncated]"
+                    : outputStr;
+              }
+              console.log(`[Step ${stepCounter}] <- Tool response: ${outputStr.length} chars`);
+              console.log(`Preview: ${outputStr.slice(0, 500)}`);
+            },
+            handleLLMEnd(output: any, _runId?: string, _parentRunId?: string, _tags?: string[], metadata?: Record<string, any>) {
+              if (metadata?.langgraph_step != null) {
+                stepCounter = metadata.langgraph_step;
+              }
+
+              const usage = output?.llmOutput?.tokenUsage
+                ?? output?.llmOutput?.usage
+                ?? output?.llmOutput?.estimatedTokenUsage
+                ?? null;
+
+              let inputTokens = 0;
+              let outputTokens = 0;
+              if (usage) {
+                inputTokens = usage.promptTokens ?? usage.prompt_tokens ?? usage.inputTokens ?? usage.input_tokens ?? 0;
+                outputTokens = usage.completionTokens ?? usage.completion_tokens ?? usage.outputTokens ?? usage.output_tokens ?? 0;
+              }
+              cumulativeInputTokens += inputTokens;
+              cumulativeOutputTokens += outputTokens;
+
+              const generation = output.generations?.[0]?.[0];
+              const message = (generation as any)?.message;
+              const fnCall = message?.additional_kwargs?.function_call;
+              if (fnCall) {
+                console.log(`[Step ${stepCounter}] Agent selecting: ${fnCall.name}`);
+              } else {
+                const content = String(message?.content ?? "").trim();
+                if (content.length > 0) {
+                  agentLog.steps.push({
+                    stepNumber: stepCounter,
+                    type: "agent_thought",
+                    timestamp: new Date().toISOString(),
+                    reasoning: content.slice(0, 1000),
+                  });
+                  console.log(`[Step ${stepCounter}] Agent thought: ${content.slice(0, 300)}`);
+                }
+              }
+            },
+            handleChainError(error: Error) {
+              agentLog.steps.push({
+                stepNumber: ++stepCounter,
+                type: "error",
+                timestamp: new Date().toISOString(),
+                reasoning: error.message,
+              });
+              agentLog.error = error.message;
+              console.log(`\n[authAgent] CHAIN ERROR: ${error.message}`);
+            },
+          },
+        ],
       }
     );
-    rawMessages = result.messages ?? [];
-  } catch (err) {
+
+    // -- Extract findings from the agent's final AI message ----------
+    const messages = result.messages ?? [];
+    const toolMessages = messages.filter(
+      (msg: any) => msg.role === "tool" || msg.tool_calls?.length > 0
+    );
+    const totalToolCalls = toolMessages.length;
+
+    const lastAiMessage = [...messages]
+      .reverse()
+      .find((msg: any) => msg._getType?.() === "ai" || msg.role === "assistant") as AgentMessageLike | undefined;
+
+    const rawFindings =
+      typeof lastAiMessage?.content === "string"
+        ? lastAiMessage.content
+        : JSON.stringify(lastAiMessage?.content ?? "");
+
     const executionTimeMs = Date.now() - startTime;
-    const message = err instanceof Error ? err.message : "Unknown error occurred";
-    console.error("[AuthAgent] Agent invocation error:", err);
+
+    if (!rawFindings || rawFindings.trim().length === 0) {
+      console.error("[authAgent] Error: Agent completed without returning any findings");
+      return {
+        rawFindings: null,
+        intermediateSteps: messages,
+        totalToolCalls,
+        executionTimeMs,
+        error: "Agent completed without returning findings.",
+      };
+    }
+
+    console.log(`[authAgent] Complete. Findings length: ${rawFindings.length} chars, ${totalToolCalls} tool calls`);
+    console.log(`[authAgent] Execution time: ${executionTimeMs}ms`);
+
+    // Finalize log
+    agentLog.endTime = new Date().toISOString();
+    agentLog.totalSteps = stepCounter;
+    agentLog.finalReport = { rawFindings };
+
+    // Write to JSON file
+    const logDir = path.join(process.cwd(), "agent-logs");
+    if (!fs.existsSync(logDir)) {
+      fs.mkdirSync(logDir, { recursive: true });
+    }
+
+    const logFileName = `auth-agent-${repositoryId}-${Date.now()}.json`;
+    const logPath = path.join(logDir, logFileName);
+    fs.writeFileSync(logPath, JSON.stringify(agentLog, null, 2));
+
+    console.log(`\n[authAgent] ──────────────────────────────────`);
+    console.log(`[authAgent] Full log written to:`);
+    console.log(`[authAgent] ${logPath}`);
+    console.log(`[authAgent] Total steps: ${stepCounter}`);
+    console.log(`[authAgent] ──────────────────────────────────`);
+
+    return {
+      rawFindings,
+      intermediateSteps: messages,
+      totalToolCalls,
+      executionTimeMs,
+    };
+  } catch (error) {
+    const executionTimeMs = Date.now() - startTime;
+    const message =
+      error instanceof Error ? error.message : "Unknown error occurred";
+
+    console.error(`[authAgent] Error: ${message}`);
+
+    // Write partial error log so you can see what happened before the crash
+    agentLog.endTime = new Date().toISOString();
+    agentLog.totalSteps = stepCounter;
+    agentLog.error = message;
+
+    const logDir = path.join(process.cwd(), "agent-logs");
+    if (!fs.existsSync(logDir)) {
+      fs.mkdirSync(logDir, { recursive: true });
+    }
+
+    const logFileName = `auth-agent-ERROR-${repositoryId}-${Date.now()}.json`;
+    const logPath = path.join(logDir, logFileName);
+    fs.writeFileSync(logPath, JSON.stringify(agentLog, null, 2));
+    console.error(`[authAgent] Error log written to: ${logPath}`);
 
     return {
       rawFindings: null,
-      intermediateSteps: rawMessages,
+      intermediateSteps: [],
       totalToolCalls: 0,
       executionTimeMs,
       error: message,
     };
   }
-
-  const toolMessages = rawMessages.filter((msg) => {
-    const message = msg as AgentMessageLike;
-    return message.role === "tool" || (message.tool_calls?.length ?? 0) > 0;
-  });
-  const totalToolCalls = toolMessages.length;
-
-  const lastAiMessage = [...rawMessages]
-    .reverse()
-    .find((msg) => {
-      const message = msg as AgentMessageLike;
-      return message._getType?.() === "ai" || message.role === "assistant";
-    }) as AgentMessageLike | undefined;
-
-  const rawFindings =
-    typeof lastAiMessage?.content === "string"
-      ? lastAiMessage.content
-      : JSON.stringify(lastAiMessage?.content ?? "");
-
-  const executionTimeMs = Date.now() - startTime;
-
-  try {
-    const logDir = path.join(process.cwd(), "agent-logs");
-    fs.mkdirSync(logDir, { recursive: true });
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const logPath = path.join(logDir, `auth-${repositoryId}-${timestamp}.json`);
-    fs.writeFileSync(
-      logPath,
-      JSON.stringify({ rawFindings, messages: rawMessages }, null, 2)
-    );
-    console.log(`[AuthAgent] Log written to ${logPath}`);
-  } catch (err) {
-    console.error("[AuthAgent] Failed to write log file:", err);
-  }
-
-  if (!rawFindings || rawFindings.trim().length === 0) {
-    return {
-      rawFindings: null,
-      intermediateSteps: rawMessages,
-      totalToolCalls,
-      executionTimeMs,
-      error: "Agent completed without returning findings.",
-    };
-  }
-
-  return {
-    rawFindings,
-    intermediateSteps: rawMessages,
-    totalToolCalls,
-    executionTimeMs,
-  };
 }

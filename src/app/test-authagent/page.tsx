@@ -28,87 +28,21 @@ interface RepoRecord {
     };
 }
 
-interface AuthFinding {
-    id: string;
-    severity: "critical" | "high" | "medium" | "low";
-    category: string;
-    title: string;
-    description: string;
-    affectedFiles: string[];
-    scaleBreakpoint?: string;
-    recommendation: string;
-}
-
-interface AuthScaleAnalysis {
-    overallRisk: "critical" | "high" | "medium" | "low";
-    estimatedBreakpoint: string;
-    bottlenecks: string[];
-}
-
-interface AuthReport {
-    repositoryId: string;
-    authMode: string;
-    authProvider: string;
-    findings: AuthFinding[];
-    scaleAnalysis: AuthScaleAnalysis;
-    summary: string;
-    completedPhases: number[];
-    timedOut: boolean;
-}
-
 interface AgentOutput {
-    report: AuthReport | null;
+    report: {
+        rawFindings: string | null;
+        intermediateSteps: unknown[];
+        totalToolCalls: number;
+        executionTimeMs: number;
+        error?: string;
+    } | null;
     executionTimeMs: number;
     error?: string;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function severityBadge(sev: string) {
-    const base =
-        "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold";
-    if (sev === "critical")
-        return `${base} bg-red-500/20 text-red-400 border border-red-500/30`;
-    if (sev === "high")
-        return `${base} bg-orange-500/20 text-orange-400 border border-orange-500/30`;
-    if (sev === "medium")
-        return `${base} bg-amber-500/20 text-amber-400 border border-amber-500/30`;
-    return `${base} bg-blue-500/20 text-blue-400 border border-blue-500/30`;
-}
-
-function riskColor(risk: string) {
-    if (risk === "critical") return "text-red-400";
-    if (risk === "high") return "text-orange-400";
-    if (risk === "medium") return "text-amber-400";
-    return "text-emerald-400";
-}
-
-function riskBg(risk: string) {
-    if (risk === "critical") return "bg-red-500/20 text-red-400";
-    if (risk === "high") return "bg-orange-500/20 text-orange-400";
-    if (risk === "medium") return "bg-amber-500/20 text-amber-400";
-    return "bg-emerald-500/20 text-emerald-400";
-}
-
-function modeBadge(mode: string) {
-    if (mode === "third-party") return "bg-violet-500/20 text-violet-400 border-violet-500/30";
-    if (mode === "self-managed") return "bg-cyan-500/20 text-cyan-400 border-cyan-500/30";
-    return "bg-gray-500/20 text-gray-400 border-gray-500/30";
-}
-
-function providerIcon(provider: string) {
-    const icons: Record<string, string> = {
-        clerk: "🔐",
-        nextauth: "🔑",
-        auth0: "🛡️",
-        supabase: "⚡",
-        jwt: "🎟️",
-        session: "📝",
-        custom: "🔧",
-        none: "❌",
-    };
-    return icons[provider] ?? "❓";
-}
+// (helper functions removed — structured AuthReport fields no longer exist)
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -128,120 +62,7 @@ function Card({ children, className = "" }: { children: React.ReactNode; classNa
     );
 }
 
-function PhaseIndicator({ phases, timedOut }: { phases: number[]; timedOut: boolean }) {
-    const allPhases = [1, 2, 3, 4, 5, 6, 7];
-    return (
-        <div className="flex items-center gap-1.5">
-            {allPhases.map((p) => {
-                const completed = phases.includes(p);
-                return (
-                    <div
-                        key={p}
-                        className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold transition-all ${
-                            completed
-                                ? "bg-violet-500/30 text-violet-300 border border-violet-500/40"
-                                : "bg-gray-800 text-gray-600 border border-white/5"
-                        }`}
-                        title={`Phase ${p}${completed ? " ✓" : ""}`}
-                    >
-                        {p}
-                    </div>
-                );
-            })}
-            {timedOut && (
-                <span className="ml-2 text-xs text-amber-400 font-medium animate-pulse">
-                    ⏱ partial
-                </span>
-            )}
-        </div>
-    );
-}
-
-function FindingCard({ finding }: { finding: AuthFinding }) {
-    const [open, setOpen] = useState(false);
-    return (
-        <div className="bg-gray-800/40 border border-white/5 rounded-lg overflow-hidden">
-            <button
-                onClick={() => setOpen((o) => !o)}
-                className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-white/5 transition-colors"
-            >
-                <span className={severityBadge(finding.severity)}>
-                    {finding.severity}
-                </span>
-                <span className="text-sm font-medium text-gray-200 flex-1 truncate">
-                    {finding.title}
-                </span>
-                <span className="text-xs text-gray-500 shrink-0">
-                    {finding.category}
-                </span>
-                <svg
-                    className={`w-4 h-4 text-gray-500 transition-transform ${open ? "rotate-180" : ""}`}
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                >
-                    <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M19 9l-7 7-7-7"
-                    />
-                </svg>
-            </button>
-            {open && (
-                <div className="px-4 pb-4 pt-2 border-t border-white/5 space-y-3">
-                    <p className="text-sm text-gray-300">{finding.description}</p>
-                    <div className="flex gap-4 flex-wrap">
-                        {finding.scaleBreakpoint && (
-                            <div>
-                                <Label>Breaks at</Label>
-                                <p className="text-sm text-orange-300">{finding.scaleBreakpoint}</p>
-                            </div>
-                        )}
-                        <div className="flex-1 min-w-[200px]">
-                            <Label>Recommendation</Label>
-                            <p className="text-sm text-emerald-300">{finding.recommendation}</p>
-                        </div>
-                    </div>
-                    {finding.affectedFiles.length > 0 && (
-                        <div>
-                            <Label>Affected Files</Label>
-                            <div className="flex flex-wrap gap-1.5 mt-1">
-                                {finding.affectedFiles.map((f) => (
-                                    <span
-                                        key={f}
-                                        className="px-2 py-0.5 rounded-md bg-gray-700 text-xs font-mono text-gray-300"
-                                    >
-                                        {f}
-                                    </span>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-                </div>
-            )}
-        </div>
-    );
-}
-
-function BottleneckList({ bottlenecks }: { bottlenecks: string[] }) {
-    if (bottlenecks.length === 0) return null;
-    return (
-        <div>
-            <Label>Bottlenecks (by severity)</Label>
-            <ol className="space-y-1 mt-1">
-                {bottlenecks.map((b, i) => (
-                    <li key={i} className="flex items-start gap-2 text-sm">
-                        <span className="text-gray-600 font-mono text-xs mt-0.5 shrink-0">
-                            {i + 1}.
-                        </span>
-                        <span className="text-gray-300">{b}</span>
-                    </li>
-                ))}
-            </ol>
-        </div>
-    );
-}
+// (FindingCard, PhaseIndicator, BottleneckList removed — agent now returns rawFindings plain text)
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
@@ -319,17 +140,9 @@ export default function TestAuthAgentPage() {
     }, [selectedRepo, useTokenOverride, accessTokenOverride]);
 
     // ─── Derived values ───────────────────────────────────────────────────────
-    const report = result?.report ?? null;
-
-    const findingCounts = report
-        ? {
-              total: report.findings.length,
-              critical: report.findings.filter((f) => f.severity === "critical").length,
-              high: report.findings.filter((f) => f.severity === "high").length,
-              medium: report.findings.filter((f) => f.severity === "medium").length,
-              low: report.findings.filter((f) => f.severity === "low").length,
-          }
-        : null;
+    const agentOutput = result?.report ?? null;
+    const rawFindings = agentOutput?.rawFindings ?? null;
+    const totalToolCalls = agentOutput?.totalToolCalls ?? 0;
 
     // ─── Render ───────────────────────────────────────────────────────────────
 
@@ -498,14 +311,12 @@ export default function TestAuthAgentPage() {
                             {[
                                 {
                                     label: "Status",
-                                    value: result.error ? "Error" : report ? "Success" : "No report",
-                                    color: result.error ? "text-red-400" : report ? "text-emerald-400" : "text-amber-400",
+                                    value: result.error || agentOutput?.error ? "Error" : rawFindings ? "Success" : "No findings",
+                                    color: result.error || agentOutput?.error ? "text-red-400" : rawFindings ? "text-emerald-400" : "text-amber-400",
                                 },
                                 {
-                                    label: "Auth Provider",
-                                    value: report
-                                        ? `${providerIcon(report.authProvider)} ${report.authProvider}`
-                                        : "—",
+                                    label: "Tool Calls",
+                                    value: String(totalToolCalls),
                                     color: "text-violet-400",
                                 },
                                 {
@@ -514,8 +325,8 @@ export default function TestAuthAgentPage() {
                                     color: "text-purple-400",
                                 },
                                 {
-                                    label: "Phases Done",
-                                    value: report ? `${report.completedPhases.length}/7` : "—",
+                                    label: "Findings",
+                                    value: rawFindings ? `${rawFindings.split("\n").filter(l => l.startsWith("[")).length}` : "—",
                                     color: "text-cyan-400",
                                 },
                             ].map((s) => (
@@ -551,125 +362,40 @@ export default function TestAuthAgentPage() {
                                                 : "text-gray-400 hover:text-gray-200 hover:bg-white/5"
                                         }`}
                                     >
-                                        {tab === "report"
-                                            ? `📊 Report (${findingCounts?.total ?? 0} findings)`
-                                            : "📋 Raw JSON"}
+                                        {tab === "report" ? "📊 Findings Digest" : "📋 Raw JSON"}
                                     </button>
                                 ))}
                             </div>
 
-                            {/* Report tab */}
-                            {activeTab === "report" && report && (
-                                <div className="space-y-5">
-                                    {/* Auth identity bar */}
-                                    <Card>
-                                        <div className="flex flex-wrap items-center gap-3 mb-4">
-                                            <h3 className="text-sm font-semibold text-gray-200">
-                                                Auth Stack
-                                            </h3>
-                                            <span
-                                                className={`text-xs font-bold px-2.5 py-1 rounded-full border ${modeBadge(report.authMode)}`}
-                                            >
-                                                {report.authMode}
-                                            </span>
-                                            <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-gray-800 text-gray-300 border border-white/10">
-                                                {providerIcon(report.authProvider)} {report.authProvider}
-                                            </span>
-                                        </div>
-                                        <p className="text-sm text-gray-300 leading-relaxed">
-                                            {report.summary}
-                                        </p>
-                                    </Card>
-
-                                    {/* Phases + Scale analysis */}
-                                    <div className="grid sm:grid-cols-2 gap-4">
-                                        {/* Phases completed */}
-                                        <Card>
-                                            <Label>Investigation Progress</Label>
-                                            <div className="mt-2">
-                                                <PhaseIndicator phases={report.completedPhases} timedOut={report.timedOut} />
-                                            </div>
-                                            <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
-                                                <span>1: Stack</span>
-                                                <span>2: Tree</span>
-                                                <span>3: Routes</span>
-                                                <span>4: Middleware</span>
-                                                <span>5: Schema</span>
-                                                <span>6: Patterns</span>
-                                                <span>7: Report</span>
-                                            </div>
+                            {/* Findings digest tab */}
+                            {activeTab === "report" && (
+                                <div className="space-y-4">
+                                    {agentOutput?.error && (
+                                        <Card className="border-red-500/30 bg-red-950/20">
+                                            <p className="text-sm font-semibold text-red-400 mb-1">⚠ Agent Error</p>
+                                            <pre className="text-xs text-red-300 whitespace-pre-wrap">{agentOutput.error}</pre>
                                         </Card>
-
-                                        {/* Scale analysis */}
-                                        <Card>
-                                            <div className="flex items-center gap-2 mb-3">
-                                                <Label>Scale Risk</Label>
-                                                <span
-                                                    className={`text-xs font-bold uppercase px-2 py-0.5 rounded-full ${riskBg(report.scaleAnalysis.overallRisk)}`}
-                                                >
-                                                    {report.scaleAnalysis.overallRisk}
-                                                </span>
-                                            </div>
-                                            <div className="mb-3">
-                                                <p className="text-xs text-gray-500">Estimated Breakpoint</p>
-                                                <p className={`text-lg font-bold ${riskColor(report.scaleAnalysis.overallRisk)}`}>
-                                                    {report.scaleAnalysis.estimatedBreakpoint}
-                                                </p>
-                                            </div>
-                                            <BottleneckList bottlenecks={report.scaleAnalysis.bottlenecks} />
-                                        </Card>
-                                    </div>
-
-                                    {/* Severity breakdown */}
-                                    {findingCounts && findingCounts.total > 0 && (
-                                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                                            {[
-                                                { label: "Critical", value: findingCounts.critical, color: "text-red-400" },
-                                                { label: "High", value: findingCounts.high, color: "text-orange-400" },
-                                                { label: "Medium", value: findingCounts.medium, color: "text-amber-400" },
-                                                { label: "Low", value: findingCounts.low, color: "text-blue-400" },
-                                            ].map((s) => (
-                                                <div
-                                                    key={s.label}
-                                                    className="bg-gray-800/60 border border-white/5 rounded-lg p-3 text-center"
-                                                >
-                                                    <p className={`text-2xl font-bold ${s.color}`}>
-                                                        {s.value}
-                                                    </p>
-                                                    <p className="text-xs text-gray-500">{s.label}</p>
-                                                </div>
-                                            ))}
-                                        </div>
                                     )}
-
-                                    {/* Findings */}
-                                    <div>
-                                        <h3 className="text-sm font-semibold text-gray-400 mb-2 uppercase tracking-wider">
-                                            Findings
-                                        </h3>
-                                        <div className="space-y-2">
-                                            {report.findings.map((f, i) => (
-                                                <FindingCard key={i} finding={f} />
-                                            ))}
-                                            {report.findings.length === 0 && (
-                                                <p className="text-sm text-gray-500 text-center py-6">
-                                                    No findings reported.
-                                                </p>
-                                            )}
-                                        </div>
-                                    </div>
+                                    {rawFindings ? (
+                                        <Card>
+                                            <h3 className="text-sm font-semibold text-gray-400 mb-3 uppercase tracking-wider">
+                                                Auth Findings Digest
+                                            </h3>
+                                            <pre className="text-sm text-gray-200 whitespace-pre-wrap leading-relaxed font-mono">
+                                                {rawFindings}
+                                            </pre>
+                                        </Card>
+                                    ) : !agentOutput?.error && (
+                                        <Card className="text-center py-10">
+                                            <p className="text-gray-500">
+                                                Agent completed but did not produce any findings.
+                                            </p>
+                                            <p className="text-xs text-gray-600 mt-1">
+                                                Switch to Raw JSON to inspect the full response.
+                                            </p>
+                                        </Card>
+                                    )}
                                 </div>
-                            )}
-
-                            {activeTab === "report" && !report && !result.error && (
-                                <Card className="text-center py-10">
-                                    <p className="text-gray-500">
-                                        Agent completed but did not produce a final report.
-                                    </p>
-                                    <p className="text-xs text-gray-600 mt-1">
-                                        Switch to Raw JSON to inspect the response.
-                                    </p>
-                                </Card>
                             )}
 
                             {/* Raw JSON tab */}
