@@ -1,0 +1,123 @@
+import { NextRequest } from "next/server";
+import { runDatabaseAgent, StreamEvent } from "../../../../../actions/agents/db";
+import { runDatabaseGraphAgent } from "../../../../../actions/agents/db-graph";
+import { generateInstallationToken } from "@/lib/github";
+
+/**
+ * POST /api/agent/db-test
+ * Runs the Database Agent for a given repository.
+ * Returns a Server-Sent Events stream with live agent events.
+ *
+ * Body: {
+ *   repositoryId: string,
+ *   accessToken?: string,
+ *   installationId?: string,
+ *   archetypeScore?: number,
+ *   agentVariant?: "legacy" | "graph"
+ * }
+ */
+export async function POST(req: NextRequest) {
+    try {
+        const body = await req.json();
+        const { repositoryId, accessToken, installationId, archetypeScore, agentVariant } = body;
+
+        if (!repositoryId) {
+            return new Response(
+                JSON.stringify({ error: "repositoryId is required" }),
+                { status: 400, headers: { "Content-Type": "application/json" } }
+            );
+        }
+
+        let resolvedToken: string = accessToken ?? "";
+
+        // Fall back to GitHub App installation token when OAuth token is absent
+        if (!resolvedToken && installationId) {
+            console.log("[api/agent/db-test] No access token – generating installation token for", installationId);
+            const { token } = await generateInstallationToken(String(installationId));
+            resolvedToken = token;
+        }
+
+        if (!resolvedToken) {
+            return new Response(
+                JSON.stringify({ error: "No access token available. Provide accessToken or ensure this user's GitHub App is installed (installationId)." }),
+                { status: 400, headers: { "Content-Type": "application/json" } }
+            );
+        }
+
+        const variant = agentVariant === "graph" ? "graph" : "legacy";
+        const runAgent = variant === "graph"
+            ? runDatabaseGraphAgent
+            : runDatabaseAgent;
+
+        const encoder = new TextEncoder();
+
+        const stream = new ReadableStream({
+            async start(controller) {
+                const send = (event: StreamEvent) => {
+                    try {
+                        controller.enqueue(
+                            encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
+                        );
+                    } catch {
+                        // stream might be closed
+                    }
+                };
+
+                try {
+                    const output = await runAgent({
+                        repositoryId: String(repositoryId),
+                        accessToken: resolvedToken,
+                        archetypeScore: typeof archetypeScore === "number" ? archetypeScore : 0.5,
+                        onEvent: send,
+                    });
+
+                    // Send the final result as a special "result" event
+                    // This contains the full intermediateSteps and report
+                    try {
+                            controller.enqueue(
+                                encoder.encode(`data: ${JSON.stringify({
+                                    type: "result",
+                                    variant,
+                                    rawFindings: (output as any).rawFindings ?? null,
+                                    intermediateSteps: output.intermediateSteps,
+                                    totalToolCalls: output.totalToolCalls,
+                                    executionTimeMs: output.executionTimeMs,
+                                    error: output.error,
+                                })}\n\n`)
+                        );
+                    } catch {
+                        // stream closed
+                    }
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : "Unknown error";
+                    console.error("[api/agent/db-test] Stream error:", message);
+                    try {
+                        controller.enqueue(
+                            encoder.encode(`data: ${JSON.stringify({ type: "error", error: message, stepNumber: -1, timestamp: new Date().toISOString(), elapsedMs: 0 })}\n\n`)
+                        );
+                    } catch {
+                        // stream closed
+                    }
+                } finally {
+                    controller.close();
+                }
+            },
+        });
+
+        return new Response(stream, {
+            headers: {
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache, no-transform",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        });
+    } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        console.error("[api/agent/db-test] Error:", message);
+        return new Response(
+            JSON.stringify({ error: message }),
+            { status: 500, headers: { "Content-Type": "application/json" } }
+        );
+    }
+}

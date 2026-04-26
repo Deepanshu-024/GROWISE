@@ -28,6 +28,11 @@ export default function Navigation() {
           <a href="#" className="text-muted-foreground hover:text-foreground transition-colors text-sm">
             Contact
           </a>
+          <SignedIn>
+            <a href="/dashboard" className="text-muted-foreground hover:text-foreground transition-colors text-sm">
+              Dashboard
+            </a>
+          </SignedIn>
         </div>
 
         {/* Auth Buttons */}
