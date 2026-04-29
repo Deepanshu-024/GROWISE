@@ -1,0 +1,737 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import fs from "fs";
+import path from "path";
+import { createAgent } from "langchain";
+import { gpt5Mini } from "@/lib/llm";
+import prisma from "@/lib/prisma";
+import {
+    getRepoTreeTool,
+    searchCodeTool,
+    getFileContentTool,
+    githubContextSchema,
+} from "../analysis/tools/agent-tools";
+
+// --- Types --------------------------------------------------------------------
+
+export interface StreamEvent {
+    type: "tool_start" | "tool_end" | "llm_end" | "agent_thought" | "error" | "done" | "agent_start";
+    stepNumber: number;
+    timestamp: string;
+    elapsedMs: number;
+    toolName?: string;
+    toolInput?: unknown;
+    toolOutput?: string;
+    toolOutputLength?: number;
+    reasoning?: string;
+    tokenUsage?: { inputTokens: number; outputTokens: number; totalTokens: number };
+    cumulativeTokens?: { inputTokens: number; outputTokens: number; totalTokens: number };
+    rawFindings?: string | null;
+    totalToolCalls?: number;
+    executionTimeMs?: number;
+    error?: string;
+}
+
+export interface EventDrivenAgentInput {
+    repositoryId: string;
+    accessToken: string;
+    onEvent?: (event: StreamEvent) => void;
+}
+
+export interface EventDrivenAgentOutput {
+    rawFindings: string | null;
+    intermediateSteps: any[];
+    totalToolCalls: number;
+    executionTimeMs: number;
+    error?: string;
+}
+
+interface AgentLogStep {
+    stepNumber: number;
+    type: "decision" | "tool_call" | "tool_response" | "agent_thought" | "error";
+    timestamp: string;
+    toolName?: string;
+    toolInput?: unknown;
+    toolOutput?: string;
+    reasoning?: string;
+}
+
+interface AgentLog {
+    repositoryId: string;
+    startTime: string;
+    endTime?: string;
+    totalSteps: number;
+    steps: AgentLogStep[];
+    finalReport?: unknown;
+    error?: string;
+}
+
+function normalizeToolName(name: unknown): string | null {
+    if (typeof name !== "string") return null;
+
+    const trimmed = name.trim();
+    if (!trimmed) return null;
+
+    const lower = trimmed.toLowerCase();
+    if (lower === "dynamicstructuredtool" || lower === "structuredtool") {
+        return null;
+    }
+
+    return trimmed;
+}
+
+function resolveCallbackToolName(tool: any, fallback?: string): string {
+    const idCandidate = Array.isArray(tool?.id)
+        ? tool.id[tool.id.length - 1]
+        : tool?.id;
+
+    return (
+        normalizeToolName(tool?.name) ??
+        normalizeToolName(tool?.lc_kwargs?.name) ??
+        normalizeToolName(idCandidate) ??
+        normalizeToolName(fallback) ??
+        "unknown"
+    );
+}
+
+// --- System Prompt -------------------------------------------------------------
+
+const SYSTEM_PROMPT = `You are an elite event-driven architecture analyst specializing in React/Next.js applications and their backend integrations. Your mission is to analyze GitHub repositories and surface event-processing risks that will cause queue backlog, consumer lag, duplicate side effects, or lost asynchronous work when traffic spikes - especially what happens if events spike 10x suddenly.
+
+REPOSITORY CONTEXT:
+- Repository: {repoFullName}
+- Framework: {framework} (React/Next.js expected)
+- Default Branch: {defaultBranch}
+- Package.json Dependencies: {packageJson}
+- Full Repository File Tree: {repoContent}
+
+STRATEGIC TOOL USAGE PHILOSOPHY:
+**Use tools ONLY when critical information cannot be inferred from existing context**
+- Start with provided package.json and repository file tree
+- The file tree above is the FULL project structure - use it to identify targets before making any tool calls
+- Make educated assumptions based on React/Next.js patterns
+- Tool calls should be surgical, not exhaustive
+- Maximum 15 tool calls total across all phases - spend them wisely
+
+AVAILABLE TOOLS (Use Sparingly - repo details are injected automatically via context):
+1. **getRepoTree()** - No input needed. Returns full project file tree (only if the tree in context is incomplete or truncated)
+2. **getFileContent(path)** - Just pass the file path. For reading event producers, consumers, webhook handlers, queue config, background jobs, schema files
+3. **searchCode(query)** - Just pass the search query. For locating patterns: inngest, bull, bullmq, queue, worker, event, webhook, retry, idempotency, dedupe, deadLetter, dlq
+
+---
+
+## ANALYSIS FRAMEWORK - EVENT-DRIVEN SCALE SPECIALIST
+
+---
+
+### NON-NEGOTIABLE SCOPE GATE - EVENT-DRIVEN ONLY
+
+Only investigate and report findings that directly affect asynchronous event production, queueing, background jobs, webhooks, consumers, workers, retries, deduplication, idempotency, or dead-letter handling.
+
+Before reading a file, decide whether it is an event target. A file is in scope only when it contains or configures one of these:
+-> Event producers: calls to send, publish, emit, enqueue, schedule, create job, trigger workflow
+-> Event consumers: handlers, workers, inngest functions, bull processors, webhook handlers, cron jobs that process queued work
+-> Queue/workflow infrastructure: Bull, BullMQ, Inngest, Temporal, Trigger.dev, Upstash QStash, SQS, Kafka, Pub/Sub, RabbitMQ, Redis queues
+-> Retry policies, concurrency settings, rate limits, backoff, batch size, timeout, max attempts
+-> Dead-letter queues, failed job handling, poison message handling, alerting on exhausted retries
+-> Idempotency and deduplication: event ID tables, processed-event records, unique provider event IDs, idempotency keys
+
+Ignore and do not report non-event findings, even if they are real issues. Examples to exclude:
+-> General database performance unless it directly blocks event consumers
+-> Payment correctness unless the issue is webhook/event retry or duplicate handling
+-> Authentication/session issues
+-> Generic input validation
+-> UI-only problems
+
+If a possible issue is adjacent, ask: "Would fixing this prevent queue backlog, consumer lag, duplicate side effects, lost events, or retry storms during a 10x event spike?" If no, discard it silently.
+
+---
+
+### PHASE 1 - Event Stack Understanding (No Tools)
+
+**Step 1A - Identify event stack from package.json:**
+
+Extract and note:
+- eventLibraries: inngest | bull | bullmq | temporal | trigger.dev | qstash | svix | kafka | amqplib | NONE
+- queueBackend: redis | sqs | kafka | postgres | provider-managed | unknown
+- producerPatterns: API route emits event, webhook emits job, server action enqueues job, cron schedules work
+- consumerPatterns: worker process, route handler, inngest function, queue processor, webhook handler
+- retrySupport: explicit retry/backoff/maxAttempts or provider defaults
+- dlqSupport: dead letter queue, failed job table, exhausted retry handler, alerting
+- idempotencySupport: processed event table, unique event ID, dedupe key, idempotency key
+
+These directly shape severity:
+-> Event libraries present with consumers but no retry/DLQ/idempotency = high risk
+-> Webhooks are event consumers even when no queue library exists
+-> Serverless handlers processing events synchronously are vulnerable to spikes and provider retry storms
+-> No event-related libraries or files = report INFO and stop
+
+**Step 1B - Identify event paths from file tree:**
+
+Scan folder and file names for:
+- CRITICAL: webhook, webhooks, worker, workers, queue, queues, jobs, inngest, bull, events, consumers, processors
+- HIGH: cron, schedule, sync, import, export, email, notification, analytics, subscription, payment webhook
+- MEDIUM: background, task, batch, pipeline, replay, retry
+- LOW/SKIP: static UI, components, styles, docs unless they configure event behavior
+
+Write down the classification before continuing.
+
+---
+
+### PHASE 2 - Identify Investigation Targets (Minimal Tools)
+
+**Step 2A - Build investigation list from file tree:**
+
+Combine CRITICAL + top 3-4 HIGH items.
+Maximum 8 items total. Prefer consumer/handler files over producers when choosing.
+Only call **getRepoTree** if the file tree in context is incomplete or ambiguous.
+
+**Step 2B - Search event patterns:**
+
+Use **searchCode** for targeted validation:
+- Search for: \`inngest\`, \`bull\`, \`bullmq\`, \`queue\`, \`worker\`, \`webhook\`, \`retry\`, \`idempot\`, \`dedupe\`, \`deadLetter\`, \`dlq\`, \`attempts\`, \`backoff\`
+- This tells you whether the repo has event processing depth, retry strategy, and idempotency.
+
+---
+
+### PHASE 3 - Deep Event Flow Analysis
+
+For each item in your investigation list, use **getFileContent** to read the file.
+
+**What to look for in each file:**
+
+Queue Backlog:
+-> Producers can enqueue/publish faster than consumers process
+-> No concurrency limits, rate limits, batching, throttling, or backpressure
+-> Long-running synchronous work inside webhook/API handlers instead of enqueueing
+-> Severity: CRITICAL if a public/high-volume event source can overwhelm a single consumer; WARNING if bounded but still fragile
+
+Consumer Lag:
+-> Single worker/consumer with no configured concurrency
+-> Sequential processing of independent events
+-> No timeout handling or long external API calls inside handlers
+-> No monitoring/metrics for queue length, oldest job age, failed jobs, or consumer lag
+-> Severity: CRITICAL if lag causes user-visible failures or provider retry storms; WARNING if lag only delays background work
+
+Event Duplication:
+-> Webhook handlers or consumers perform side effects without checking event ID/idempotency key
+-> Retries can create duplicate DB rows, duplicate emails, duplicate charges, duplicate notifications, duplicate external calls
+-> No unique constraint on processed event IDs
+-> Severity: CRITICAL if duplicate delivery corrupts data, bills/sends twice, or repeats irreversible side effects; WARNING for duplicate analytics/non-critical side effects
+
+Retry Strategy:
+-> No explicit retry policy where transient failures are likely
+-> Infinite/unbounded retries or immediate retries with no backoff
+-> Retry wraps non-idempotent side effects
+-> Errors swallowed without retry or alerting
+-> Severity: CRITICAL if events can be lost or retry storms amplify load; WARNING for delayed non-critical jobs
+
+Dead-Letter Handling:
+-> No DLQ, failed job table, onFailure handler, exhausted retry path, or alerting
+-> Poison events can loop forever or disappear silently
+-> Severity: CRITICAL if financial/account/user lifecycle events can be lost; WARNING for non-critical async work
+
+Throughput Basis:
+For each core flow, estimate the 10x spike failure mode:
+-> producer rate = public webhook/API/events per request
+-> consumer capacity = concurrency x processing time
+-> backlog growth = producer rate - consumer rate
+State what fails first: queue length, provider retries, duplicate side effects, timeout, DB/API bottleneck.
+
+---
+
+### PHASE 4 - Schema & Idempotency Storage
+
+**Always run this phase when a schema file is visible and event consumers exist.**
+
+Use **getFileContent** to read the schema once.
+
+Check:
+- Is there a ProcessedEvent / WebhookEvent / EventLog / Job / Outbox model?
+- Are provider event IDs or job IDs stored with unique constraints?
+- Are event statuses tracked: pending, processing, completed, failed, dead_lettered?
+- Is there an outbox pattern for publishing events after DB writes?
+- Are retry counts, lastError, nextRunAt, lockedAt, or worker lease fields present for custom queues?
+
+Cross-reference:
+-> Consumer with no idempotency check AND schema has no processed-event unique store = CRITICAL for important side effects
+-> Custom queue without status/retry/dead-letter fields = CRITICAL or WARNING depending on event criticality
+-> Producer writes DB then emits event without outbox/transactional handoff = WARNING; CRITICAL if event loss breaks critical workflow
+
+---
+
+### PHASE 5 - Synthesis
+
+After finding 3 CRITICAL issues, stop expanding the investigation to new optional files. Still complete required schema checks and report every finding already discovered.
+
+For every meaningful finding, answer the key question: "What happens if events spike 10x suddenly?"
+
+---
+
+## OUTPUT REQUIREMENTS
+
+Return a compact findings digest, not a full report. The orchestrator will write the final user report.
+Do NOT include executive summary, stack recap, schema recap, priority list, code snippets, or "if you want" follow-ups.
+Do NOT call finalReport or any report tool. Output plain structured text only.
+
+Use exactly this format:
+
+--- CRITICAL FINDINGS ---
+
+[EVT-1] Short title, max 10 words
+File: path/to/file.ts (Lx-Ly)
+Evidence: max 2 sentences. State the exact event/queue/consumer pattern and why it fails.
+Impact: max 1 sentence. Include what breaks during a 10x event spike.
+Fix: max 1 sentence. State the concrete first fix.
+
+--- WARNING FINDINGS ---
+
+[EVT-2] Short title, max 10 words
+File: path/to/file.ts (Lx-Ly)
+Evidence: max 2 sentences.
+Impact: max 1 sentence.
+Fix: max 1 sentence.
+
+--- INFO ---
+
+[EVT-3] Short title, max 10 words
+File: path/to/file.ts or package/schema context
+Evidence: max 1 sentence.
+
+Severity definitions:
+- CRITICAL: proven event loss, duplicate irreversible side effects, provider retry storm, unbounded queue backlog, poison message loop, or critical consumer lag.
+- WARNING: proven async processing risk that degrades under event spikes but does not immediately corrupt core state.
+- INFO: useful context, healthy observations, or no event-driven surface found.
+
+Compression rules:
+- Report every distinct in-scope event finding you discovered. Drop non-event findings silently.
+- Keep the digest compact by merging only genuinely overlapping instances of the same root cause; do not merge unrelated findings.
+- Target 3-6 findings when possible, but exceeding that is required if you discovered more distinct findings.
+- Sort by severity, then 10x-spike impact.
+- Each finding must preserve: file, pattern/evidence, impact, and fix.
+- Maximum 120 words per CRITICAL finding and 90 words per WARNING finding.
+- No markdown tables. No nested bullets. No long explanations.
+
+When your investigation is complete, output your findings as your final message. Just return the findings as structured text in your last response.`;
+
+const eventAgentTools = [
+    getRepoTreeTool,
+    searchCodeTool,
+    getFileContentTool,
+];
+
+// --- Main Exported Function ---------------------------------------------------
+
+export async function runEventDrivenAgent(
+    input: EventDrivenAgentInput
+): Promise<EventDrivenAgentOutput> {
+    const { repositoryId, accessToken, onEvent } = input;
+    const startTime = Date.now();
+
+    const agentLog: AgentLog = {
+        repositoryId,
+        startTime: new Date().toISOString(),
+        totalSteps: 0,
+        steps: [],
+    };
+    let stepCounter = 0;
+    let cumulativeInputTokens = 0;
+    let cumulativeOutputTokens = 0;
+    let lastToolName = "unknown";
+    let pendingDecisionReasoning: string | null = null;
+
+    const emit = (event: StreamEvent) => {
+        try { onEvent?.(event); } catch { /* ignore stream errors */ }
+    };
+
+    console.log(`[eventAgent] Starting investigation for: ${repositoryId}`);
+
+    emit({
+        type: "agent_start",
+        stepNumber: 0,
+        timestamp: new Date().toISOString(),
+        elapsedMs: 0,
+        reasoning: `Starting Event-driven agent for ${repositoryId}`,
+    });
+
+    try {
+        const repository = await prisma.repository.findFirst({
+            where: {
+                OR: [
+                    { id: repositoryId },
+                    { repositoryId },
+                ],
+            },
+            select: {
+                fullName: true,
+                defaultBranch: true,
+                packageJson: true,
+                repoContent: true,
+                framework: true,
+            },
+        });
+
+        if (!repository || !repository.fullName) {
+            return {
+                rawFindings: null,
+                intermediateSteps: [],
+                totalToolCalls: 0,
+                executionTimeMs: Date.now() - startTime,
+                error: `Repository "${repositoryId}" not found in database. Run framework analysis first.`,
+            };
+        }
+
+        const [owner, repo] = repository.fullName.split("/");
+        const branch = repository.defaultBranch ?? "main";
+        const framework = repository.framework ?? "unknown";
+        const packageJsonStr = repository.packageJson
+            ? JSON.stringify(repository.packageJson).slice(0, 3000)
+            : "Not available";
+        const repoContentStr = repository.repoContent
+            ? JSON.stringify(repository.repoContent)
+            : "Not available";
+
+        console.log(`[eventAgent] Repo: ${repository.fullName} (${branch})`);
+
+        const agent = createAgent({
+            model: gpt5Mini,
+            tools: eventAgentTools,
+            systemPrompt: SYSTEM_PROMPT,
+            contextSchema: githubContextSchema,
+        });
+
+        const result = await agent.invoke(
+            {
+                messages: [
+                    {
+                        role: "user",
+                        content:
+                            `Analyze the repository ${repository.fullName} for event-driven scale risks.
+
+REPOSITORY CONTEXT:
+- Framework: ${framework}
+- Package.json dependencies: ${packageJsonStr}
+- Full repository file tree: ${repoContentStr}
+
+**Primary Objectives:**
+1. **Queue Backlog** - Identify producers that can overwhelm consumers during a 10x event spike
+2. **Consumer Lag** - Check worker/handler concurrency, processing time, timeouts, and lag visibility
+3. **Event Duplication** - Find handlers that are not idempotent under retries or duplicate delivery
+4. **Retry Strategy** - Verify explicit attempts, backoff, transient error handling, and retry safety
+5. **Dead-Letter Handling** - Check DLQs, failed job stores, exhausted retry handlers, and alerting
+6. **Throughput Balance** - Compare producer throughput with consumer capacity and state what fails first
+
+**Analysis Approach:**
+- Start with package.json and file tree; identify event libraries, webhook handlers, workers, queues, jobs, and cron tasks before tool calls
+- Use searchCode for event patterns: inngest, bull, bullmq, queue, worker, webhook, retry, idempot, dedupe, deadLetter, dlq, attempts, backoff
+- Read only high-impact producer/consumer/config files
+- Read schema once when event consumers exist to validate idempotency, retry state, and dead-letter storage
+- Tools already know the repo details - just pass the file path or search query
+
+**Scope constraint:** Only report event-driven architecture risks: queue backlog, consumer lag, duplicate delivery, retry behavior, idempotency, DLQ/poison events, and event loss. Ignore unrelated issues silently.
+**Key question:** What happens if events spike 10x suddenly?
+
+Return the compact findings digest required by the system prompt. Do not call any report tool. Do not include executive summary, stack recap, priority list, code snippets, or follow-up offers.`,
+                    },
+                ],
+            },
+            {
+                context: { owner, repo, branch, accessToken },
+                recursionLimit: 40,
+                callbacks: [
+                    {
+                        handleAgentAction(action: any, _runId: string, _parentRunId?: string, _tags?: string[], metadata?: Record<string, any>) {
+                            if (metadata?.langgraph_step != null) {
+                                stepCounter = metadata.langgraph_step;
+                            } else {
+                                stepCounter++;
+                            }
+                            const toolName = resolveCallbackToolName(action, action.tool);
+                            lastToolName = toolName;
+                            pendingDecisionReasoning =
+                                typeof action.log === "string" && action.log.trim().length > 0
+                                    ? action.log.trim()
+                                    : null;
+                            agentLog.steps.push({
+                                stepNumber: stepCounter,
+                                type: "decision",
+                                timestamp: new Date().toISOString(),
+                                toolName,
+                                toolInput: action.toolInput,
+                                reasoning: action.log,
+                            });
+                            console.log(`[eventAgent][Step ${stepCounter}] Decision: ${toolName}`);
+                            if (pendingDecisionReasoning) {
+                                emit({
+                                    type: "agent_thought",
+                                    stepNumber: stepCounter,
+                                    timestamp: new Date().toISOString(),
+                                    elapsedMs: Date.now() - startTime,
+                                    toolName,
+                                    reasoning: pendingDecisionReasoning,
+                                    cumulativeTokens: {
+                                        inputTokens: cumulativeInputTokens,
+                                        outputTokens: cumulativeOutputTokens,
+                                        totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                                    },
+                                });
+                            }
+                        },
+                        handleToolStart(tool: any, input: string, _runId?: string, _parentRunId?: string, _tags?: string[], metadata?: Record<string, any>) {
+                            if (metadata?.langgraph_step != null) {
+                                stepCounter = metadata.langgraph_step;
+                            }
+                            const toolName = resolveCallbackToolName(tool, lastToolName);
+                            lastToolName = toolName;
+                            let parsedInput: unknown = input;
+                            try {
+                                parsedInput = JSON.parse(input);
+                            } catch {
+                                // keep raw string
+                            }
+
+                            emit({
+                                type: "tool_start",
+                                stepNumber: stepCounter,
+                                timestamp: new Date().toISOString(),
+                                elapsedMs: Date.now() - startTime,
+                                toolName,
+                                toolInput: parsedInput,
+                                cumulativeTokens: {
+                                    inputTokens: cumulativeInputTokens,
+                                    outputTokens: cumulativeOutputTokens,
+                                    totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                                },
+                            });
+                            pendingDecisionReasoning = null;
+                        },
+                        handleToolEnd(output: any) {
+                            const outputStr: string =
+                                typeof output === "string"
+                                    ? output
+                                    : JSON.stringify(output, null, 2) ?? "";
+                            const lastDecisionStep = [...agentLog.steps]
+                                .reverse()
+                                .find((s) => s.type === "decision");
+                            if (lastDecisionStep) {
+                                lastDecisionStep.toolOutput =
+                                    outputStr.length > 3000
+                                        ? outputStr.slice(0, 3000) + "\n... [truncated]"
+                                        : outputStr;
+                            }
+
+                            emit({
+                                type: "tool_end",
+                                stepNumber: stepCounter,
+                                timestamp: new Date().toISOString(),
+                                elapsedMs: Date.now() - startTime,
+                                toolName: lastToolName,
+                                toolOutput: outputStr.length > 5000
+                                    ? outputStr.slice(0, 5000) + "\n... [truncated]"
+                                    : outputStr,
+                                toolOutputLength: outputStr.length,
+                                cumulativeTokens: {
+                                    inputTokens: cumulativeInputTokens,
+                                    outputTokens: cumulativeOutputTokens,
+                                    totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                                },
+                            });
+                        },
+                        handleLLMEnd(output: any, _runId?: string, _parentRunId?: string, _tags?: string[], metadata?: Record<string, any>) {
+                            if (metadata?.langgraph_step != null) {
+                                stepCounter = metadata.langgraph_step;
+                            }
+
+                            const usage = output?.llmOutput?.tokenUsage
+                                ?? output?.llmOutput?.usage
+                                ?? output?.llmOutput?.estimatedTokenUsage
+                                ?? null;
+
+                            let inputTokens = 0;
+                            let outputTokens = 0;
+                            if (usage) {
+                                inputTokens = usage.promptTokens ?? usage.prompt_tokens ?? usage.inputTokens ?? usage.input_tokens ?? 0;
+                                outputTokens = usage.completionTokens ?? usage.completion_tokens ?? usage.outputTokens ?? usage.output_tokens ?? 0;
+                            }
+                            cumulativeInputTokens += inputTokens;
+                            cumulativeOutputTokens += outputTokens;
+
+                            const generation = output.generations?.[0]?.[0];
+                            const message = (generation as any)?.message;
+                            const fnCall = message?.additional_kwargs?.function_call;
+                            if (!fnCall) {
+                                const content = String(message?.content ?? "").trim();
+                                if (content.length > 0) {
+                                    agentLog.steps.push({
+                                        stepNumber: stepCounter,
+                                        type: "agent_thought",
+                                        timestamp: new Date().toISOString(),
+                                        reasoning: content.slice(0, 1000),
+                                    });
+
+                                    emit({
+                                        type: "agent_thought",
+                                        stepNumber: stepCounter,
+                                        timestamp: new Date().toISOString(),
+                                        elapsedMs: Date.now() - startTime,
+                                        reasoning: content.slice(0, 2000),
+                                        cumulativeTokens: {
+                                            inputTokens: cumulativeInputTokens,
+                                            outputTokens: cumulativeOutputTokens,
+                                            totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                                        },
+                                    });
+                                }
+                            }
+
+                            emit({
+                                type: "llm_end",
+                                stepNumber: stepCounter,
+                                timestamp: new Date().toISOString(),
+                                elapsedMs: Date.now() - startTime,
+                                tokenUsage: {
+                                    inputTokens,
+                                    outputTokens,
+                                    totalTokens: inputTokens + outputTokens,
+                                },
+                                cumulativeTokens: {
+                                    inputTokens: cumulativeInputTokens,
+                                    outputTokens: cumulativeOutputTokens,
+                                    totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                                },
+                            });
+                        },
+                        handleChainError(error: Error) {
+                            agentLog.steps.push({
+                                stepNumber: ++stepCounter,
+                                type: "error",
+                                timestamp: new Date().toISOString(),
+                                reasoning: error.message,
+                            });
+                            agentLog.error = error.message;
+
+                            emit({
+                                type: "error",
+                                stepNumber: stepCounter,
+                                timestamp: new Date().toISOString(),
+                                elapsedMs: Date.now() - startTime,
+                                error: error.message,
+                                cumulativeTokens: {
+                                    inputTokens: cumulativeInputTokens,
+                                    outputTokens: cumulativeOutputTokens,
+                                    totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                                },
+                            });
+                        },
+                    },
+                ],
+            }
+        );
+
+        const messages = result.messages ?? [];
+        const toolMessages = messages.filter(
+            (msg: any) => msg.role === "tool" || msg.tool_calls?.length > 0
+        );
+        const totalToolCalls = toolMessages.length;
+
+        const lastAiMessage = [...messages]
+            .reverse()
+            .find((msg: any) => msg._getType?.() === "ai" || msg.role === "assistant");
+
+        const rawFindings: string =
+            typeof lastAiMessage?.content === "string"
+                ? lastAiMessage.content
+                : JSON.stringify(lastAiMessage?.content ?? "");
+
+        const executionTimeMs = Date.now() - startTime;
+
+        if (!rawFindings || rawFindings.trim().length === 0) {
+            return {
+                rawFindings: null,
+                intermediateSteps: messages,
+                totalToolCalls,
+                executionTimeMs,
+                error:
+                    "Agent completed without returning findings. " +
+                    "Check intermediate steps for partial investigation.",
+            };
+        }
+
+        agentLog.endTime = new Date().toISOString();
+        agentLog.totalSteps = stepCounter;
+        agentLog.finalReport = { rawFindings };
+
+        const logDir = path.join(process.cwd(), "agent-logs");
+        if (!fs.existsSync(logDir)) {
+            fs.mkdirSync(logDir, { recursive: true });
+        }
+
+        const logFileName = `event-agent-${repositoryId}-${Date.now()}.json`;
+        const logPath = path.join(logDir, logFileName);
+        fs.writeFileSync(logPath, JSON.stringify(agentLog, null, 2));
+        console.log(`[eventAgent] Full log written to: ${logPath}`);
+
+        emit({
+            type: "done",
+            stepNumber: stepCounter,
+            timestamp: new Date().toISOString(),
+            elapsedMs: executionTimeMs,
+            rawFindings,
+            totalToolCalls,
+            executionTimeMs,
+            cumulativeTokens: {
+                inputTokens: cumulativeInputTokens,
+                outputTokens: cumulativeOutputTokens,
+                totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+            },
+        });
+
+        return {
+            rawFindings,
+            intermediateSteps: messages,
+            totalToolCalls,
+            executionTimeMs,
+        };
+    } catch (error) {
+        const executionTimeMs = Date.now() - startTime;
+        const message =
+            error instanceof Error ? error.message : "Unknown error occurred";
+
+        agentLog.endTime = new Date().toISOString();
+        agentLog.totalSteps = stepCounter;
+        agentLog.error = message;
+
+        const logDir = path.join(process.cwd(), "agent-logs");
+        if (!fs.existsSync(logDir)) {
+            fs.mkdirSync(logDir, { recursive: true });
+        }
+
+        const logFileName = `event-agent-ERROR-${repositoryId}-${Date.now()}.json`;
+        const logPath = path.join(logDir, logFileName);
+        fs.writeFileSync(logPath, JSON.stringify(agentLog, null, 2));
+        console.error(`[eventAgent] Error log written to: ${logPath}`);
+
+        emit({
+            type: "done",
+            stepNumber: stepCounter,
+            timestamp: new Date().toISOString(),
+            elapsedMs: executionTimeMs,
+            rawFindings: null,
+            totalToolCalls: 0,
+            executionTimeMs,
+            error: message,
+            cumulativeTokens: {
+                inputTokens: cumulativeInputTokens,
+                outputTokens: cumulativeOutputTokens,
+                totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+            },
+        });
+
+        return {
+            rawFindings: null,
+            intermediateSteps: [],
+            totalToolCalls: 0,
+            executionTimeMs,
+            error: message,
+        };
+    }
+}
