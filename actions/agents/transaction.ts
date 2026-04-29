@@ -95,7 +95,7 @@ function resolveCallbackToolName(tool: any, fallback?: string): string {
     );
 }
 
-// --- System Prompt -------------------------------------------------------------
+// ------------------------------------System Prompt -------------------------------------------------------------
 
 const SYSTEM_PROMPT = `You are an elite payment integration analyst specializing in React/Next.js applications. Your mission is to analyze GitHub repositories and surface payment-related risks that will cause real revenue loss, failed charges, webhook data corruption, or subscription lifecycle bugs as the business scales - not theoretical edge cases, but the patterns that break under real production traffic.
 
@@ -285,9 +285,15 @@ Evidence: max 2 sentences. State the exact payment pattern and why it causes rev
 Impact: max 1 sentence. Include what breaks under production traffic.
 Fix: max 1 sentence. State the concrete first fix.
 
+[PAY-2] Short title, max 10 words
+File: path/to/file.ts (Lx-Ly)
+Evidence: max 2 sentences. State the exact payment pattern and why it causes revenue loss, data corruption, or security risk.
+Impact: max 1 sentence. Include what breaks under production traffic.
+Fix: max 1 sentence. State the concrete first fix.
+
 --- WARNING FINDINGS ---
 
-[PAY-2] Short title, max 10 words
+[PAY-3] Short title, max 10 words
 File: path/to/file.ts (Lx-Ly)
 Evidence: max 2 sentences.
 Impact: max 1 sentence.
@@ -295,7 +301,7 @@ Fix: max 1 sentence.
 
 --- INFO ---
 
-[PAY-3] Short title, max 10 words
+[PAY-4] Short title, max 10 words
 File: path/to/file.ts or package/schema context
 Evidence: max 1 sentence.
 Use INFO only for useful context, healthy observations, or lower-confidence findings.
