@@ -5,7 +5,6 @@ import { createAgent } from "langchain";
 import { gpt5Mini } from "@/lib/llm";
 import prisma from "@/lib/prisma";
 import {
-    getRepoTreeTool,
     searchCodeTool,
     getFileContentTool,
     githubContextSchema,
@@ -108,14 +107,15 @@ STRATEGIC TOOL USAGE PHILOSOPHY:
 **Use tools ONLY when critical information cannot be inferred from existing context**
 - Start with provided package.json and repository file tree
 - The file tree above is the FULL project structure - use it to identify targets before making any tool calls
-- Make educated assumptions based on React/Next.js patterns
+- Make conservative findings from concrete evidence; if evidence is thin, report INFO instead of exploring endlessly
 - Tool calls should be surgical, not exhaustive
-- Maximum 15 tool calls total across all phases - spend them wisely
+- HARD LIMIT: use at most 15 tool calls total
+- After using 15 tool calls, stop immediately and return the findings digest from evidence gathered
+- Do not call another tool just to improve confidence, find line numbers, or validate a low-impact suspicion
 
 AVAILABLE TOOLS (Use Sparingly - repo details are injected automatically via context):
-1. **getRepoTree()** - No input needed. Returns full project file tree (only if the tree in context is incomplete or truncated)
-2. **getFileContent(path)** - Just pass the file path. For reading event producers, consumers, webhook handlers, queue config, background jobs, schema files
-3. **searchCode(query)** - Just pass the search query. For locating patterns: inngest, bull, bullmq, queue, worker, event, webhook, retry, idempotency, dedupe, deadLetter, dlq
+1. **getFileContent(path)** - Just pass the file path. For reading event producers, consumers, webhook handlers, queue config, background jobs, schema files
+2. **searchCode(query)** - Just pass one compact query. Use at most 3 searches total.
 
 ---
 
@@ -163,7 +163,7 @@ These directly shape severity:
 -> Event libraries present with consumers but no retry/DLQ/idempotency = high risk
 -> Webhooks are event consumers even when no queue library exists
 -> Serverless handlers processing events synchronously are vulnerable to spikes and provider retry storms
--> No event-related libraries or files = report INFO and stop
+-> No event-related libraries or event-looking files = report INFO and stop without tools
 
 **Step 1B - Identify event paths from file tree:**
 
@@ -173,7 +173,7 @@ Scan folder and file names for:
 - MEDIUM: background, task, batch, pipeline, replay, retry
 - LOW/SKIP: static UI, components, styles, docs unless they configure event behavior
 
-Write down the classification before continuing.
+Write down the classification before continuing
 
 ---
 
@@ -183,19 +183,21 @@ Write down the classification before continuing.
 
 Combine CRITICAL + top 3-4 HIGH items.
 Maximum 8 items total. Prefer consumer/handler files over producers when choosing.
-Only call **getRepoTree** if the file tree in context is incomplete or ambiguous.
+Do not try to retrieve the repo tree. The injected tree is the only tree context you should use.
 
 **Step 2B - Search event patterns:**
 
 Use **searchCode** for targeted validation:
-- Search for: \`inngest\`, \`bull\`, \`bullmq\`, \`queue\`, \`worker\`, \`webhook\`, \`retry\`, \`idempot\`, \`dedupe\`, \`deadLetter\`, \`dlq\`, \`attempts\`, \`backoff\`
+- First search, only if needed: \`inngest OR bull OR bullmq OR queue OR worker OR webhook\`
+- Second search, only if consumers exist and config is unclear: \`retry OR idempot OR dedupe OR deadLetter OR dlq OR attempts OR backoff\`
 - This tells you whether the repo has event processing depth, retry strategy, and idempotency.
+- Never run separate searches for each keyword.
 
 ---
 
 ### PHASE 3 - Deep Event Flow Analysis
 
-For each item in your investigation list, use **getFileContent** to read the file.
+For each item in your investigation list, use **getFileContent** to read only the highest-impact files.
 
 **What to look for in each file:**
 
@@ -241,9 +243,9 @@ State what fails first: queue length, provider retries, duplicate side effects, 
 
 ### PHASE 4 - Schema & Idempotency Storage
 
-**Always run this phase when a schema file is visible and event consumers exist.**
+Run this phase only when event consumers exist AND the schema path is obvious from the injected file tree.
 
-Use **getFileContent** to read the schema once.
+Use **getFileContent** to read the schema once only if it fits inside the 15-tool total budget.
 
 Check:
 - Is there a ProcessedEvent / WebhookEvent / EventLog / Job / Outbox model?
@@ -261,7 +263,8 @@ Cross-reference:
 
 ### PHASE 5 - Synthesis
 
-After finding 3 CRITICAL issues, stop expanding the investigation to new optional files. Still complete required schema checks and report every finding already discovered.
+After finding 3 CRITICAL issues, stop expanding the investigation to new optional files. Report every finding already discovered.
+If the tool budget is exhausted, stop and synthesize. Never continue tool use past the budget.
 
 For every meaningful finding, answer the key question: "What happens if events spike 10x suddenly?"
 
@@ -314,7 +317,6 @@ Compression rules:
 When your investigation is complete, output your findings as your final message. Just return the findings as structured text in your last response.`;
 
 const eventAgentTools = [
-    getRepoTreeTool,
     searchCodeTool,
     getFileContentTool,
 ];
@@ -422,15 +424,13 @@ REPOSITORY CONTEXT:
 
 **Analysis Approach:**
 - Start with package.json and file tree; identify event libraries, webhook handlers, workers, queues, jobs, and cron tasks before tool calls
-- Use searchCode for event patterns: inngest, bull, bullmq, queue, worker, webhook, retry, idempot, dedupe, deadLetter, dlq, attempts, backoff
-- Read only high-impact producer/consumer/config files
-- Read schema once when event consumers exist to validate idempotency, retry state, and dead-letter storage
-- Tools already know the repo details - just pass the file path or search query
+- HARD LIMIT: use at most 15 tool calls total, then stop and return the diges- Use at most 2 searchCode calls; combine keywords instead of searching one by one
+- If package.json and file tree show no event-driven surface, return INFO without tool calls
 
 **Scope constraint:** Only report event-driven architecture risks: queue backlog, consumer lag, duplicate delivery, retry behavior, idempotency, DLQ/poison events, and event loss. Ignore unrelated issues silently.
 **Key question:** What happens if events spike 10x suddenly?
 
-Return the compact findings digest required by the system prompt. Do not call any report tool. Do not include executive summary, stack recap, priority list, code snippets, or follow-up offers.`,
+Return the compact findings digest required by the system prompt. Do not call any report tool. Do not include executive summary, stack recap, priority list, code snippets, or follow-up offers. If you are near the tool limit, stop using tools and synthesize from available evidence.`,
                     },
                 ],
             },
