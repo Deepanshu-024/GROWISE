@@ -459,7 +459,11 @@ Return the compact findings digest required by the system prompt. Do not call an
                                 toolInput: action.toolInput,
                                 reasoning: action.log,
                             });
-                            console.log(`[eventAgent][Step ${stepCounter}] Decision: ${toolName}`);
+                            console.log("\n------------------------------------------");
+                            console.log(`[Step ${stepCounter}] AGENT DECISION`);
+                            console.log(`Tool: ${toolName}`);
+                            console.log(`Reasoning: ${action.log}`);
+                            console.log("------------------------------------------");
                             if (pendingDecisionReasoning) {
                                 emit({
                                     type: "agent_thought",
@@ -488,6 +492,9 @@ Return the compact findings digest required by the system prompt. Do not call an
                             } catch {
                                 // keep raw string
                             }
+
+                            console.log(`\n[Step ${stepCounter}/50] -> Calling ${toolName}`);
+                            console.log(`Input: ${JSON.stringify(parsedInput, null, 2).slice(0, 300)}`);
 
                             emit({
                                 type: "tool_start",
@@ -518,6 +525,9 @@ Return the compact findings digest required by the system prompt. Do not call an
                                         ? outputStr.slice(0, 3000) + "\n... [truncated]"
                                         : outputStr;
                             }
+
+                            console.log(`[Step ${stepCounter}] <- Tool response: ${outputStr.length} chars`);
+                            console.log(`Preview: ${outputStr.slice(0, 500)}`);
 
                             emit({
                                 type: "tool_end",
@@ -558,7 +568,9 @@ Return the compact findings digest required by the system prompt. Do not call an
                             const generation = output.generations?.[0]?.[0];
                             const message = (generation as any)?.message;
                             const fnCall = message?.additional_kwargs?.function_call;
-                            if (!fnCall) {
+                            if (fnCall) {
+                                console.log(`[Step ${stepCounter}] Agent selecting: ${fnCall.name}`);
+                            } else {
                                 const content = String(message?.content ?? "").trim();
                                 if (content.length > 0) {
                                     agentLog.steps.push({
@@ -567,6 +579,7 @@ Return the compact findings digest required by the system prompt. Do not call an
                                         timestamp: new Date().toISOString(),
                                         reasoning: content.slice(0, 1000),
                                     });
+                                    console.log(`[Step ${stepCounter}] Agent thought: ${content.slice(0, 300)}`);
 
                                     emit({
                                         type: "agent_thought",
@@ -608,6 +621,7 @@ Return the compact findings digest required by the system prompt. Do not call an
                                 reasoning: error.message,
                             });
                             agentLog.error = error.message;
+                            console.log(`\n[eventAgent] CHAIN ERROR: ${error.message}`);
 
                             emit({
                                 type: "error",
@@ -645,6 +659,9 @@ Return the compact findings digest required by the system prompt. Do not call an
         const executionTimeMs = Date.now() - startTime;
 
         if (!rawFindings || rawFindings.trim().length === 0) {
+            console.error(
+                "[eventAgent] Error: Agent completed without returning any findings"
+            );
             return {
                 rawFindings: null,
                 intermediateSteps: messages,
@@ -660,6 +677,11 @@ Return the compact findings digest required by the system prompt. Do not call an
         agentLog.totalSteps = stepCounter;
         agentLog.finalReport = { rawFindings };
 
+        console.log(
+            `[eventAgent] Complete. Findings length: ${rawFindings.length} chars, ${totalToolCalls} tool calls`
+        );
+        console.log(`[eventAgent] Execution time: ${executionTimeMs}ms`);
+
         const logDir = path.join(process.cwd(), "agent-logs");
         if (!fs.existsSync(logDir)) {
             fs.mkdirSync(logDir, { recursive: true });
@@ -668,7 +690,12 @@ Return the compact findings digest required by the system prompt. Do not call an
         const logFileName = `event-agent-${repositoryId}-${Date.now()}.json`;
         const logPath = path.join(logDir, logFileName);
         fs.writeFileSync(logPath, JSON.stringify(agentLog, null, 2));
-        console.log(`[eventAgent] Full log written to: ${logPath}`);
+
+        console.log("\n[eventAgent] ----------------------------------");
+        console.log("[eventAgent] Full log written to:");
+        console.log(`[eventAgent] ${logPath}`);
+        console.log(`[eventAgent] Total steps: ${stepCounter}`);
+        console.log("[eventAgent] ----------------------------------");
 
         emit({
             type: "done",
