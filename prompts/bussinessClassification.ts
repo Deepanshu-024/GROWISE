@@ -104,7 +104,7 @@ SCORING RULES:
 
 1. Assign a dominance score between 0 and 1.
 2. Score represents architectural dominance, NOT probability.
-3. Only include niches with meaningful presence (score ≥ 0.30).
+3. Only include niches with meaningful presence.
 4. Scores MUST be unique.
 5. Scores MUST be strictly descending.
 6. If two niches appear similar in strength,
