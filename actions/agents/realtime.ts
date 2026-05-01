@@ -1,0 +1,696 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import fs from "fs";
+import path from "path";
+import { createAgent } from "langchain";
+import { gpt5Mini } from "@/lib/llm";
+import prisma from "@/lib/prisma";
+import {
+    searchCodeTool,
+    getFileContentTool,
+    githubContextSchema,
+} from "../analysis/tools/agent-tools";
+
+export interface StreamEvent {
+    type: "tool_start" | "tool_end" | "llm_end" | "agent_thought" | "error" | "done" | "agent_start";
+    stepNumber: number;
+    timestamp: string;
+    elapsedMs: number;
+    toolName?: string;
+    toolInput?: unknown;
+    toolOutput?: string;
+    toolOutputLength?: number;
+    reasoning?: string;
+    tokenUsage?: { inputTokens: number; outputTokens: number; totalTokens: number };
+    cumulativeTokens?: { inputTokens: number; outputTokens: number; totalTokens: number };
+    rawFindings?: string | null;
+    totalToolCalls?: number;
+    executionTimeMs?: number;
+    error?: string;
+}
+
+export interface RealtimeAgentInput {
+    repositoryId: string;
+    accessToken: string;
+    onEvent?: (event: StreamEvent) => void;
+}
+
+export interface RealtimeAgentOutput {
+    rawFindings: string | null;
+    intermediateSteps: any[];
+    totalToolCalls: number;
+    executionTimeMs: number;
+    error?: string;
+}
+
+interface AgentLogStep {
+    stepNumber: number;
+    type: "decision" | "tool_call" | "tool_response" | "agent_thought" | "error";
+    timestamp: string;
+    toolName?: string;
+    toolInput?: unknown;
+    toolOutput?: string;
+    reasoning?: string;
+}
+
+interface AgentLog {
+    repositoryId: string;
+    startTime: string;
+    endTime?: string;
+    totalSteps: number;
+    steps: AgentLogStep[];
+    finalReport?: unknown;
+    error?: string;
+}
+
+function normalizeToolName(name: unknown): string | null {
+    if (typeof name !== "string") return null;
+    const trimmed = name.trim();
+    if (!trimmed) return null;
+    const lower = trimmed.toLowerCase();
+    if (lower === "dynamicstructuredtool" || lower === "structuredtool") return null;
+    return trimmed;
+}
+
+function resolveCallbackToolName(tool: any, fallback?: string): string {
+    const idCandidate = Array.isArray(tool?.id)
+        ? tool.id[tool.id.length - 1]
+        : tool?.id;
+
+    return (
+        normalizeToolName(tool?.name) ??
+        normalizeToolName(tool?.lc_kwargs?.name) ??
+        normalizeToolName(idCandidate) ??
+        normalizeToolName(fallback) ??
+        "unknown"
+    );
+}
+
+const SYSTEM_PROMPT = `You are an elite realtime scalability analyst specializing in React/Next.js applications and backend realtime systems. Your mission is to analyze GitHub repositories and surface realtime risks that will cause WebSocket connection exhaustion, message fan-out overload, dropped messages, stale client state, or state synchronization failures as concurrent users and messages per second grow.
+
+REPOSITORY CONTEXT:
+- Repository: {repoFullName}
+- Framework: {framework} (React/Next.js expected)
+- Default Branch: {defaultBranch}
+- Package.json Dependencies: {packageJson}
+- Full Repository File Tree: {repoContent}
+33
+STRATEGIC TOOL USAGE PHILOSOPHY:
+**Use tools ONLY when critical information cannot be inferred from existing context**
+- Start with provided package.json and repository file tree
+- The file tree above is the FULL project structure - use it to identify realtime targets before making tool calls
+- Make conservative findings from concrete evidence; if evidence is thin, report INFO instead of exploring endlessly
+- Tool calls should be surgical, not exhaustive
+- HARD LIMIT: use at most 15 tool calls total
+- After using 15 tool calls, stop immediately and return the findings digest from evidence gathered
+- Do not call another tool just to improve confidence, find line numbers, or validate a low-impact suspicion
+
+AVAILABLE TOOLS:
+1. **getFileContent(path)** - Read likely realtime hotspots: websocket/socket routes, SSE routes, pub/sub config, presence/state sync code, chat/collaboration/notifications/live dashboard files
+2. **searchCode(query)** - Use only when package.json and file tree are not enough to choose target files. Choose compact repository-specific searches. Use at most 3 searches total.
+
+---
+
+## ANALYSIS FRAMEWORK - REALTIME SCALE SPECIALIST
+
+### NON-NEGOTIABLE SCOPE GATE - REALTIME ONLY
+
+Only investigate and report findings that directly affect realtime connections, message fan-out, pub/sub delivery, backpressure, presence, live state synchronization, reconnect/replay behavior, or dropped realtime messages.
+
+Before reading a file, decide whether it is a realtime target. A file is in scope only when it contains or configures one of these:
+-> WebSocket servers/clients: ws, websocket, socket.io, uWebSockets, native WebSocket, channels/rooms/namespaces
+-> Server-Sent Events or streaming routes used for live updates
+-> Pub/sub or realtime infrastructure: Redis pub/sub, Pusher, Ably, Supabase Realtime, Firebase, Liveblocks, PartyKit, Convex, NATS, Kafka used for live messaging
+-> Fan-out logic: broadcast, emit to room, publish to channel, per-connection loops, notification streams, chat/collab/live dashboard updates
+-> State synchronization: presence, cursor/document sync, optimistic updates, versioning, conflict handling, replay/catch-up after reconnect
+-> Backpressure and reliability: per-client queues, send buffers, rate limits, slow consumer handling, drop policy, reconnect replay, sequence numbers, ACKs
+
+Ignore and do not report non-realtime findings, even if they are real issues:
+-> Generic database performance unless it directly blocks realtime fan-out/state sync
+-> Payment correctness, authentication/session issues, generic validation, static UI
+-> One-off HTTP request/response APIs that do not maintain live connections or push updates
+
+If a possible issue is adjacent, ask: "Would fixing this improve concurrent connection handling, messages per second, fan-out reliability, backpressure, or realtime state consistency?" If no, discard it silently.
+
+### PHASE 1 - Realtime Stack Understanding (No Tools)
+
+Infer from package.json and file tree:
+- realtimeLibraries: socket.io | ws | pusher | ably | supabase-realtime | firebase | liveblocks | partysocket/partykit | convex | sse | redis pubsub | NONE
+- transport: websocket | SSE | managed provider | polling | unknown
+- connectionModel: single Node process | managed provider | serverless route | edge route | unknown
+- pubsubArchitecture: in-memory | Redis/pubsub | provider channels | database polling | none | unknown
+- stateSyncSignals: presence, room, channel, cursor, document, notification, chat, live, collaboration, dashboard
+- reliabilitySignals: reconnect, replay, sequence, ack, heartbeat, ping/pong, backpressure, rate limit, queue, buffer
+
+No realtime-looking dependencies or files = report INFO and stop without tools.
+
+### PHASE 2 - Identify Investigation Targets
+
+Build a target list from package.json and file tree first.
+Prefer files that own connection lifecycle or fan-out:
+- CRITICAL: websocket/socket server, SSE stream route, pubsub adapter/config, room/channel broadcast code, presence/state sync server logic
+- HIGH: realtime client provider/hooks, chat/collaboration/notifications/live dashboard update paths, reconnect/replay logic
+- MEDIUM: helper utilities used by critical/high realtime paths
+- LOW/SKIP: static UI, simple CRUD routes, unrelated server actions
+
+Use searchCode only if injected context is not enough to choose target files. Pick your own compact query based on repository signals. Do not run one search per keyword.
+Read highest-impact files first. Stop expanding when the failure mode is clear.
+
+### PHASE 3 - Deep Realtime Analysis
+
+For each selected target, inspect:
+
+WebSocket Connection Limits:
+-> single-node WebSocket server with in-memory connection/room state
+-> serverless/Next.js route trying to hold long-lived WebSocket connections
+-> no heartbeat/ping-pong or stale connection cleanup
+-> no connection limits, rate limits, auth gating, or per-tenant isolation
+
+Message Fan-out:
+-> broadcast loops over every connected client or every room member with no batching/backpressure
+-> no pub/sub adapter for multi-instance fan-out
+-> writes messages synchronously to all sockets before returning
+-> no slow-client handling or send-buffer limits
+
+State Synchronization:
+-> in-memory presence/document/session state with no shared store
+-> no sequence numbers, versions, ACKs, replay/catch-up, or conflict handling
+-> reconnect loses missed messages or produces stale state
+-> optimistic client state with no authoritative reconciliation
+
+Pub/Sub Architecture:
+-> no Redis/provider adapter when horizontal scaling is required
+-> database polling used as realtime transport without throttling
+-> no channel partitioning or tenant isolation
+-> no clear strategy for multiple app instances
+
+Backpressure Handling:
+-> no per-client queue size, drop policy, compression/rate limit, or disconnect slow consumer strategy
+-> no message size limit
+-> no messages-per-second limit by user/room/channel
+
+Scale Basis:
+For each core flow, estimate the failure mode using:
+-> concurrent connections
+-> messages per second
+-> fan-out multiplier = producers x recipients
+-> shared-state requirements
+State what fails first: connection limit, CPU, memory, slow clients, missed messages, stale state, pub/sub bottleneck, or dropped data.
+
+### PHASE 4 - Synthesis
+
+After finding 3 CRITICAL issues, stop expanding to optional files. Report every finding already discovered.
+If the tool budget is exhausted, stop and synthesize. Never continue tool use past the budget.
+
+For every meaningful finding, answer: "Can this handle many concurrent connections without dropping messages/data?"
+
+---
+
+## OUTPUT REQUIREMENTS
+
+Return a compact findings digest, not a full report.
+Do NOT include executive summary, stack recap, priority list, code snippets, or follow-up offers.
+Do NOT call finalReport or any report tool. Output plain structured text only.
+
+Use exactly this format:
+
+--- CRITICAL FINDINGS ---
+
+[RT-1] Short title, max 10 words
+File: path/to/file.ts (Lx-Ly)
+Evidence: max 2 sentences. State the exact realtime pattern and why it fails.
+Impact: max 1 sentence. Include what breaks with high connections/messages.
+Fix: max 1 sentence. State the concrete first fix.
+
+--- WARNING FINDINGS ---
+
+[RT-2] Short title, max 10 words
+File: path/to/file.ts (Lx-Ly)
+Evidence: max 2 sentences.
+Impact: max 1 sentence.
+Fix: max 1 sentence.
+
+--- INFO ---
+
+[RT-3] Short title, max 10 words
+File: path/to/file.ts or package/tree context
+Evidence: max 1 sentence.
+
+Severity definitions:
+- CRITICAL: proven connection exhaustion, single-node state/fan-out bottleneck, message loss, missing horizontal scaling for core realtime flow, stale/corrupt shared state, or unbounded fan-out/backpressure failure.
+- WARNING: proven realtime scaling risk that degrades with concurrent connections/messages but is not an immediate outage.
+- INFO: useful context, healthy observations, or no realtime surface found.
+
+Compression rules:
+- Report every distinct in-scope realtime finding discovered. Drop non-realtime findings silently.
+- Merge only genuinely overlapping instances of the same root cause.
+- Target 3-6 findings when possible.
+- Sort by severity, then concurrent-connection/message-loss impact.
+- Each finding must preserve file, evidence, impact, and fix.
+- Maximum 120 words per CRITICAL finding and 90 words per WARNING finding.
+- No markdown tables. No nested bullets. No long explanations.
+
+When investigation is complete, output findings as the final message only.`;
+
+const realtimeAgentTools = [
+    searchCodeTool,
+    getFileContentTool,
+];
+
+export async function runRealtimeAgent(
+    input: RealtimeAgentInput
+): Promise<RealtimeAgentOutput> {
+    const { repositoryId, accessToken, onEvent } = input;
+    const startTime = Date.now();
+
+    const agentLog: AgentLog = {
+        repositoryId,
+        startTime: new Date().toISOString(),
+        totalSteps: 0,
+        steps: [],
+    };
+    let stepCounter = 0;
+    let cumulativeInputTokens = 0;
+    let cumulativeOutputTokens = 0;
+    let lastToolName = "unknown";
+    let pendingDecisionReasoning: string | null = null;
+
+    const emit = (event: StreamEvent) => {
+        try { onEvent?.(event); } catch { /* ignore stream errors */ }
+    };
+
+    console.log(`[realtimeAgent] Starting investigation for: ${repositoryId}`);
+
+    emit({
+        type: "agent_start",
+        stepNumber: 0,
+        timestamp: new Date().toISOString(),
+        elapsedMs: 0,
+        reasoning: `Starting Realtime agent for ${repositoryId}`,
+    });
+
+    try {
+        const repository = await prisma.repository.findFirst({
+            where: {
+                OR: [
+                    { id: repositoryId },
+                    { repositoryId },
+                ],
+            },
+            select: {
+                fullName: true,
+                defaultBranch: true,
+                packageJson: true,
+                repoContent: true,
+                framework: true,
+            },
+        });
+
+        if (!repository || !repository.fullName) {
+            return {
+                rawFindings: null,
+                intermediateSteps: [],
+                totalToolCalls: 0,
+                executionTimeMs: Date.now() - startTime,
+                error: `Repository "${repositoryId}" not found in database. Run framework analysis first.`,
+            };
+        }
+
+        const [owner, repo] = repository.fullName.split("/");
+        const branch = repository.defaultBranch ?? "main";
+        const framework = repository.framework ?? "unknown";
+        const packageJsonStr = repository.packageJson
+            ? JSON.stringify(repository.packageJson).slice(0, 3000)
+            : "Not available";
+        const repoContentStr = repository.repoContent
+            ? JSON.stringify(repository.repoContent)
+            : "Not available";
+
+        console.log(`[realtimeAgent] Repo: ${repository.fullName} (${branch})`);
+
+        const agent = createAgent({
+            model: gpt5Mini,
+            tools: realtimeAgentTools,
+            systemPrompt: SYSTEM_PROMPT,
+            contextSchema: githubContextSchema,
+        });
+
+        const result = await agent.invoke(
+            {
+                messages: [
+                    {
+                        role: "user",
+                        content:
+                            `Analyze the repository ${repository.fullName} for realtime scale risks.
+
+REPOSITORY CONTEXT:
+- Framework: ${framework}
+- Package.json dependencies: ${packageJsonStr}
+- Full repository file tree: ${repoContentStr}
+
+Primary objectives:
+1. WebSocket/SSE connection limits
+2. Message fan-out and pub/sub architecture
+3. State synchronization and reconnect correctness
+4. Single-node realtime server risks
+5. Horizontal scaling strategy
+6. Backpressure handling for slow clients and message bursts
+
+Tool constraints:
+- HARD LIMIT: use at most 15 tool calls total, then stop and return the digest
+- Decide yourself whether searchCode is needed; do not follow a preset search query
+- Use package.json and file tree before tools
+- If package.json and file tree show no realtime surface, return INFO without tool calls
+
+Scope constraint: Only report realtime architecture risks: WebSocket/SSE connection scaling, message fan-out, pub/sub, state sync, reconnect/replay, single-node realtime state, and backpressure. Ignore unrelated issues silently.
+Key question: Can we handle many concurrent connections without dropping messages/data?
+
+Return the compact findings digest required by the system prompt. Do not call any report tool. Do not include executive summary, stack recap, priority list, code snippets, or follow-up offers. If you are near the tool limit, stop using tools and synthesize from available evidence.`,
+                    },
+                ],
+            },
+            {
+                context: { owner, repo, branch, accessToken },
+                recursionLimit: 40,
+                callbacks: [
+                    {
+                        handleAgentAction(action: any, _runId: string, _parentRunId?: string, _tags?: string[], metadata?: Record<string, any>) {
+                            if (metadata?.langgraph_step != null) {
+                                stepCounter = metadata.langgraph_step;
+                            } else {
+                                stepCounter++;
+                            }
+                            const toolName = resolveCallbackToolName(action, action.tool);
+                            lastToolName = toolName;
+                            pendingDecisionReasoning =
+                                typeof action.log === "string" && action.log.trim().length > 0
+                                    ? action.log.trim()
+                                    : null;
+                            agentLog.steps.push({
+                                stepNumber: stepCounter,
+                                type: "decision",
+                                timestamp: new Date().toISOString(),
+                                toolName,
+                                toolInput: action.toolInput,
+                                reasoning: action.log,
+                            });
+                            console.log("\n------------------------------------------");
+                            console.log(`[Step ${stepCounter}] AGENT DECISION`);
+                            console.log(`Tool: ${toolName}`);
+                            console.log(`Reasoning: ${action.log}`);
+                            console.log("------------------------------------------");
+                            if (pendingDecisionReasoning) {
+                                emit({
+                                    type: "agent_thought",
+                                    stepNumber: stepCounter,
+                                    timestamp: new Date().toISOString(),
+                                    elapsedMs: Date.now() - startTime,
+                                    toolName,
+                                    reasoning: pendingDecisionReasoning,
+                                    cumulativeTokens: {
+                                        inputTokens: cumulativeInputTokens,
+                                        outputTokens: cumulativeOutputTokens,
+                                        totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                                    },
+                                });
+                            }
+                        },
+                        handleToolStart(tool: any, input: string, _runId?: string, _parentRunId?: string, _tags?: string[], metadata?: Record<string, any>) {
+                            if (metadata?.langgraph_step != null) {
+                                stepCounter = metadata.langgraph_step;
+                            }
+                            const toolName = resolveCallbackToolName(tool, lastToolName);
+                            lastToolName = toolName;
+                            let parsedInput: unknown = input;
+                            try {
+                                parsedInput = JSON.parse(input);
+                            } catch {
+                                // keep raw string
+                            }
+
+                            console.log(`\n[Step ${stepCounter}/50] -> Calling ${toolName}`);
+                            console.log(`Input: ${JSON.stringify(parsedInput, null, 2).slice(0, 300)}`);
+
+                            emit({
+                                type: "tool_start",
+                                stepNumber: stepCounter,
+                                timestamp: new Date().toISOString(),
+                                elapsedMs: Date.now() - startTime,
+                                toolName,
+                                toolInput: parsedInput,
+                                cumulativeTokens: {
+                                    inputTokens: cumulativeInputTokens,
+                                    outputTokens: cumulativeOutputTokens,
+                                    totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                                },
+                            });
+                            pendingDecisionReasoning = null;
+                        },
+                        handleToolEnd(output: any) {
+                            const outputStr: string =
+                                typeof output === "string"
+                                    ? output
+                                    : JSON.stringify(output, null, 2) ?? "";
+                            const lastDecisionStep = [...agentLog.steps]
+                                .reverse()
+                                .find((s) => s.type === "decision");
+                            if (lastDecisionStep) {
+                                lastDecisionStep.toolOutput =
+                                    outputStr.length > 3000
+                                        ? outputStr.slice(0, 3000) + "\n... [truncated]"
+                                        : outputStr;
+                            }
+
+                            console.log(`[Step ${stepCounter}] <- Tool response: ${outputStr.length} chars`);
+                            console.log(`Preview: ${outputStr.slice(0, 500)}`);
+
+                            emit({
+                                type: "tool_end",
+                                stepNumber: stepCounter,
+                                timestamp: new Date().toISOString(),
+                                elapsedMs: Date.now() - startTime,
+                                toolName: lastToolName,
+                                toolOutput: outputStr.length > 5000
+                                    ? outputStr.slice(0, 5000) + "\n... [truncated]"
+                                    : outputStr,
+                                toolOutputLength: outputStr.length,
+                                cumulativeTokens: {
+                                    inputTokens: cumulativeInputTokens,
+                                    outputTokens: cumulativeOutputTokens,
+                                    totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                                },
+                            });
+                        },
+                        handleLLMEnd(output: any, _runId?: string, _parentRunId?: string, _tags?: string[], metadata?: Record<string, any>) {
+                            if (metadata?.langgraph_step != null) {
+                                stepCounter = metadata.langgraph_step;
+                            }
+
+                            const usage = output?.llmOutput?.tokenUsage
+                                ?? output?.llmOutput?.usage
+                                ?? output?.llmOutput?.estimatedTokenUsage
+                                ?? null;
+
+                            let inputTokens = 0;
+                            let outputTokens = 0;
+                            if (usage) {
+                                inputTokens = usage.promptTokens ?? usage.prompt_tokens ?? usage.inputTokens ?? usage.input_tokens ?? 0;
+                                outputTokens = usage.completionTokens ?? usage.completion_tokens ?? usage.outputTokens ?? usage.output_tokens ?? 0;
+                            }
+                            cumulativeInputTokens += inputTokens;
+                            cumulativeOutputTokens += outputTokens;
+
+                            const generation = output.generations?.[0]?.[0];
+                            const message = (generation as any)?.message;
+                            const fnCall = message?.additional_kwargs?.function_call;
+                            if (fnCall) {
+                                console.log(`[Step ${stepCounter}] Agent selecting: ${fnCall.name}`);
+                            } else {
+                                const content = String(message?.content ?? "").trim();
+                                if (content.length > 0) {
+                                    agentLog.steps.push({
+                                        stepNumber: stepCounter,
+                                        type: "agent_thought",
+                                        timestamp: new Date().toISOString(),
+                                        reasoning: content.slice(0, 1000),
+                                    });
+                                    console.log(`[Step ${stepCounter}] Agent thought: ${content.slice(0, 300)}`);
+
+                                    emit({
+                                        type: "agent_thought",
+                                        stepNumber: stepCounter,
+                                        timestamp: new Date().toISOString(),
+                                        elapsedMs: Date.now() - startTime,
+                                        reasoning: content.slice(0, 2000),
+                                        cumulativeTokens: {
+                                            inputTokens: cumulativeInputTokens,
+                                            outputTokens: cumulativeOutputTokens,
+                                            totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                                        },
+                                    });
+                                }
+                            }
+
+                            emit({
+                                type: "llm_end",
+                                stepNumber: stepCounter,
+                                timestamp: new Date().toISOString(),
+                                elapsedMs: Date.now() - startTime,
+                                tokenUsage: {
+                                    inputTokens,
+                                    outputTokens,
+                                    totalTokens: inputTokens + outputTokens,
+                                },
+                                cumulativeTokens: {
+                                    inputTokens: cumulativeInputTokens,
+                                    outputTokens: cumulativeOutputTokens,
+                                    totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                                },
+                            });
+                        },
+                        handleChainError(error: Error) {
+                            agentLog.steps.push({
+                                stepNumber: ++stepCounter,
+                                type: "error",
+                                timestamp: new Date().toISOString(),
+                                reasoning: error.message,
+                            });
+                            agentLog.error = error.message;
+                            console.log(`\n[realtimeAgent] CHAIN ERROR: ${error.message}`);
+
+                            emit({
+                                type: "error",
+                                stepNumber: stepCounter,
+                                timestamp: new Date().toISOString(),
+                                elapsedMs: Date.now() - startTime,
+                                error: error.message,
+                                cumulativeTokens: {
+                                    inputTokens: cumulativeInputTokens,
+                                    outputTokens: cumulativeOutputTokens,
+                                    totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                                },
+                            });
+                        },
+                    },
+                ],
+            }
+        );
+
+        const messages = result.messages ?? [];
+        const toolMessages = messages.filter(
+            (msg: any) => msg.role === "tool" || msg.tool_calls?.length > 0
+        );
+        const totalToolCalls = toolMessages.length;
+
+        const lastAiMessage = [...messages]
+            .reverse()
+            .find((msg: any) => msg._getType?.() === "ai" || msg.role === "assistant");
+
+        const rawFindings: string =
+            typeof lastAiMessage?.content === "string"
+                ? lastAiMessage.content
+                : JSON.stringify(lastAiMessage?.content ?? "");
+
+        const executionTimeMs = Date.now() - startTime;
+
+        if (!rawFindings || rawFindings.trim().length === 0) {
+            console.error("[realtimeAgent] Error: Agent completed without returning any findings");
+            return {
+                rawFindings: null,
+                intermediateSteps: messages,
+                totalToolCalls,
+                executionTimeMs,
+                error:
+                    "Agent completed without returning findings. " +
+                    "Check intermediate steps for partial investigation.",
+            };
+        }
+
+        agentLog.endTime = new Date().toISOString();
+        agentLog.totalSteps = stepCounter;
+        agentLog.finalReport = { rawFindings };
+
+        console.log(
+            `[realtimeAgent] Complete. Findings length: ${rawFindings.length} chars, ${totalToolCalls} tool calls`
+        );
+        console.log(`[realtimeAgent] Execution time: ${executionTimeMs}ms`);
+
+        const logDir = path.join(process.cwd(), "agent-logs");
+        if (!fs.existsSync(logDir)) {
+            fs.mkdirSync(logDir, { recursive: true });
+        }
+
+        const logFileName = `realtime-agent-${repositoryId}-${Date.now()}.json`;
+        const logPath = path.join(logDir, logFileName);
+        fs.writeFileSync(logPath, JSON.stringify(agentLog, null, 2));
+
+        console.log("\n[realtimeAgent] ----------------------------------");
+        console.log("[realtimeAgent] Full log written to:");
+        console.log(`[realtimeAgent] ${logPath}`);
+        console.log(`[realtimeAgent] Total steps: ${stepCounter}`);
+        console.log("[realtimeAgent] ----------------------------------");
+
+        emit({
+            type: "done",
+            stepNumber: stepCounter,
+            timestamp: new Date().toISOString(),
+            elapsedMs: executionTimeMs,
+            rawFindings,
+            totalToolCalls,
+            executionTimeMs,
+            cumulativeTokens: {
+                inputTokens: cumulativeInputTokens,
+                outputTokens: cumulativeOutputTokens,
+                totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+            },
+        });
+
+        return {
+            rawFindings,
+            intermediateSteps: messages,
+            totalToolCalls,
+            executionTimeMs,
+        };
+    } catch (error) {
+        const executionTimeMs = Date.now() - startTime;
+        const message =
+            error instanceof Error ? error.message : "Unknown error occurred";
+
+        agentLog.endTime = new Date().toISOString();
+        agentLog.totalSteps = stepCounter;
+        agentLog.error = message;
+
+        const logDir = path.join(process.cwd(), "agent-logs");
+        if (!fs.existsSync(logDir)) {
+            fs.mkdirSync(logDir, { recursive: true });
+        }
+
+        const logFileName = `realtime-agent-ERROR-${repositoryId}-${Date.now()}.json`;
+        const logPath = path.join(logDir, logFileName);
+        fs.writeFileSync(logPath, JSON.stringify(agentLog, null, 2));
+        console.error(`[realtimeAgent] Error log written to: ${logPath}`);
+
+        emit({
+            type: "done",
+            stepNumber: stepCounter,
+            timestamp: new Date().toISOString(),
+            elapsedMs: executionTimeMs,
+            rawFindings: null,
+            totalToolCalls: 0,
+            executionTimeMs,
+            error: message,
+            cumulativeTokens: {
+                inputTokens: cumulativeInputTokens,
+                outputTokens: cumulativeOutputTokens,
+                totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+            },
+        });
+
+        return {
+            rawFindings: null,
+            intermediateSteps: [],
+            totalToolCalls: 0,
+            executionTimeMs,
+            error: message,
+        };
+    }
+}
