@@ -4,7 +4,6 @@ import type React from "react"
 
 import { useState, useEffect } from "react"
 import { ArrowRight, Github } from "lucide-react"
-import { scrapeWebsite } from "../../actions/firecrawl/get-sub-links"
 import { GitHubRepositorySelector } from "./github-repository-selector"
 import { toast } from "sonner"
 
@@ -20,13 +19,13 @@ export default function PromptInput({ placeholder, buttonText, mode }: PromptInp
   const [isLoading, setIsLoading] = useState(false)
   const [showRepoSelector, setShowRepoSelector] = useState(false)
   const [githubConnected, setGithubConnected] = useState(false)
-  const [checkingGithub, setCheckingGithub] = useState(false)
+  const [githubUsername, setGithubUsername] = useState<string | null>(null)
+  const [checkingGithub, setCheckingGithub] = useState(true)
+  const [disconnecting, setDisconnecting] = useState(false)
 
   useEffect(() => {
-    if (mode === "codebase") {
-      checkGitHubStatus()
-    }
-  }, [mode])
+    checkGitHubStatus()
+  }, [])
 
   const checkGitHubStatus = async () => {
     try {
@@ -35,6 +34,7 @@ export default function PromptInput({ placeholder, buttonText, mode }: PromptInp
       if (response.ok) {
         const data = await response.json()
         setGithubConnected(data.connected)
+        setGithubUsername(data.username ?? null)
       }
     } catch (error) {
       console.error("Error checking GitHub status:", error)
@@ -43,32 +43,44 @@ export default function PromptInput({ placeholder, buttonText, mode }: PromptInp
     }
   }
 
+  const handleConnect = () => {
+    window.location.href = "/api/github/install"
+  }
+
+  const handleDisconnect = async () => {
+    try {
+      setDisconnecting(true)
+      const response = await fetch("/api/github/disconnect", { method: "POST" })
+      if (!response.ok) throw new Error("Failed to disconnect")
+      toast.success("GitHub account disconnected")
+      setGithubConnected(false)
+      setGithubUsername(null)
+    } catch (error) {
+      console.error("Error disconnecting GitHub:", error)
+      toast.error("Failed to disconnect GitHub account")
+    } finally {
+      setDisconnecting(false)
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-
-    if (mode === "brand" && inputValue.trim()) {
+    if (inputValue.trim()) {
       setIsLoading(true)
       try {
-        await scrapeWebsite(inputValue.trim())
+        console.log(`[codebase] Submitted:`, inputValue)
+        // TODO: Handle codebase URL analysis
       } catch (error) {
         console.error("Unexpected error:", error)
       } finally {
         setIsLoading(false)
       }
-    } else {
-      console.log(`[${mode}] Submitted:`, inputValue)
-      // Handle other modes here
     }
   }
 
   const handleImportRepository = () => {
     if (!githubConnected) {
-      toast.error("Please connect your GitHub account first", {
-        action: {
-          label: "Go to Dashboard",
-          onClick: () => window.location.href = "/dashboard",
-        },
-      })
+      handleConnect()
       return
     }
     setShowRepoSelector(true)
@@ -80,11 +92,9 @@ export default function PromptInput({ placeholder, buttonText, mode }: PromptInp
     // TODO: Implement repository analysis logic
   }
 
-  const secondaryButtonText =
-    mode === "brand" ? "Import Company Website" : mode === "codebase" ? "Import GitHub Repository" : null
-
   return (
     <div className="w-full max-w-3xl">
+
       {/* Main Input */}
       <form onSubmit={handleSubmit} className="mb-4">
         <div className="relative group">
@@ -123,33 +133,29 @@ export default function PromptInput({ placeholder, buttonText, mode }: PromptInp
         </div>
       </form>
 
-      {/* Secondary Action */}
-      {secondaryButtonText && (
-        <div className="flex items-center justify-center gap-4">
-          <div className="h-px bg-[#22c55e]/30 flex-1" />
-          <span className="text-xs text-muted-foreground uppercase tracking-wide">OR</span>
-          <div className="h-px bg-[#22c55e]/30 flex-1" />
-        </div>
-      )}
+      {/* OR Divider */}
+      <div className="flex items-center justify-center gap-4">
+        <div className="h-px bg-[#22c55e]/30 flex-1" />
+        <span className="text-xs text-muted-foreground uppercase tracking-wide">OR</span>
+        <div className="h-px bg-[#22c55e]/30 flex-1" />
+      </div>
 
-      {secondaryButtonText && (
-        <button
-          onClick={mode === "codebase" ? handleImportRepository : undefined}
-          disabled={mode === "codebase" && checkingGithub}
-          className="w-full mt-4 px-6 py-3 border border-[#22c55e]/40 hover:border-[#22c55e]/70 hover:shadow-[0_0_15px_rgba(34,197,94,0.3)] text-muted-foreground hover:text-[#22c55e] transition-all duration-200 rounded-xl font-medium text-sm bg-transparent hover:bg-[#22c55e]/5 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {mode === "codebase" && <Github className="w-4 h-4" />}
-          {secondaryButtonText}
-        </button>
-      )}
+      {/* Import Repository Button */}
+      <button
+        onClick={handleImportRepository}
+        disabled={checkingGithub}
+        className="w-full mt-4 px-6 py-3 border border-[#22c55e]/40 hover:border-[#22c55e]/70 hover:shadow-[0_0_15px_rgba(34,197,94,0.3)] text-muted-foreground hover:text-[#22c55e] transition-all duration-200 rounded-xl font-medium text-sm bg-transparent hover:bg-[#22c55e]/5 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        <Github className="w-4 h-4" />
+        {githubConnected ? "Import GitHub Repository" : "Connect GitHub & Import Repository"}
+      </button>
 
-      {mode === "codebase" && (
-        <GitHubRepositorySelector
-          open={showRepoSelector}
-          onOpenChange={setShowRepoSelector}
-          onSelectRepository={handleSelectRepository}
-        />
-      )}
+      <GitHubRepositorySelector
+        open={showRepoSelector}
+        onOpenChange={setShowRepoSelector}
+        onSelectRepository={handleSelectRepository}
+      />
     </div>
   )
 }
+
