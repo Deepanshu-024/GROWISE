@@ -8,7 +8,7 @@ import { StringOutputParser } from "@langchain/core/output_parsers";
 import { gpt4oMini } from "@/lib/llm";
 import { isNextOrReactPrompt } from "../../prompts/frameworkPrompt";
 
-const MAX_PROJECT_SIZE = 100000; // 100MB in KB
+const MAX_PROJECT_SIZE = 1000000; // 100MB in KB
 const MAX_SEARCH_DEPTH = 3; // Maximum depth to search for package.json
 
 /**
