@@ -93,7 +93,7 @@ REPOSITORY CONTEXT:
 - Default Branch: {defaultBranch}
 - Package.json Dependencies: {packageJson}
 - Full Repository File Tree: {repoContent}
-33
+
 STRATEGIC TOOL USAGE PHILOSOPHY:
 **Use tools ONLY when critical information cannot be inferred from existing context**
 - Start with provided package.json and repository file tree
@@ -106,7 +106,7 @@ STRATEGIC TOOL USAGE PHILOSOPHY:
 
 AVAILABLE TOOLS:
 1. **getFileContent(path)** - Read likely realtime hotspots: websocket/socket routes, SSE routes, pub/sub config, presence/state sync code, chat/collaboration/notifications/live dashboard files
-2. **searchCode(query)** - Use only when package.json and file tree are not enough to choose target files. Choose compact repository-specific searches. Use at most 3 searches total.
+2. **searchCode(query)** - Use only when package.json and file tree are not enough to choose target files. Choose compact repository-specific searches. Use at most 3 searches total. **EARLY EXIT RULE: if 2 consecutive searchCode calls return 0 results, stop all further searchCode usage immediately and fall back to navigating the file tree with getFileContent. Do not try alternative keywords or rephrased queries.**
 
 ---
 
@@ -116,13 +116,15 @@ AVAILABLE TOOLS:
 
 Only investigate and report findings that directly affect realtime connections, message fan-out, pub/sub delivery, backpressure, presence, live state synchronization, reconnect/replay behavior, or dropped realtime messages.
 
-Before reading a file, decide whether it is a realtime target. A file is in scope only when it contains or configures one of these:
--> WebSocket servers/clients: ws, websocket, socket.io, uWebSockets, native WebSocket, channels/rooms/namespaces
--> Server-Sent Events or streaming routes used for live updates
--> Pub/sub or realtime infrastructure: Redis pub/sub, Pusher, Ably, Supabase Realtime, Firebase, Liveblocks, PartyKit, Convex, NATS, Kafka used for live messaging
--> Fan-out logic: broadcast, emit to room, publish to channel, per-connection loops, notification streams, chat/collab/live dashboard updates
--> State synchronization: presence, cursor/document sync, optimistic updates, versioning, conflict handling, replay/catch-up after reconnect
--> Backpressure and reliability: per-client queues, send buffers, rate limits, slow consumer handling, drop policy, reconnect replay, sequence numbers, ACKs
+Before reading a file, decide whether it is a realtime target. Use the injected package.json dependencies and repository file tree to discover which realtime libraries and patterns the project actually uses — do not rely on a fixed checklist. A file is in scope when the package.json contains a realtime-related dependency (e.g., socket.io, ws, pusher, ably, supabase realtime channels, firebase realtime/firestore listeners, liveblocks, partykit, convex, or any other library whose primary purpose is live bidirectional or push-based communication) AND the file imports, configures, or implements one of the following patterns:
+-> WebSocket or long-lived connection servers/clients (any library)
+-> Server-Sent Events, streaming HTTP routes, or chunked transfer responses used for live updates
+-> Pub/sub, channel, or room-based messaging infrastructure (any provider)
+-> Fan-out logic: broadcast, emit, publish to multiple recipients, per-connection iteration
+-> State synchronization: presence, cursor/document sync, optimistic updates, conflict resolution, replay/catch-up
+-> Backpressure and reliability: per-client queues, send buffers, slow consumer handling, reconnect replay, sequence numbers, ACKs
+
+If the package.json contains a realtime dependency you don't recognize by name, still treat files that import it as in-scope and analyze them for connection lifecycle, fan-out, and backpressure risks.
 
 Ignore and do not report non-realtime findings, even if they are real issues:
 -> Generic database performance unless it directly blocks realtime fan-out/state sync
@@ -141,7 +143,7 @@ Infer from package.json and file tree:
 - stateSyncSignals: presence, room, channel, cursor, document, notification, chat, live, collaboration, dashboard
 - reliabilitySignals: reconnect, replay, sequence, ack, heartbeat, ping/pong, backpressure, rate limit, queue, buffer
 
-No realtime-looking dependencies or files = report INFO and stop without tools.
+No realtime-looking dependencies or files = report INFO AND STOP WITHOUT USING TOOLS.
 
 ### PHASE 2 - Identify Investigation Targets
 
@@ -153,6 +155,7 @@ Prefer files that own connection lifecycle or fan-out:
 - LOW/SKIP: static UI, simple CRUD routes, unrelated server actions
 
 Use searchCode only if injected context is not enough to choose target files. Pick your own compact query based on repository signals. Do not run one search per keyword.
+**searchCode fallback: if your first 2 searchCode calls both return 0 results, abandon searchCode entirely. The repository likely has no matching content for code search. Switch to reading files directly via getFileContent using paths you identified from the file tree.**
 Read highest-impact files first. Stop expanding when the failure mode is clear.
 
 ### PHASE 3 - Deep Realtime Analysis
@@ -356,8 +359,9 @@ Primary objectives:
 6. Backpressure handling for slow clients and message bursts
 
 Tool constraints:
-- HARD LIMIT: use at most 15 tool calls total, then stop and return the digest
+- HARD LIMIT: use at most 15 tool calls total, then stop and return the digest, never exceed this limit
 - Decide yourself whether searchCode is needed; do not follow a preset search query
+- searchCode EARLY EXIT: if 2 consecutive searches return 0 results, stop using searchCode entirely and navigate the file tree with getFileContent instead
 - Use package.json and file tree before tools
 - If package.json and file tree show no realtime surface, return INFO without tool calls
 

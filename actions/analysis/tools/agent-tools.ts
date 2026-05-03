@@ -230,6 +230,10 @@ ${content}`;
 // ─── Tool 3: Search Code ──────────────────────────────────────────────────────
 // Agent specifies search query + optional filters — owner/repo/accessToken come from context.
 
+// Rate-limit guard for GitHub Code Search API (10 req/min limit)
+let _lastSearchCodeCallMs = 0;
+const SEARCH_CODE_MIN_INTERVAL_MS = 6_000; // 6 seconds → max ~10 calls/min
+
 export const searchCodeTool = tool(
   async (input, config): Promise<string> => {
     const { owner, repo, accessToken } = getGitHubContext(config);
@@ -240,6 +244,15 @@ export const searchCodeTool = tool(
       path?: string | null;
     };
     try {
+      // Enforce minimum interval between Code Search API calls
+      const now = Date.now();
+      const elapsed = now - _lastSearchCodeCallMs;
+      if (_lastSearchCodeCallMs > 0 && elapsed < SEARCH_CODE_MIN_INTERVAL_MS) {
+        const waitMs = SEARCH_CODE_MIN_INTERVAL_MS - elapsed;
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+      }
+      _lastSearchCodeCallMs = Date.now();
+
       // Build search query with filters
       let searchQuery = `${query} repo:${owner}/${repo}`;
 
@@ -257,13 +270,29 @@ export const searchCodeTool = tool(
 
       const url = `https://api.github.com/search/code?q=${encodeURIComponent(searchQuery)}&per_page=30`;
 
-      const response = await fetch(url, {
+      let response = await fetch(url, {
         headers: {
           'Authorization': `Bearer ${accessToken}`,
           'Accept': 'application/vnd.github.v3+json',
           'User-Agent': 'DevilDev-Agent'
         }
       });
+
+      // If rate-limited, wait and retry once
+      if (response.status === 403) {
+        const retryAfter = parseInt(response.headers.get('retry-after') || '10', 10);
+        const waitSec = Math.min(retryAfter, 60);
+        console.warn(`[searchCode] Rate limited. Waiting ${waitSec}s before retry...`);
+        await new Promise((resolve) => setTimeout(resolve, waitSec * 1000));
+        _lastSearchCodeCallMs = Date.now();
+        response = await fetch(url, {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Accept': 'application/vnd.github.v3+json',
+            'User-Agent': 'DevilDev-Agent'
+          }
+        });
+      }
 
       if (!response.ok) {
         if (response.status === 403) {
