@@ -346,9 +346,9 @@ Search query used: ${searchQuery}`;
     description: "Search for specific keywords, patterns, or code within the repository. Only specify the search query — repo details come from context.",
     schema: z.object({
       query: z.string().describe("Search query (e.g., 'PrismaClient', 'findMany', '$transaction')"),
-      language: z.string().nullable().optional().describe("Filter by programming language (e.g., 'typescript')"),
-      extension: z.string().nullable().optional().describe("Filter by file extension (e.g., 'ts', 'tsx')"),
-      path: z.string().nullable().optional().describe("Filter by file path pattern (e.g., 'src/', 'api/')"),
+      language: z.string().nullable().describe("Filter by programming language (e.g., 'typescript', 'tsx'). Pass null if not needed."),
+      extension: z.string().nullable().describe("Filter by file extension (e.g., 'ts', 'tsx'). Pass null if not needed."),
+      path: z.string().nullable().describe("Filter by file path pattern (e.g., 'src/', 'api/'). Pass null if not needed."),
     }),
   }
 );
