@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Github, Loader2, HardDrive } from "lucide-react";
+import { Github, Loader2, HardDrive, CheckCircle2, XCircle, Clock, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { checkPackageAndFramework } from "../../actions/analysis/repository-analysis";
 import { classifyBusinessContext } from "../../actions/analysis/business-classification";
@@ -26,19 +27,85 @@ interface GitHubRepositorySelectorProps {
     onSelectRepository: (repository: Repository) => void;
 }
 
+// ─── Pipeline Stage ───────────────────────────────────────────────────────────
+
+type PipelineStage =
+    | "select"            // Stage 1: pick a repo
+    | "framework"         // Stage 2: framework analysis (auto)
+    | "classification"    // Stage 3: business classification (auto)
+    | "orchestration"     // Stage 4: agents running in parallel (auto)
+    | "complete";         // Stage 5: all done
+
+// ─── Per-Agent Status ─────────────────────────────────────────────────────────
+
+type AgentStatus = "pending" | "queued" | "running" | "completed" | "failed";
+
+interface AgentState {
+    archetype: string;
+    status: AgentStatus;
+    executionTimeMs?: number;
+    totalToolCalls?: number;
+    error?: string;
+}
+
+// ─── Status Chip Component ────────────────────────────────────────────────────
+
+function AgentChip({ agent }: { agent: AgentState }) {
+    const statusConfig: Record<AgentStatus, { icon: typeof Loader2; color: string; label: string }> = {
+        pending: { icon: Clock, color: "text-muted-foreground bg-muted", label: "Pending" },
+        queued: { icon: Clock, color: "text-yellow-600 bg-yellow-500/10", label: "Queued" },
+        running: { icon: Loader2, color: "text-blue-600 bg-blue-500/10", label: "Running" },
+        completed: { icon: CheckCircle2, color: "text-green-600 bg-green-500/10", label: "Done" },
+        failed: { icon: XCircle, color: "text-red-600 bg-red-500/10", label: "Failed" },
+    };
+
+    const cfg = statusConfig[agent.status];
+    const Icon = cfg.icon;
+    const isSpinning = agent.status === "running";
+
+    return (
+        <div
+            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${cfg.color}`}
+            title={agent.error ?? cfg.label}
+        >
+            <Icon className={`h-3 w-3 ${isSpinning ? "animate-spin" : ""}`} />
+            <span className="truncate max-w-[120px]">{agent.archetype}</span>
+            {agent.executionTimeMs != null && agent.status === "completed" && (
+                <span className="opacity-60">{(agent.executionTimeMs / 1000).toFixed(1)}s</span>
+            )}
+        </div>
+    );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+
 export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepository }: GitHubRepositorySelectorProps) {
+    const router = useRouter();
     const [repositories, setRepositories] = useState<Repository[]>([]);
     const [loading, setLoading] = useState(false);
     const [selectedRepo, setSelectedRepo] = useState<string>("");
     const [analyzedRepoId, setAnalyzedRepoId] = useState<string | null>(null);
-    const [classifying, setClassifying] = useState(false);
-    const [checkingFramework, setCheckingFramework] = useState(false);
     const [repoSizeKB, setRepoSizeKB] = useState<number | null>(null);
     const [fetchingSize, setFetchingSize] = useState(false);
+
+    // Pipeline state
+    const [stage, setStage] = useState<PipelineStage>("select");
+    const [agentStates, setAgentStates] = useState<AgentState[]>([]);
+    const [orchestrationError, setOrchestrationError] = useState<string | null>(null);
+    const [hasExistingReports, setHasExistingReports] = useState(false);
+    const abortRef = useRef<AbortController | null>(null);
 
     useEffect(() => {
         if (open) {
             fetchRepositories();
+        }
+    }, [open]);
+
+    // Cleanup SSE on close
+    useEffect(() => {
+        if (!open) {
+            abortRef.current?.abort();
+            abortRef.current = null;
         }
     }, [open]);
 
@@ -66,13 +133,13 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
         setSelectedRepo(repoFullName);
         setAnalyzedRepoId(null);
         setRepoSizeKB(null);
-        setCheckingFramework(true);
+        setStage("select");
+        setAgentStates([]);
+        setOrchestrationError(null);
+        setHasExistingReports(false);
 
         const repository = repositories.find((repo) => repo.fullName === repoFullName);
-        if (!repository) {
-            setCheckingFramework(false);
-            return;
-        }
+        if (!repository) return;
 
         try {
             // Check if this repository has already been analyzed
@@ -84,120 +151,255 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
                 if ((dbRepo as any).repoSizeKB) setRepoSizeKB((dbRepo as any).repoSizeKB);
                 toast.success(
                     `Framework already detected: ${dbRepo.framework.toUpperCase()}`,
-                    { description: "You can proceed with business classification" }
+                    { description: "Ready to analyze" }
                 );
+
+                // Check if agent reports already exist for this repo
+                try {
+                    const res = await fetch(`/api/reports/${repository.id.toString()}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        const completedReports = (data.reports ?? []).filter(
+                            (r: any) => r.status === "completed" && r.rawFindings
+                        );
+                        if (completedReports.length > 0) {
+                            setHasExistingReports(true);
+                        }
+                    }
+                } catch {
+                    // Non-critical — ignore
+                }
             }
         } catch (error) {
             console.error("Error checking repository status:", error);
-            // Continue normally if check fails
-        } finally {
-            setCheckingFramework(false);
         }
     };
 
-    const handleSelect = async () => {
-        const repository = repositories.find((repo) => repo.fullName === selectedRepo);
-        if (repository) {
-            onOpenChange(false);
+    // ─── Stage 2: Framework Analysis ──────────────────────────────────
 
-            toast.info("Analyzing repository framework with AI...");
-
-            try {
-                // Call framework detection
-                const result = await checkPackageAndFramework(
-                    repository.id.toString(),
-                    repository.fullName
-                );
-
-                // Log detailed results
-                console.log("=== Framework Analysis Result ===");
-                console.log("Repository:", repository.fullName);
-                console.log("Is Supported:", result.isSupported);
-                console.log("Framework:", result.framework);
-                console.log("Repo Content:", result.repoContent);
-                console.log("Package.json:", result.packageJson?.name);
-                if (result.error) {
-                    console.error("Error:", result.error);
-                }
-                console.log("================================");
-
-                // Show result toast
-                if (result.isSupported) {
-                    toast.success(
-                        `Detected ${result.framework?.toUpperCase()} project: ${repository.fullName}`,
-                        {
-                            description: `Default branch: ${result.defaultBranch || "N/A"}`,
-                        }
-                    );
-                    // Enable business classification button
-                    setAnalyzedRepoId(repository.id.toString());
-                } else {
-                    toast.error("Could not detect Next.js or React framework", {
-                        description: result.error || "Repository may not be a supported framework",
-                    });
-                    setAnalyzedRepoId(null);
-                }
-            } catch (error) {
-                console.error("Error analyzing repository:", error);
-                toast.error("Failed to analyze repository", {
-                    description: error instanceof Error ? error.message : "Unknown error",
-                });
-                setAnalyzedRepoId(null);
-            }
-
-            onSelectRepository(repository);
-        }
-    };
-
-    const handleClassifyBusiness = async () => {
-        if (!analyzedRepoId) return;
-
-        setClassifying(true);
-        toast.info("Analyzing business context with AI...");
+    const runFrameworkAnalysis = useCallback(async (repository: Repository) => {
+        setStage("framework");
+        toast.info("Analyzing repository framework...");
 
         try {
-            const result = await classifyBusinessContext(analyzedRepoId);
+            const result = await checkPackageAndFramework(
+                repository.id.toString(),
+                repository.fullName
+            );
 
-            // Log detailed results
-            console.log("=== Business Classification Result ===");
-            if (result.classification) {
-                // console.log("Business Type:", result.classification.businessType.primary);
-                // console.log("Secondary Types:", result.classification.businessType.secondary);
-                // console.log("Confidence:", result.classification.businessType.confidence);
-                // console.log("Audience Size:", result.classification.audienceSize);
-                // console.log("Usage Pattern:", result.classification.usagePattern);
-                // console.log("Risk Profile:", result.classification.riskProfile);
-                // console.log("Constraints:", result.classification.constraints);
-                // console.log("Scale Breakpoints:", result.classification.scaleBreakpoints);
-                // console.log("Evidence:", result.classification.evidence);
-            }
-            if (result.error) {
-                console.error("Error:", result.error);
-            }
-            console.log("======================================");
+            console.log("=== Framework Analysis Result ===");
+            console.log("Repository:", repository.fullName);
+            console.log("Is Supported:", result.isSupported);
+            console.log("Framework:", result.framework);
+            console.log("================================");
 
-            // Show result toast
+            if (result.isSupported) {
+                toast.success(
+                    `Detected ${result.framework?.toUpperCase()} project`,
+                    { description: `Branch: ${result.defaultBranch || "N/A"}` }
+                );
+                setAnalyzedRepoId(repository.id.toString());
+                return true;
+            } else {
+                toast.error("Could not detect Next.js or React framework", {
+                    description: result.error || "Repository may not be a supported framework",
+                });
+                setStage("select");
+                setAnalyzedRepoId(null);
+                return false;
+            }
+        } catch (error) {
+            console.error("Error analyzing repository:", error);
+            toast.error("Failed to analyze repository", {
+                description: error instanceof Error ? error.message : "Unknown error",
+            });
+            setStage("select");
+            setAnalyzedRepoId(null);
+            return false;
+        }
+    }, []);
+
+    // ─── Stage 3: Business Classification ─────────────────────────────
+
+    const runClassification = useCallback(async (repoId: string) => {
+        setStage("classification");
+        toast.info("Classifying business context...");
+
+        try {
+            const result = await classifyBusinessContext(repoId);
+
             if (result.classification) {
                 const top = result.classification.archetypes[0];
                 toast.success(
                     `Top archetype: ${top.name} (${top.score})`,
                     {
-                        description: `Confidence: ${result.classification.confidence} · ${result.classification.archetypes.length} niche(s) detected`,
+                        description: `${result.classification.archetypes.length} archetype(s) detected`,
                     }
                 );
+                return true;
             } else {
                 toast.error("Failed to classify business context", {
                     description: result.error || "Unknown error occurred",
                 });
+                setStage("select");
+                return false;
             }
         } catch (error) {
             console.error("Error classifying business context:", error);
             toast.error("Failed to classify business context", {
                 description: error instanceof Error ? error.message : "Unknown error",
             });
-        } finally {
-            setClassifying(false);
+            setStage("select");
+            return false;
         }
+    }, []);
+
+    // ─── Stage 4: Agent Orchestration via SSE ─────────────────────────
+
+    const runOrchestration = useCallback(async (repoId: string) => {
+        setStage("orchestration");
+        setAgentStates([]);
+        setOrchestrationError(null);
+        toast.info("Dispatching analysis agents...");
+
+        const controller = new AbortController();
+        abortRef.current = controller;
+
+        try {
+            const response = await fetch("/api/agent/orchestrate", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ repositoryId: repoId }),
+                signal: controller.signal,
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.error || `HTTP ${response.status}`);
+            }
+
+            const reader = response.body?.getReader();
+            if (!reader) throw new Error("No response body");
+
+            const decoder = new TextDecoder();
+            let buffer = "";
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split("\n");
+                buffer = lines.pop() ?? "";
+
+                for (const line of lines) {
+                    if (!line.startsWith("data: ")) continue;
+                    try {
+                        const event = JSON.parse(line.slice(6));
+                        handleOrchestratorEvent(event);
+                    } catch {
+                        // ignore malformed events
+                    }
+                }
+            }
+        } catch (error) {
+            if ((error as any)?.name === "AbortError") return;
+            const msg = error instanceof Error ? error.message : "Unknown error";
+            console.error("[orchestration] Error:", msg);
+            setOrchestrationError(msg);
+            toast.error("Agent orchestration failed", { description: msg });
+            setStage("select");
+        }
+    }, []);
+
+    const handleOrchestratorEvent = useCallback((event: any) => {
+        switch (event.type) {
+            case "orchestration_start":
+                break;
+            case "agent_queued":
+                setAgentStates((prev) => [
+                    ...prev.filter((a) => a.archetype !== event.archetype),
+                    { archetype: event.archetype, status: "queued" },
+                ]);
+                break;
+            case "agent_running":
+                setAgentStates((prev) =>
+                    prev.map((a) =>
+                        a.archetype === event.archetype ? { ...a, status: "running" } : a
+                    )
+                );
+                break;
+            case "agent_completed":
+                setAgentStates((prev) =>
+                    prev.map((a) =>
+                        a.archetype === event.archetype
+                            ? {
+                                ...a,
+                                status: "completed",
+                                totalToolCalls: event.totalToolCalls,
+                                executionTimeMs: event.executionTimeMs,
+                            }
+                            : a
+                    )
+                );
+                break;
+            case "agent_failed":
+                setAgentStates((prev) =>
+                    prev.map((a) =>
+                        a.archetype === event.archetype
+                            ? {
+                                ...a,
+                                status: "failed",
+                                error: event.error,
+                                totalToolCalls: event.totalToolCalls,
+                                executionTimeMs: event.executionTimeMs,
+                            }
+                            : a
+                    )
+                );
+                break;
+            case "orchestration_complete": {
+                if (event.error) {
+                    setOrchestrationError(event.error);
+                    toast.error("Orchestration failed", { description: event.error });
+                    setStage("select");
+                } else {
+                    setStage("complete");
+                    toast.success(
+                        `Analysis complete: ${event.completedAgents}/${event.totalAgents} agents succeeded`,
+                        {
+                            description: `Total time: ${((event.totalExecutionTimeMs ?? 0) / 1000).toFixed(1)}s`,
+                        }
+                    );
+                }
+                break;
+            }
+        }
+    }, []);
+
+    // ─── Full Pipeline Trigger ────────────────────────────────────────
+
+    const handleAnalyze = async () => {
+        const repository = repositories.find((repo) => repo.fullName === selectedRepo);
+        if (!repository) return;
+
+        onSelectRepository(repository);
+
+        // Step 1: Framework analysis (skip if already analyzed)
+        let repoId = analyzedRepoId;
+        if (!repoId) {
+            const success = await runFrameworkAnalysis(repository);
+            if (!success) return;
+            repoId = repository.id.toString();
+            setAnalyzedRepoId(repoId);
+        }
+
+        // Step 2: Business classification
+        const classified = await runClassification(repoId);
+        if (!classified) return;
+
+        // Step 3: Agent orchestration
+        await runOrchestration(repoId);
     };
 
     const handleGetRepoSize = async () => {
@@ -218,23 +420,38 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
             } else {
                 toast.error("Could not fetch repo size", { description: result.error });
             }
-        } catch (err) {
+        } catch {
             toast.error("Failed to fetch repo size");
         } finally {
             setFetchingSize(false);
         }
     };
 
+    // ─── Computed values ──────────────────────────────────────────────
+
+    const isRunning = stage === "framework" || stage === "classification" || stage === "orchestration";
+    const completedCount = agentStates.filter((a) => a.status === "completed").length;
+    const failedCount = agentStates.filter((a) => a.status === "failed").length;
+    const totalAgents = agentStates.length;
+
+    const stageLabel: Record<PipelineStage, string> = {
+        select: "Select a repository to analyze",
+        framework: "Analyzing framework...",
+        classification: "Classifying business context...",
+        orchestration: `Running ${totalAgents} agents in parallel...`,
+        complete: "Analysis complete",
+    };
+
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-[500px]">
+        <Dialog open={open} onOpenChange={(v) => { if (!isRunning) onOpenChange(v); }}>
+            <DialogContent className="sm:max-w-[520px]">
                 <DialogHeader>
                     <DialogTitle className="flex items-center gap-2">
                         <Github className="h-5 w-5" />
-                        Select Repository
+                        {stage === "complete" ? "Analysis Complete" : "Analyze Repository"}
                     </DialogTitle>
                     <DialogDescription>
-                        Choose a repository from your GitHub account to analyze
+                        {stageLabel[stage]}
                     </DialogDescription>
                 </DialogHeader>
 
@@ -244,7 +461,12 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
                     </div>
                 ) : (
                     <div className="space-y-4">
-                        <Select value={selectedRepo} onValueChange={handleRepoChange}>
+                        {/* Repository selector — always visible */}
+                        <Select
+                            value={selectedRepo}
+                            onValueChange={handleRepoChange}
+                            disabled={isRunning}
+                        >
                             <SelectTrigger>
                                 <SelectValue placeholder="Select a repository" />
                             </SelectTrigger>
@@ -262,6 +484,7 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
                             </SelectContent>
                         </Select>
 
+                        {/* Repo description & size */}
                         {selectedRepo && (
                             <div className="flex items-center justify-between">
                                 <div className="text-sm text-muted-foreground">
@@ -280,7 +503,7 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
                                         size="sm"
                                         className="shrink-0 ml-2 h-7 text-xs"
                                         onClick={handleGetRepoSize}
-                                        disabled={fetchingSize}
+                                        disabled={fetchingSize || isRunning}
                                     >
                                         {fetchingSize ? (
                                             <Loader2 className="h-3 w-3 animate-spin mr-1" />
@@ -293,58 +516,114 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
                             </div>
                         )}
 
-                        <div className="flex justify-end gap-2">
-                            <Button variant="outline" onClick={() => onOpenChange(false)}>
-                                Cancel
-                            </Button>
-                            {!analyzedRepoId && (
-                                <Button onClick={handleSelect} disabled={!selectedRepo || checkingFramework}>
-                                    {checkingFramework ? (
-                                        <>
-                                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                            Checking...
-                                        </>
-                                    ) : (
-                                        "Analyze Framework"
-                                    )}
-                                </Button>
-                            )}
-                        </div>
+                        {/* Pipeline progress indicator */}
+                        {isRunning && (
+                            <div className="space-y-3 pt-2 border-t">
+                                {/* Stage progress bar */}
+                                <div className="flex items-center gap-2">
+                                    <div className="flex gap-1 flex-1">
+                                        {(["framework", "classification", "orchestration"] as PipelineStage[]).map((s, i) => {
+                                            const stageOrder = ["framework", "classification", "orchestration"];
+                                            const currentIdx = stageOrder.indexOf(stage);
+                                            const isActive = stageOrder.indexOf(s) === currentIdx;
+                                            const isDone = stageOrder.indexOf(s) < currentIdx;
+                                            return (
+                                                <div
+                                                    key={s}
+                                                    className={`h-1.5 flex-1 rounded-full transition-colors ${isDone
+                                                            ? "bg-green-500"
+                                                            : isActive
+                                                                ? "bg-blue-500 animate-pulse"
+                                                                : "bg-muted"
+                                                        }`}
+                                                />
+                                            );
+                                        })}
+                                    </div>
+                                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                                </div>
 
-                        {analyzedRepoId && (
-                            <div className="pt-4 border-t">
-                                <div className="space-y-2">
-                                    <p className="text-sm text-muted-foreground">
-                                        Framework analysis complete! Run business classification to understand the business context.
-                                    </p>
-                                    <Button
-                                        onClick={handleClassifyBusiness}
-                                        disabled={classifying}
-                                        className="w-full"
-                                    >
-                                        {classifying ? (
-                                            <>
-                                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                                Analyzing Business Context...
-                                            </>
-                                        ) : (
-                                            "Classify Business Context"
-                                        )}
-                                    </Button>
-                                    <Button
-                                        variant="outline"
-                                        onClick={() => {
-                                            setAnalyzedRepoId(null);
-                                            handleSelect();
-                                        }}
-                                        disabled={classifying}
-                                        className="w-full"
-                                    >
-                                        Re-analyze Framework
-                                    </Button>
+                                {/* Stage label */}
+                                <p className="text-sm text-muted-foreground">
+                                    {stage === "framework" && "Step 1/3 — Detecting framework..."}
+                                    {stage === "classification" && "Step 2/3 — Classifying business context..."}
+                                    {stage === "orchestration" && (
+                                        <>Step 3/3 — {completedCount + failedCount}/{totalAgents} agents finished</>
+                                    )}
+                                </p>
+                            </div>
+                        )}
+
+                        {/* Per-agent status chips (Stage 4) */}
+                        {(stage === "orchestration" || stage === "complete") && agentStates.length > 0 && (
+                            <div className="space-y-2 pt-2 border-t">
+                                <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                                    <Zap className="h-3.5 w-3.5" />
+                                    Agent Progress
+                                </div>
+                                <div className="flex flex-wrap gap-1.5">
+                                    {agentStates.map((agent) => (
+                                        <AgentChip key={agent.archetype} agent={agent} />
+                                    ))}
                                 </div>
                             </div>
                         )}
+
+                        {/* Complete summary */}
+                        {stage === "complete" && (
+                            <div className="pt-2 border-t space-y-3">
+                                <div className="flex items-center gap-2 text-sm">
+                                    <CheckCircle2 className="h-4 w-4 text-green-600" />
+                                    <span className="font-medium">
+                                        {completedCount} agent{completedCount !== 1 ? "s" : ""} completed
+                                    </span>
+                                    {failedCount > 0 && (
+                                        <span className="text-red-600 text-xs">
+                                            ({failedCount} failed)
+                                        </span>
+                                    )}
+                                </div>
+                                <Button
+                                    className="w-full"
+                                    onClick={() => {
+                                        onOpenChange(false);
+                                        router.push(`/reports/${analyzedRepoId}`);
+                                    }}
+                                >
+                                    View Reports
+                                </Button>
+                            </div>
+                        )}
+
+                        {/* Action buttons */}
+                        <div className="flex justify-end gap-2">
+                            <Button
+                                variant="outline"
+                                onClick={() => onOpenChange(false)}
+                                disabled={isRunning}
+                            >
+                                {stage === "complete" ? "Close" : "Cancel"}
+                            </Button>
+                            {stage === "select" && hasExistingReports && analyzedRepoId && (
+                                <Button
+                                    variant="secondary"
+                                    onClick={() => {
+                                        onOpenChange(false);
+                                        router.push(`/reports/${analyzedRepoId}`);
+                                    }}
+                                >
+                                    View Reports
+                                </Button>
+                            )}
+                            {(stage === "select" || stage === "complete") && (
+                                <Button
+                                    onClick={handleAnalyze}
+                                    disabled={!selectedRepo || isRunning}
+                                >
+                                    {stage === "complete" ? "Re-analyze" : hasExistingReports ? "Re-analyze" : analyzedRepoId ? "Run Analysis" : "Analyze"}
+                                </Button>
+                            )}
+                        </div>
                     </div>
                 )}
             </DialogContent>
