@@ -46,8 +46,28 @@ model Repository {
   codeNodes    CodeNode[]
   codeEdges    CodeEdge[]
   codeFlows    CodeFlow[]
+  agentReports AgentReport[]
 
   @@index([userId])
+  @@index([repositoryId])
+}
+
+model AgentReport {
+  id              String     @id @default(uuid())
+  repositoryId    String
+  repository      Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  archetype       String     // "database-heavy", "auth-heavy", etc.
+  rawFindings     String?    // The agent's raw text output
+  totalToolCalls  Int        @default(0)
+  executionTimeMs Int        @default(0)
+  status          String     @default("pending") // "pending" | "running" | "completed" | "failed"
+  error           String?
+
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@unique([repositoryId, archetype])
   @@index([repositoryId])
 }
 

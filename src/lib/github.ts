@@ -131,12 +131,14 @@ export async function getInstallationDetails(installationId: string) {
             installation_id: parseInt(installationId),
         });
 
+        const account = data.account as any;
+
         return {
             id: data.id,
             account: {
-                login: data.account?.login,
-                type: data.account?.type,
-                avatarUrl: data.account?.avatar_url,
+                login: account?.login,
+                type: account?.type,
+                avatarUrl: account?.avatar_url,
             },
             repositorySelection: data.repository_selection,
         };
