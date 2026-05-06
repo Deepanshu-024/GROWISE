@@ -40,6 +40,8 @@ model Repository {
   graphStatus                  String?  // "building", "ready", "failed"
   graphBuiltAt                 DateTime?
   repoSizeKB                   Int?     // GitHub-reported repo size in KB
+  compiledReport               String?  // Final compiled markdown report from report-compiler agent
+  compiledReportAt             DateTime? // When the compiled report was last generated
   createdAt                    DateTime @default(now())
   updatedAt                    DateTime @updatedAt
 

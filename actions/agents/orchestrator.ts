@@ -13,6 +13,7 @@ import { runRealtimeAgent } from "./realtime";
 import { runEventDrivenAgent } from "./event-driven";
 import { runTransactionAgent } from "./transaction";
 import { runContentHeavyAgent } from "./content-heavy";
+import { runReportCompiler } from "./report-compiler";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -23,6 +24,9 @@ export interface OrchestratorStreamEvent {
         | "agent_running"
         | "agent_completed"
         | "agent_failed"
+        | "report_compiling"
+        | "report_compiled"
+        | "report_failed"
         | "orchestration_complete";
     archetype?: string;
     timestamp: string;
@@ -36,6 +40,9 @@ export interface OrchestratorStreamEvent {
     completedAgents?: number;
     failedAgents?: number;
     totalExecutionTimeMs?: number;
+    // report compilation
+    compiledReport?: string;
+    reportCompileTimeMs?: number;
 }
 
 interface AgentSummary {
@@ -403,6 +410,64 @@ export async function orchestrateAgents(
     const completed = summaries.filter((s) => s.status === "completed").length;
     const failed = summaries.filter((s) => s.status === "failed").length;
 
+    // ── Compile final report ────────────────────────────────────────────
+
+    let compiledReport: string | undefined;
+    let reportCompileTimeMs: number | undefined;
+
+    if (completed > 0) {
+        emit({
+            type: "report_compiling",
+            timestamp: new Date().toISOString(),
+        });
+
+        try {
+            const compilerResult = await runReportCompiler({
+                repositoryId: repo.id,
+                onEvent: (event) => {
+                    // Forward compiler reasoning as SSE
+                    if (event.type === "compiler_thinking") {
+                        emit({
+                            type: "report_compiling",
+                            timestamp: event.timestamp,
+                        });
+                    }
+                },
+            });
+
+            if (compilerResult.compiledReport) {
+                compiledReport = compilerResult.compiledReport;
+                reportCompileTimeMs = compilerResult.executionTimeMs;
+                emit({
+                    type: "report_compiled",
+                    timestamp: new Date().toISOString(),
+                    compiledReport,
+                    reportCompileTimeMs,
+                });
+                console.log(
+                    `[orchestrator] Report compiled in ${reportCompileTimeMs}ms ` +
+                    `(${compiledReport.length} chars)`,
+                );
+            } else {
+                emit({
+                    type: "report_failed",
+                    timestamp: new Date().toISOString(),
+                    error: compilerResult.error ?? "Report compiler returned empty result.",
+                });
+            }
+        } catch (err) {
+            const errorMsg = err instanceof Error ? err.message : "Unknown compiler error";
+            console.error(`[orchestrator] Report compiler threw:`, errorMsg);
+            emit({
+                type: "report_failed",
+                timestamp: new Date().toISOString(),
+                error: errorMsg,
+            });
+        }
+    }
+
+    // ── Final orchestration complete ─────────────────────────────────────
+
     emit({
         type: "orchestration_complete",
         timestamp: new Date().toISOString(),
@@ -411,5 +476,7 @@ export async function orchestrateAgents(
         completedAgents: completed,
         failedAgents: failed,
         totalExecutionTimeMs: Date.now() - orchestrationStart,
+        compiledReport,
+        reportCompileTimeMs,
     });
 }
