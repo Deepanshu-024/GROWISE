@@ -67,7 +67,7 @@
     "deepagents": "^1.8.3",
     "dialog": "^0.3.1",
     "embla-carousel-react": "8.5.1",
-    "inngest": "^3.48.1",
+    "inngest": "^3.54.0",
     "input-otp": "1.4.1",
     "langchain": "^1.2.33",
     "lucide-react": "^0.454.0",
