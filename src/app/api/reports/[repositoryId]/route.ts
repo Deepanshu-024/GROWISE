@@ -36,6 +36,8 @@ export async function GET(
                 archetypes: true,
                 archClassificationConfidence: true,
                 repoSizeKB: true,
+                compiledReport: true,
+                compiledReportAt: true,
                 updatedAt: true,
                 agentReports: {
                     orderBy: { updatedAt: "desc" },
@@ -60,6 +62,8 @@ export async function GET(
                 archetypes: repository.archetypes,
                 archClassificationConfidence: repository.archClassificationConfidence,
                 repoSizeKB: repository.repoSizeKB,
+                compiledReport: repository.compiledReport,
+                compiledReportAt: repository.compiledReportAt,
                 updatedAt: repository.updatedAt,
             },
             reports: repository.agentReports,
