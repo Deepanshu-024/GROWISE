@@ -7,7 +7,6 @@ import * as fs from "fs";
 import * as path from "path";
 
 import {
-  getRepoTreeTool,
   getFileContentTool,
   searchCodeTool,
   githubContextSchema,
@@ -138,15 +137,16 @@ REPOSITORY CONTEXT:
 STRATEGIC TOOL USAGE PHILOSOPHY:
 **Use tools ONLY when critical information cannot be inferred from existing context**
 - Start with provided package.json and repository file tree
-- The file tree above is the FULL project structure - use it to identify targets before making any tool calls
-- Make educated assumptions based on React/Next.js auth patterns
+- The file tree above is the FULL project structure - use it to identify auth targets before making any tool calls
+- Make conservative findings from concrete evidence; if evidence is thin, report INFO instead of exploring endlessly
 - Tool calls should be surgical, not exhaustive
-- Maximum 15 tool calls total across all phases - spend them wisely
+- HARD LIMIT: use at most 15 tool calls total
+- After using 15 tool calls, stop immediately and return the findings digest from evidence gathered
+- Do not call another tool just to improve confidence, find line numbers, or validate a low-impact suspicion
 
-AVAILABLE TOOLS (Use Sparingly - repo details are injected automatically via context):
-1. **getRepoTree()** - No input needed. Returns full project file tree (only if the tree in context is incomplete or truncated)
-2. **getFileContent(path)** - Just pass the file path. For reading middleware, route handlers, auth configs, schema files, and webhook handlers
-3. **searchCode(query)** - Just pass the search query. For locating patterns: auth(), currentUser, getServerSession, clerkId, session, bcrypt, jwt.verify, webhook, rateLimit
+AVAILABLE TOOLS:
+1. **getFileContent(path)** - Read middleware, route handlers, auth configs, schema files, webhook handlers, session utilities, and provider client/server helpers
+2. **searchCode(query)** - Use only when package.json and file tree are not enough to choose target files. Choose compact repository-specific searches. Use at most 3 searches total. **EARLY EXIT RULE: if 2 consecutive searchCode calls return 0 results, stop all further searchCode usage immediately and fall back to navigating the file tree with getFileContent. Do not try alternative keywords or rephrased queries.**
 
 ---
 
@@ -198,17 +198,17 @@ Infer architecture from the provided tree first:
 - Auth endpoints: login, signup, callback, session, logout, webhook, clerk, stripe, auth
 - Schema files: prisma/schema.prisma, db/schema.ts, src/db/schema.ts, models
 
-Only call **getRepoTree** if the tree in context is incomplete or ambiguous. Do not retry if it fails.
 Build an investigation list of middleware/auth config, schema, webhook/auth endpoints, and top 3-4 sensitive routes. Maximum 8 items total.
 
 ### PHASE 3 - Middleware & Route Protection Analysis
 
 Use **getFileContent** for middleware and selected route/action files.
-Use **searchCode** only to validate provider-specific route checks:
+Use **searchCode** only when the injected package.json and file tree are not enough to choose target files or validate provider-specific route checks:
 - Clerk: auth(), currentUser, clerkMiddleware, auth.protect
 - NextAuth: getServerSession, auth(), getToken
 - Supabase: getSession, getUser, createServerClient
 - Custom: verify, jwt.verify, session lookup, cookies()
+Choose one compact query based on the detected provider. Do not run one search per keyword. If your first 2 searchCode calls both return 0 results, abandon searchCode entirely and navigate from the file tree.
 
 Flag missing route protection only when both are true:
 -> Middleware does not protect the sensitive route
@@ -218,8 +218,8 @@ Never flag a route as unprotected from file path alone; middleware may protect i
 
 ### PHASE 4 - Schema & Auth Lookup Analysis
 
-Always run this phase when a schema file is visible.
-Use **getFileContent** to read the schema once.
+Run this phase only when auth/session/user models exist AND the schema path is obvious from the injected file tree.
+Use **getFileContent** to read the schema once only if it fits inside the 15-tool total budget.
 
 Check:
 - Third-party IDs: clerkId, auth0Id, supabaseId, providerId, externalId are unique or indexed
@@ -247,7 +247,8 @@ Severity assignment:
 - WARNING: proven auth scaling limit that becomes painful with traffic/table growth, including uncached per-request user lookups, missing idempotency, missing login rate limits, or sync verification in hot paths.
 - INFO: useful context, healthy observations, or lower-confidence findings only.
 
-After finding 3 CRITICAL issues, stop expanding the investigation to new non-required files. Still complete required schema and auth infrastructure checks, and report every finding already discovered. Never omit a discovered finding just to hit a preferred finding count; compress wording instead.
+After finding 3 CRITICAL issues, stop expanding the investigation to new optional files. Report every finding already discovered.
+If the tool budget is exhausted, stop and synthesize. Never continue tool use past the budget.
 
 ---
 
@@ -303,7 +304,6 @@ When your investigation is complete, output your findings as your final message.
 // --- Tools --------------------------------------------------------------------
 
 const authAgentTools = [
-  getRepoTreeTool,
   getFileContentTool,
   searchCodeTool,
 ];
@@ -379,11 +379,18 @@ REPOSITORY CONTEXT:
 - Start with the package.json and file tree provided above - identify middleware, auth config, schema files, and sensitive routes immediately (Phase 1, no tools needed)
 - Classify auth files and sensitive routes by traffic priority before reading any files
 - Use getFileContent(path) strategically on high-priority targets only
-- Use searchCode(query) to validate patterns (auth checks, provider IDs, webhook handlers, session lookups, rate limits)
-- Read schema file once to cross-reference all auth lookup findings at once
+- Use searchCode(query) only when package.json and file tree are not enough to choose target files or validate high-impact auth patterns
+- Read schema file once only when auth/session/user models exist and the schema path is obvious from the file tree
 - Tools already know the repo details - just pass the file path or search query
 
-**Constraint:** Minimize tool usage - leverage the file tree and package.json above first, then make targeted tool calls only for confirmed high-traffic auth files.
+Tool constraints:
+- HARD LIMIT: use at most 15 tool calls total, then stop and return the digest, never exceed this limit
+- Decide yourself whether searchCode is needed; do not follow a preset search query
+- searchCode EARLY EXIT: if 2 consecutive searches return 0 results, stop using searchCode entirely and navigate the file tree with getFileContent instead
+- Use package.json and file tree before tools
+- If package.json and file tree show no auth surface, return INFO without tool calls
+
+**Constraint:** Minimize tool usage - leverage the file tree and package.json above first, then make targeted tool calls only for confirmed high-traffic auth files. If you are near the tool limit, stop using tools and synthesize from available evidence.
 **Scope constraint:** Only investigate and report findings that directly affect authentication, authorization, session handling, identity-provider integration, auth webhooks, auth-specific rate limiting, or auth-related database lookups. Ignore non-auth findings silently; do not include them as INFO.
 **Reporting constraint:** If you discover a distinct in-scope auth finding, you must report it. Do not drop auth findings to satisfy a preferred count or budget; keep within budget by compressing wording and merging only genuinely overlapping duplicates.
 

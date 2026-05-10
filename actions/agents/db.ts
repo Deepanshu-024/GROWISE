@@ -1,64 +1,11 @@
 ﻿import fs from "fs";
 import path from "path";
 import { createAgent } from "langchain";
-import { tool } from "langchain";
-import { z } from "zod";
 import { gpt5Mini } from "@/lib/llm";
 import prisma from "@/lib/prisma";
 import { searchCodeTool, getFileContentTool, githubContextSchema } from "../analysis/tools/agent-tools";
 
 // --- Types --------------------------------------------------------------------
-
-type ScaleVerdict = "healthy" | "degraded" | "critical" | "failure";
-type FindingSeverity = "critical" | "warning" | "info";
-type FindingCategory =
-    | "query_pattern"
-    | "missing_index"
-    | "connection_pool"
-    | "schema_design"
-    | "missing_cache"
-    | "transaction";
-
-interface ScaleTier {
-    verdict: ScaleVerdict;
-    primaryIssues: string[];
-}
-
-interface Finding {
-    id: string;
-    severity: FindingSeverity;
-    category: FindingCategory;
-    title: string;
-    detail: string;
-    evidence: Record<string, unknown>;
-    breaksAt: string;
-    fix: string;
-}
-
-interface ReportSummary {
-    totalFindings: number;
-    criticalCount: number;
-    warningCount: number;
-    infoCount: number;
-    overallRisk: "critical" | "warning" | "low";
-    topConcern: string;
-    estimatedScaleCeiling: string;
-}
-
-export interface DbAgentReport {
-    agentType: "database";
-    repositoryId: string;
-    archetypeScore: number;
-    scaleAnalysis: {
-        "10k_users": ScaleTier;
-        "100k_users": ScaleTier;
-        "1M_users": ScaleTier;
-    };
-    findings: Finding[];
-    summary: ReportSummary;
-    toolsUsed: string[];
-    confidence: number;
-}
 
 export interface StreamEvent {
     type: "tool_start" | "tool_end" | "llm_end" | "agent_thought" | "error" | "done" | "agent_start";
@@ -145,122 +92,6 @@ function resolveCallbackToolName(tool: any, fallback?: string): string {
     );
 }
 
-// --- Final Report Tool (defined in-file) --------------------------------------
-
-const finalReportSchema = z.object({
-    agentType: z.literal("database"),
-    repositoryId: z.string(),
-    archetypeScore: z.number(),
-
-    scaleAnalysis: z.object({
-        "10k_users": z.object({
-            verdict: z.enum(["healthy", "degraded", "critical", "failure"]),
-            primaryIssues: z.array(z.string()),
-        }),
-        "100k_users": z.object({
-            verdict: z.enum(["healthy", "degraded", "critical", "failure"]),
-            primaryIssues: z.array(z.string()),
-        }),
-        "1M_users": z.object({
-            verdict: z.enum(["healthy", "degraded", "critical", "failure"]),
-            primaryIssues: z.array(z.string()),
-        }),
-    }),
-
-    findings: z.array(
-        z.object({
-            id: z.string(),
-            severity: z.enum(["critical", "warning", "info"]),
-            category: z.enum([
-                "query_pattern",
-                "missing_index",
-                "connection_pool",
-                "schema_design",
-                "missing_cache",
-                "transaction",
-            ]),
-            title: z.string(),
-            detail: z.string(),
-            evidence: z.record(z.unknown()),
-            breaksAt: z.string(),
-            fix: z.string(),
-        })
-    ),
-
-    summary: z.object({
-        totalFindings: z.number(),
-        criticalCount: z.number(),
-        warningCount: z.number(),
-        infoCount: z.number(),
-        overallRisk: z.enum(["critical", "warning", "low"]),
-        topConcern: z.string(),
-        estimatedScaleCeiling: z.string(),
-    }),
-
-    toolsUsed: z.array(z.string()),
-    confidence: z.number().min(0).max(1),
-});
-
-const finalReportTool = tool(
-    async (input): Promise<string> => {
-        const parsed = input as z.infer<typeof finalReportSchema>;
-
-        // Fill safe defaults for any missing optional-ish fields
-        const report: DbAgentReport = {
-            agentType: "database",
-            repositoryId: parsed.repositoryId ?? "unknown",
-            archetypeScore: parsed.archetypeScore ?? 0,
-            scaleAnalysis: {
-                "10k_users": parsed.scaleAnalysis?.["10k_users"] ?? {
-                    verdict: "healthy",
-                    primaryIssues: [],
-                },
-                "100k_users": parsed.scaleAnalysis?.["100k_users"] ?? {
-                    verdict: "healthy",
-                    primaryIssues: [],
-                },
-                "1M_users": parsed.scaleAnalysis?.["1M_users"] ?? {
-                    verdict: "healthy",
-                    primaryIssues: [],
-                },
-            },
-            findings: (parsed.findings ?? []).map((f, i) => ({
-                id: f.id ?? `finding-${i + 1}`,
-                severity: f.severity ?? "info",
-                category: f.category ?? "query_pattern",
-                title: f.title ?? "Untitled finding",
-                detail: f.detail ?? "",
-                evidence: f.evidence ?? {},
-                breaksAt: f.breaksAt ?? "unknown",
-                fix: f.fix ?? "No fix suggested",
-            })),
-            summary: {
-                totalFindings: parsed.summary?.totalFindings ?? parsed.findings?.length ?? 0,
-                criticalCount: parsed.summary?.criticalCount ?? 0,
-                warningCount: parsed.summary?.warningCount ?? 0,
-                infoCount: parsed.summary?.infoCount ?? 0,
-                overallRisk: parsed.summary?.overallRisk ?? "low",
-                topConcern: parsed.summary?.topConcern ?? "No concerns identified",
-                estimatedScaleCeiling: parsed.summary?.estimatedScaleCeiling ?? "unknown",
-            },
-            toolsUsed: parsed.toolsUsed ?? [],
-            confidence: parsed.confidence ?? 0.5,
-        };
-
-        console.log("[dbAgent] FINAL_REPORT received");
-
-        return JSON.stringify(report);
-    },
-    {
-        name: "finalReport",
-        description:
-            "Submit the final structured findings report. You MUST call this tool when your investigation is complete. " +
-            "Pass the complete report with all fields: agentType, repositoryId, archetypeScore, scaleAnalysis, findings, summary, toolsUsed, confidence. " +
-            "Never output your final answer as prose - always use this tool. The orchestrator cannot read prose output.",
-        schema: finalReportSchema,
-    }
-);
-
 // --- System Prompt -------------------------------------------------------------
 
 const SYSTEM_PROMPT = `You are an elite database scalability analyst specializing in React/Next.js applications. Your mission is to analyze GitHub repositories and surface the database-layer issues that will cause real failures as the business scales - not theoretical edge cases, but the patterns that break under traffic.
@@ -308,11 +139,9 @@ Ignore and do not report non-database findings, even if they are real issues:
 
 If a possible issue is adjacent, ask: "Would fixing this help the database handle 10x queries per second without degrading latency, exhausting connections, increasing lock waits, or saturating DB CPU/IOPS?" If no, discard it silently.
 
-### PHASE 1 - Stack & Project Understanding (No Tools)
+### PHASE 1 - Database Stack Understanding (No Tools)
 
-**Step 1A - Infer the database stack from package.json:**
-
-Extract and note:
+Infer from package.json and file tree:
 - orm: prisma | drizzle | typeorm | mongoose | raw SQL
 - database: postgresql | mysql | mongodb | sqlite
 - framework: Next.js App Router | Pages Router
@@ -324,7 +153,7 @@ Extract and note:
 - likelyHotTables: users | sessions | products | orders | events | messages | posts | workspaces | unknown
 - dbScaleSignals: indexes, pagination, batching, transactions, connection pooler, replicas, cache layer, queue-backed writes
 
-These directly shape severity of every finding:
+These directly shape severity:
 -> No cache layer = every DB bottleneck hits harder
 -> isServerless + no connection pooler = pool exhaustion guaranteed at scale
 -> paymentLibs present = financial flows must be transactional
@@ -332,31 +161,14 @@ These directly shape severity of every finding:
 -> read-heavy apps fail first through query latency and DB CPU/IOPS
 -> write-heavy apps fail first through lock contention, slow transactions, and connection saturation
 
-**Step 1B - Infer project type from project structure:**
-
-Scan folder names in provided project structure content:
-- E-commerce: /products, /cart, /checkout, /orders -> core flows are browse -> product -> cart -> checkout
-- SaaS: /dashboard, /analytics, /billing, /workspace -> core flows are login -> dashboard -> data interaction
-- Social: /feed, /posts, /profile, /notifications -> core flows are feed -> post -> profile -> interact
-- API Service: /api only -> every endpoint matters equally
-- Unknown: note uncertainty, assume all data routes are high-traffic
-
-Write down stack summary and project type before continuing.
+No database dependencies, schema/model files, ORM/client config, or database-looking route/action files = report INFO AND STOP WITHOUT USING TOOLS.
 
 ---
 
-### PHASE 2 - Identify Investigation Targets (Minimal Tools)
+### PHASE 2 - Identify Investigation Targets
 
-**Step 2A - Determine architecture pattern from root structure:**
-
-Infer from provided context first:
-- App Router with route.ts files -> API Routes pattern
-- Files named actions.ts / paths containing /actions/ -> Server Actions pattern
-- Both present -> Mixed pattern (most common in modern Next.js)
-
-Use the injected file tree as authoritative. If the architecture pattern remains ambiguous, state the uncertainty and continue with the highest-signal files from the tree; do not spend tools trying to rebuild the tree.
-
-**Step 2B - Classify routes and actions by traffic priority:**
+Build a target list from package.json and file tree first. Use the injected file tree as authoritative; do not spend tools trying to rebuild the tree.
+Prefer files that own high-traffic reads, high-value writes, schema/indexes, or connection setup:
 
 CRITICAL - financial and core write operations:
 -> path contains: checkout, payment, order, purchase, confirm, verify-payment, create-order, razorpay, stripe, webhook
@@ -370,15 +182,15 @@ MEDIUM - authenticated user actions triggered less frequently:
 LOW - skip entirely:
 -> path contains: export, report, seed, migrate, debug, test, dummy
 
-**Step 2C - Build your investigation list:**
-
 Combine CRITICAL + top 3-4 HIGH items.
 Skip MEDIUM and LOW unless they are the only items found.
 Maximum 8 items total. Write the list explicitly before Phase 3.
+Use searchCode only if injected context is not enough to choose target files. Pick your own compact query based on repository signals. Do not run one search per keyword.
+Read highest-impact files first. Stop expanding when the failure mode is clear.
 
 ---
 
-### PHASE 3 - Deep File Analysis (Strategic Tool Calls)
+### PHASE 3 - Deep Database Analysis
 
 For each item in your investigation list, use **getFileContent** to read the route handler or server action file. Read highest-impact files first. Stop expanding optional targets when the failure mode is clear.
 
@@ -436,15 +248,15 @@ Any route + nested includes 3+ levels = WARNING
 Any high-write route + long transaction or shared-row update hotspot = CRITICAL if it blocks checkout/core writes, otherwise WARNING
 Any route + unbounded ORM query on a growing table = WARNING; CRITICAL if route is core/high-traffic
 
-After finding 3 CRITICAL issues, stop expanding the investigation to new optional files. Still complete required schema and connection-pool checks if the 15-call budget allows, and report every finding already discovered. If the tool budget is exhausted, stop and synthesize. Never continue tool use past the budget, and never omit a discovered finding just to hit a preferred finding count.
+After finding 3 CRITICAL issues, stop expanding the investigation to new optional files. Run schema/index/connection checks only when they are in scope and the remaining tool budget allows it. Report every in-scope database finding already discovered. If the tool budget is exhausted, stop and synthesize. Never continue tool use past the budget, and never omit a discovered database finding just to hit a preferred finding count.
 
 ---
 
-### PHASE 4 - Schema & Connection Pool Analysis (Targeted Tool Calls)
+### PHASE 4 - Schema, Index & Connection Pool Checks
 
-Run this phase after high-priority route analysis unless the 15-call hard limit has already been reached. Never exceed the tool budget to complete this phase.
+Run this phase only when database targets exist and the schema/client/config path is obvious from the injected file tree or discoverable with one compact search. Never exceed the tool budget to complete this phase.
 
-**Step 4A - Schema analysis:**
+Schema analysis:
 
 Use **getFileContent** to read the schema file. If the schema path is not visible in the tree, use at most one compact search to locate it.
 
@@ -462,7 +274,7 @@ Cross-reference with Phase 3 findings:
 
 Missing indexes on high-traffic filter columns are silent until the table hits ~100k rows, then queries degrade from milliseconds to seconds.
 
-**Step 4B - Connection pool analysis:**
+Connection pool analysis:
 
 Use **searchCode** to find "PrismaClient" (or equivalent ORM client instantiation) only if the likely ORM client file is not obvious from the tree. Prefer reading visible lib/db/prisma files directly.
 
@@ -480,7 +292,7 @@ Severity:
 
 ---
 
-### PHASE 5 - Synthesis & Scale Projection
+### PHASE 5 - Synthesis
 
 Combine all findings and project scale ceilings:
 
@@ -497,25 +309,6 @@ For each core DB flow, estimate the 10x QPS failure mode using:
 -> DB CPU + IOPS pressure: number of queries per request, rows scanned/read/written, fan-out from N+1, write amplification
 -> connection behavior: singleton/pooler, concurrent query count, serverless cold-start risk
 
-**Scale tier definitions:**
-
-10k users (light traffic, ~50-200 concurrent):
--> CRITICAL findings on core routes = service degradation
--> Warnings only = noticeable slowdowns, not failures
--> No issues = healthy
-
-100k users (~500-2,000 concurrent):
--> Any CRITICAL finding = failure under load
--> Multiple warnings on core routes = cascading slowdowns
--> Single warnings = degraded but survivable
--> No issues = healthy
-
-1M users (high scale, 10k+ concurrent):
--> No caching + high DB load = guaranteed failure
--> Full table scans on large tables = critical
--> Connection pool exhaustion = total outage
--> Well-indexed + pooled = degraded only on write bottlenecks
-
 For each CRITICAL finding, state: "This breaks at approximately X concurrent users because..."
 Be specific. Vague scale estimates are not useful.
 
@@ -528,7 +321,7 @@ State what fails first: query latency, lock contention, connection pool exhausti
 
 Return a compact findings digest, not a full report. The orchestrator will write the final user report.
 Do NOT include executive summary, stack recap, schema recap, connection-pool recap, priority list, code snippets, or "if you want" follow-ups.
-Do NOT call finalReport or any report tool. Output plain structured text only.
+Do NOT call any report tool. Output plain structured text only.
 
 Use exactly this format:
 
@@ -561,7 +354,7 @@ Severity definitions:
 - INFO: context the orchestrator may optionally use; never include generic advice here.
 
 Compression rules:
-- Report every distinct finding you discovered. Do not drop, hide, or silently discard a discovered finding because of the output budget or preferred count.
+- Report every distinct in-scope database finding you discovered. Drop non-database findings silently.
 - Keep the digest compact by merging only genuinely overlapping instances of the same root cause; do not merge unrelated findings.
 - Target 3-6 findings when possible, but exceeding that is required if you discovered more distinct findings.
 - Sort by severity, then 10x QPS impact.
@@ -710,7 +503,7 @@ Tool constraints:
 **Constraint:** Minimize tool usage - leverage the file tree and package.json above first, then make targeted tool calls only for confirmed high-traffic files. If you are near the tool limit, stop using tools and synthesize from available evidence.
 **Scope constraint:** Only report database scalability risks: query latency, lock contention, connection pool exhaustion, missing indexes, ORM misuse, N+1 queries, unbounded queries, transaction safety, DB CPU, and DB IOPS. Ignore unrelated issues silently.
 **Key question:** Can this database handle 10x queries per second without degrading latency?
-**Reporting constraint:** If you discover a distinct finding, you must report it. Do not drop findings to satisfy a preferred count or budget; keep within budget by compressing wording and merging only genuinely overlapping duplicates.
+**Reporting constraint:** If you discover a distinct in-scope database finding, you must report it. Drop non-database findings silently. Do not drop database findings to satisfy a preferred count or budget; keep within budget by compressing wording and merging only genuinely overlapping duplicates.
 
 Return the compact findings digest required by the system prompt. Do not call any report tool. Do not include executive summary, stack recap, priority list, code snippets, or follow-up offers.`,
                     },

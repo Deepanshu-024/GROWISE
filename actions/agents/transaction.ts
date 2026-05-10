@@ -4,7 +4,6 @@ import { createAgent } from "langchain";
 import { gpt5Mini } from "@/lib/llm";
 import prisma from "@/lib/prisma";
 import {
-    getRepoTreeTool,
     searchCodeTool,
     getFileContentTool,
     githubContextSchema,
@@ -109,15 +108,16 @@ REPOSITORY CONTEXT:
 STRATEGIC TOOL USAGE PHILOSOPHY:
 **Use tools ONLY when critical information cannot be inferred from existing context**
 - Start with provided package.json and repository file tree
-- The file tree above is the FULL project structure - use it to identify targets before making any tool calls
-- Make educated assumptions based on React/Next.js patterns
+- The file tree above is the FULL project structure - use it to identify payment targets before making tool calls
+- Make conservative findings from concrete evidence; if evidence is thin, report INFO instead of exploring endlessly
 - Tool calls should be surgical, not exhaustive
-- Maximum 15 tool calls total across all phases - spend them wisely
+- HARD LIMIT: use at most 15 tool calls total
+- After using 15 tool calls, stop immediately and return the findings digest from evidence gathered
+- Do not call another tool just to improve confidence, find line numbers, or validate a low-impact suspicion
 
-AVAILABLE TOOLS (Use Sparingly - repo details are injected automatically via context):
-1. **getRepoTree()** - No input needed. Returns full project file tree (only if the tree in context is incomplete or truncated)
-2. **getFileContent(path)** - Just pass the file path. For reading payment routes, checkout flows, webhook handlers, subscription logic, schema files
-3. **searchCode(query)** - Just pass the search query. For locating patterns: stripe, razorpay, paypal, paddle, checkout, payment_intent, subscription, webhook, refund, invoice
+AVAILABLE TOOLS:
+1. **getFileContent(path)** - Read payment routes, checkout flows, webhook handlers, subscription logic, refund/dispute code, schema files, and provider config
+2. **searchCode(query)** - Use only when package.json and file tree are not enough to choose target files. Choose compact repository-specific searches. Use at most 3 searches total. **EARLY EXIT RULE: if 2 consecutive searchCode calls return 0 results, stop all further searchCode usage immediately and fall back to navigating the file tree with getFileContent. Do not try alternative keywords or rephrased queries.**
 
 ---
 
@@ -185,13 +185,12 @@ Write down the classification before continuing.
 Combine CRITICAL + top 3-4 HIGH items.
 Maximum 8 items total. Write the list explicitly before Phase 3.
 
-Only call **getRepoTree** if the file tree in context is incomplete or ambiguous.
-
 **Step 2B - Search for payment patterns:**
 
-Use **searchCode** to gauge payment integration depth:
-- Search for: \`stripe\`, \`razorpay\`, \`checkout\`, \`webhook\`, \`payment_intent\`, \`subscription\`
-- This tells you whether the codebase has a mature payment integration or a minimal one
+Use **searchCode** only if the injected package.json and file tree are not enough to choose target files.
+Choose your own compact search query based on what the repository appears to use.
+Never run separate searches for each keyword.
+If your first 2 searchCode calls both return 0 results, abandon searchCode entirely. Switch to reading files directly via getFileContent using paths from the file tree.
 
 ---
 
@@ -245,9 +244,9 @@ Client-Side Security:
 
 ### PHASE 4 - Schema & Payment Model Analysis (Targeted Tool Calls)
 
-**Always run this phase when a schema file is visible.**
+Run this phase only when payment models exist AND the schema path is obvious from the injected file tree.
 
-Use **getFileContent** to read the schema once.
+Use **getFileContent** to read the schema once only if it fits inside the 15-tool total budget.
 
 Check:
 - Is there a Payment / Order / Subscription model with a provider ID field (stripePaymentIntentId, stripeSubscriptionId)?
@@ -265,7 +264,8 @@ Cross-reference with Phase 3:
 
 ### PHASE 5 - Synthesis
 
-After finding 3 CRITICAL issues, stop expanding the investigation to new non-required files. Still complete required schema checks and report every finding already discovered.
+After finding 3 CRITICAL issues, stop expanding the investigation to new optional files. Report every finding already discovered.
+If the tool budget is exhausted, stop and synthesize. Never continue tool use past the budget.
 
 ---
 
@@ -326,7 +326,6 @@ When your investigation is complete, output your findings as your final message.
 // --- Tools --------------------------------------------------------------------
 
 const payAgentTools = [
-    getRepoTreeTool,
     searchCodeTool,
     getFileContentTool,
 ];
@@ -442,11 +441,18 @@ REPOSITORY CONTEXT:
 - Start with the package.json and file tree provided above - identify payment provider, checkout routes, webhook handlers, subscription logic (Phase 1, no tools needed)
 - Classify payment paths by revenue impact before reading any files
 - Use getFileContent(path) strategically on checkout flows, webhook handlers, and subscription logic
-- Use searchCode(query) to find payment patterns (stripe, razorpay, checkout, webhook, subscription, payment_intent)
-- Read schema file once to check payment models, idempotency constraints, and provider ID fields
+- Use searchCode(query) only when package.json and file tree are not enough to choose target files
+- Read schema file once only when payment models exist and the schema path is obvious from the file tree
 - Tools already know the repo details - just pass the file path or search query
 
-**Constraint:** Minimize tool usage - leverage the file tree and package.json above first, then make targeted tool calls only for confirmed payment-related files.
+Tool constraints:
+- HARD LIMIT: use at most 15 tool calls total, then stop and return the digest, never exceed this limit
+- Decide yourself whether searchCode is needed; do not follow a preset search query
+- searchCode EARLY EXIT: if 2 consecutive searches return 0 results, stop using searchCode entirely and navigate the file tree with getFileContent instead
+- Use package.json and file tree before tools
+- If package.json and file tree show no payment surface, return INFO without tool calls
+
+**Constraint:** Minimize tool usage - leverage the file tree and package.json above first, then make targeted tool calls only for confirmed payment-related files. If you are near the tool limit, stop using tools and synthesize from available evidence.
 **Scope constraint:** Only investigate and report findings that directly affect payment processing, checkout flows, subscription lifecycle, webhook handling, or financial data integrity. Ignore non-payment findings silently; do not include them as INFO.
 **Reporting constraint:** If you discover a distinct in-scope payment finding, you must report it. Do not drop findings to satisfy a preferred count or budget; keep within budget by compressing wording and merging only genuinely overlapping duplicates.
 
