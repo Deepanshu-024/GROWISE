@@ -5,7 +5,7 @@ import { tool } from "langchain";
 import { z } from "zod";
 import { gpt5Mini } from "@/lib/llm";
 import prisma from "@/lib/prisma";
-import { getRepoTreeTool, searchCodeTool, getFileContentTool, githubContextSchema } from "../analysis/tools/agent-tools";
+import { searchCodeTool, getFileContentTool, githubContextSchema } from "../analysis/tools/agent-tools";
 
 // --- Types --------------------------------------------------------------------
 
@@ -276,14 +276,15 @@ STRATEGIC TOOL USAGE PHILOSOPHY:
 **Use tools ONLY when critical information cannot be inferred from existing context**
 - Start with provided package.json and repository file tree
 - The file tree above is the FULL project structure - use it to identify targets before making any tool calls
-- Make educated assumptions based on React/Next.js patterns
+- Make conservative findings from concrete evidence; if evidence is thin, report INFO instead of exploring endlessly
 - Tool calls should be surgical, not exhaustive
-- Maximum 15 tool calls total across all phases - spend them wisely
+- HARD LIMIT: use at most 15 tool calls total
+- After using 15 tool calls, stop immediately and return the findings digest from evidence gathered
+- Do not call another tool just to improve confidence, find line numbers, or validate a low-impact suspicion
 
-AVAILABLE TOOLS (Use Sparingly - repo details are injected automatically via context):
-1. **getRepoTree()** - No input needed. Returns full project file tree (only if the tree in context is incomplete or truncated)
-2. **getFileContent(path)** - Just pass the file path. For reading schema, ORM config, API routes, server actions
-3. **searchCode(query)** - Just pass the search query. For locating patterns: PrismaClient, $transaction, findMany, N+1
+AVAILABLE TOOLS:
+1. **getFileContent(path)** - Read schema files, ORM client config, high-priority API routes, server actions, DB utility files, and visible env examples
+2. **searchCode(query)** - Use only when package.json and file tree are not enough to choose target files or validate a specific database pattern. Choose compact repository-specific searches. Use at most 3 searches total. **EARLY EXIT RULE: if 2 consecutive searchCode calls return 0 results, stop all further searchCode usage immediately and fall back to navigating the file tree with getFileContent.**
 
 ---
 
@@ -332,7 +333,7 @@ Infer from provided context first:
 - Files named actions.ts / paths containing /actions/ -> Server Actions pattern
 - Both present -> Mixed pattern (most common in modern Next.js)
 
-Only call **getRepoTree** if the root structure is ambiguous and you cannot determine the architecture pattern. Do not retry if it fails.
+Use the injected file tree as authoritative. If the architecture pattern remains ambiguous, state the uncertainty and continue with the highest-signal files from the tree; do not spend tools trying to rebuild the tree.
 
 **Step 2B - Classify routes and actions by traffic priority:**
 
@@ -358,7 +359,7 @@ Maximum 8 items total. Write the list explicitly before Phase 3.
 
 ### PHASE 3 - Deep File Analysis (Strategic Tool Calls)
 
-For each item in your investigation list, use **getFileContent** to read the route handler or server action file.
+For each item in your investigation list, use **getFileContent** to read the route handler or server action file. Read highest-impact files first. Stop expanding optional targets when the failure mode is clear.
 
 **What to extract from each file:**
 
@@ -384,8 +385,9 @@ Expensive Aggregates - count/groupBy on unindexed columns:
 -> Dashboard analytics queries are the most common offender
 
 **For server action files specifically:**
--> Use **searchCode** to find all files importing a high-frequency action
+-> Use **searchCode** only when import frequency changes severity or target selection
 -> High import count = high traffic = higher severity for any issue found
+-> Do not run one search per action; use one compact query for the shared export/import pattern
 
 **Severity assignment per finding:**
 
@@ -397,17 +399,17 @@ HIGH route + missing transaction on writes = CRITICAL (if financial)
 MEDIUM route + any issue = WARNING
 Any route + nested includes 3+ levels = WARNING
 
-After finding 3 CRITICAL issues, stop expanding the investigation to new non-required files. Still complete required schema and connection-pool checks, and report every finding already discovered. Never omit a discovered finding just to hit a preferred finding count.
+After finding 3 CRITICAL issues, stop expanding the investigation to new optional files. Still complete required schema and connection-pool checks if the 15-call budget allows, and report every finding already discovered. If the tool budget is exhausted, stop and synthesize. Never continue tool use past the budget, and never omit a discovered finding just to hit a preferred finding count.
 
 ---
 
 ### PHASE 4 - Schema & Connection Pool Analysis (Targeted Tool Calls)
 
-**Always run this phase. Never skip it.**
+Run this phase after high-priority route analysis unless the 15-call hard limit has already been reached. Never exceed the tool budget to complete this phase.
 
 **Step 4A - Schema analysis:**
 
-Use **getFileContent** to read the schema file.
+Use **getFileContent** to read the schema file. If the schema path is not visible in the tree, use at most one compact search to locate it.
 
 Correct file paths by ORM:
 - Prisma -> prisma/schema.prisma (NOT src/lib/prisma.ts - that is the client)
@@ -425,7 +427,7 @@ Missing indexes on high-traffic filter columns are silent until the table hits ~
 
 **Step 4B - Connection pool analysis:**
 
-Use **searchCode** to find "PrismaClient" (or equivalent ORM client instantiation).
+Use **searchCode** to find "PrismaClient" (or equivalent ORM client instantiation) only if the likely ORM client file is not obvious from the tree. Prefer reading visible lib/db/prisma files directly.
 
 What to look for:
 - Is a singleton pattern used? (module-level client, not new Client() inside a function)
@@ -521,7 +523,6 @@ When your investigation is complete, output your findings as your final message.
 // --- Tools --------------------------------------------------------------------
 
 const dbAgentTools = [
-    getRepoTreeTool,
     searchCodeTool,
     getFileContentTool,
 ];
@@ -639,11 +640,18 @@ REPOSITORY CONTEXT:
 - Start with the package.json and file tree provided above - identify API routes, schema files, and lib files immediately (Phase 1, no tools needed)
 - Classify routes and actions by traffic priority before reading any files
 - Use getFileContent(path) strategically on high-priority targets only
-- Use searchCode(query) to validate patterns (singleton usage, transaction usage, import frequency)
+- Use searchCode(query) only when the file tree is not enough to choose a target or validate a high-impact pattern
 - Read schema file once to cross-reference all query findings at once
 - Tools already know the repo details - just pass the file path or search query
 
-**Constraint:** Minimize tool usage - leverage the file tree and package.json above first, then make targeted tool calls only for confirmed high-traffic files.
+Tool constraints:
+- HARD LIMIT: use at most 15 tool calls total, then stop and return the digest, never exceed this limit
+- searchCode limit: use at most 3 searches total
+- searchCode EARLY EXIT: if 2 consecutive searches return 0 results, stop using searchCode entirely and navigate the file tree with getFileContent instead
+- Decide yourself whether searchCode is needed; do not follow a preset search query
+- Use package.json and file tree before tools
+
+**Constraint:** Minimize tool usage - leverage the file tree and package.json above first, then make targeted tool calls only for confirmed high-traffic files. If you are near the tool limit, stop using tools and synthesize from available evidence.
 **Reporting constraint:** If you discover a distinct finding, you must report it. Do not drop findings to satisfy a preferred count or budget; keep within budget by compressing wording and merging only genuinely overlapping duplicates.
 
 Return the compact findings digest required by the system prompt. Do not call any report tool. Do not include executive summary, stack recap, priority list, code snippets, or follow-up offers.`,

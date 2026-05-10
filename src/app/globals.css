@@ -160,4 +160,119 @@
   .pulse-glow {
     animation: pulse-glow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   }
+
+  /* ── Compiled Report Styles ────────────────────────────── */
+  .report-content .rpt-h1 {
+    font-size: 1.75rem;
+    font-weight: 800;
+    margin: 2.5rem 0 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 2px solid oklch(0.488 0.243 264.376 / 40%);
+    color: oklch(0.985 0 0);
+    letter-spacing: -0.02em;
+  }
+  .report-content .rpt-h2 {
+    font-size: 1.35rem;
+    font-weight: 700;
+    margin: 2rem 0 0.75rem;
+    padding-left: 0.75rem;
+    border-left: 3px solid oklch(0.488 0.243 264.376);
+    color: oklch(0.985 0 0);
+  }
+  .report-content .rpt-h2:first-child {
+    margin-top: 0;
+  }
+  .report-content .rpt-h3 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin: 1.5rem 0 0.5rem;
+    color: oklch(0.9 0 0);
+  }
+  .report-content .rpt-h4 {
+    font-size: 0.95rem;
+    font-weight: 600;
+    margin: 1.25rem 0 0.4rem;
+    color: oklch(0.85 0 0);
+  }
+  .report-content .rpt-p {
+    font-size: 0.875rem;
+    line-height: 1.7;
+    color: oklch(0.78 0 0);
+    margin: 0.4rem 0;
+  }
+  .report-content .rpt-ul {
+    list-style: none;
+    padding-left: 0;
+    margin: 0.5rem 0;
+  }
+  .report-content .rpt-li {
+    font-size: 0.875rem;
+    line-height: 1.6;
+    color: oklch(0.78 0 0);
+    padding-left: 1.25rem;
+    position: relative;
+    margin: 0.25rem 0;
+  }
+  .report-content .rpt-li::before {
+    content: "›";
+    position: absolute;
+    left: 0;
+    color: oklch(0.488 0.243 264.376);
+    font-weight: 700;
+  }
+  .report-content .rpt-code {
+    background: oklch(0.269 0 0);
+    border: 1px solid oklch(1 0 0 / 8%);
+    padding: 0.1rem 0.35rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-family: var(--font-mono);
+    color: oklch(0.696 0.17 162.48);
+  }
+  .report-content .rpt-hr {
+    border: none;
+    border-top: 1px solid oklch(1 0 0 / 8%);
+    margin: 1.5rem 0;
+  }
+  .report-content .table-wrap {
+    overflow-x: auto;
+    margin: 1rem 0;
+    border-radius: 8px;
+    border: 1px solid oklch(1 0 0 / 10%);
+  }
+  .report-content table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+  }
+  .report-content thead {
+    background: oklch(0.205 0 0);
+  }
+  .report-content th {
+    padding: 0.6rem 0.75rem;
+    text-align: left;
+    font-weight: 600;
+    color: oklch(0.9 0 0);
+    border-bottom: 1px solid oklch(1 0 0 / 12%);
+    white-space: nowrap;
+  }
+  .report-content td {
+    padding: 0.5rem 0.75rem;
+    color: oklch(0.78 0 0);
+    border-bottom: 1px solid oklch(1 0 0 / 5%);
+  }
+  .report-content tbody tr:nth-child(even) {
+    background: oklch(0.18 0 0 / 50%);
+  }
+  .report-content tbody tr:hover {
+    background: oklch(0.22 0 0 / 60%);
+  }
+  .report-content strong {
+    color: oklch(0.95 0 0);
+    font-weight: 600;
+  }
+  .report-content em {
+    color: oklch(0.85 0 0);
+    font-style: italic;
+  }
 }
