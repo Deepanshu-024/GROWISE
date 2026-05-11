@@ -1,6 +1,6 @@
 ﻿import fs from "fs";
 import path from "path";
-import { createAgent } from "langchain";
+import { createAgent, toolCallLimitMiddleware } from "langchain";
 import { gpt5Mini } from "@/lib/llm";
 import prisma from "@/lib/prisma";
 import { searchCodeTool, getFileContentTool, githubContextSchema } from "../analysis/tools/agent-tools";
@@ -455,6 +455,19 @@ export async function runDatabaseAgent(
             tools: dbAgentTools,
             systemPrompt: SYSTEM_PROMPT,
             contextSchema: githubContextSchema,
+            middleware: [
+                // Hard-enforce 15 tool calls per run (prompt-based limit is advisory)
+                toolCallLimitMiddleware({
+                    runLimit: 15,
+                    exitBehavior: "end",
+                }),
+                // Hard-enforce 3 searchCode calls per run
+                toolCallLimitMiddleware({
+                    toolName: "searchCode",
+                    runLimit: 3,
+                    exitBehavior: "continue",
+                }),
+            ],
         });
 
         // NOTE: intermediateSteps and agentLog contain the raw accessToken

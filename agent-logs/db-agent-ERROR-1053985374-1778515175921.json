@@ -1,0 +1,16 @@
+{
+  "repositoryId": "1053985374",
+  "archetypeScore": 0.9,
+  "startTime": "2026-05-11T15:59:02.853Z",
+  "totalSteps": 9,
+  "steps": [
+    {
+      "stepNumber": 9,
+      "type": "error",
+      "timestamp": "2026-05-11T15:59:35.918Z",
+      "reasoning": "Recursion limit of 10 reached without hitting a stop condition. You can increase the limit by setting the \"recursionLimit\" config key.\n\nTroubleshooting URL: https://docs.langchain.com/oss/javascript/langgraph/GRAPH_RECURSION_LIMIT/\n"
+    }
+  ],
+  "error": "Recursion limit of 10 reached without hitting a stop condition. You can increase the limit by setting the \"recursionLimit\" config key.\n\nTroubleshooting URL: https://docs.langchain.com/oss/javascript/langgraph/GRAPH_RECURSION_LIMIT/\n",
+  "endTime": "2026-05-11T15:59:35.921Z"
+}
