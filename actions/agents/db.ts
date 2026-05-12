@@ -1,6 +1,7 @@
 ﻿import fs from "fs";
 import path from "path";
-import { createAgent, toolCallLimitMiddleware } from "langchain";
+import { createAgent, createMiddleware } from "langchain";
+import { ToolMessage } from "@langchain/core/messages";
 import { gpt5Mini } from "@/lib/llm";
 import prisma from "@/lib/prisma";
 import { searchCodeTool, getFileContentTool, githubContextSchema } from "../analysis/tools/agent-tools";
@@ -388,11 +389,10 @@ export async function runDatabaseAgent(
         totalSteps: 0,
         steps: [],
     };
-    let stepCounter = 0; // updated from langgraph_step metadata in callbacks
+    let toolCallCount = 0;
     let cumulativeInputTokens = 0;
     let cumulativeOutputTokens = 0;
     let lastToolName = "unknown";
-    let pendingDecisionReasoning: string | null = null;
 
     const emit = (event: StreamEvent) => {
         try { onEvent?.(event); } catch { /* ignore stream errors */ }
@@ -449,25 +449,55 @@ export async function runDatabaseAgent(
 
         console.log(`[dbAgent] Repo: ${repository.fullName} (${branch})`);
 
+        // -- Tool budget middleware (custom) ------------------------------
+        // The built-in toolCallLimitMiddleware sends a vague "Tool call limit exceeded"
+        // message that doesn't instruct the agent to produce its report.
+        // This custom middleware sends explicit instructions to generate findings.
+        const TOOL_BUDGET = 15;
+        const SEARCH_BUDGET = 3;
+        let _toolCalls = 0;
+        let _searchCalls = 0;
+
+        const toolBudgetMiddleware = createMiddleware({
+            name: "ToolBudgetMiddleware",
+            wrapToolCall: async (request: any, handler: any) => {
+                const toolName = request.toolCall?.name ?? "unknown";
+                _toolCalls++;
+
+                // Per-tool limit: searchCode
+                if (toolName === "searchCode") {
+                    _searchCalls++;
+                    if (_searchCalls > SEARCH_BUDGET) {
+                        console.log(`🚫 [Middleware] searchCode BLOCKED (${_searchCalls}/${SEARCH_BUDGET})`);
+                        return new ToolMessage({
+                            content: `searchCode budget exhausted (${SEARCH_BUDGET}/${SEARCH_BUDGET} used). Do NOT call searchCode again. Use getFileContent to navigate the file tree instead, or if you have enough evidence, generate your findings report now.`,
+                            tool_call_id: request.toolCall?.id ?? "unknown",
+                        });
+                    }
+                }
+
+                // Global tool limit
+                if (_toolCalls > TOOL_BUDGET) {
+                    console.log(`🚫 [Middleware] TOOL BUDGET EXHAUSTED (${_toolCalls}/${TOOL_BUDGET}) — blocking ${toolName}`);
+                    return new ToolMessage({
+                        content: `TOOL BUDGET EXHAUSTED (${TOOL_BUDGET}/${TOOL_BUDGET} calls used). You MUST stop calling tools immediately. Generate your final findings report NOW using all evidence gathered so far. Output the compact findings digest as described in your system prompt. Do not attempt any more tool calls.`,
+                        tool_call_id: request.toolCall?.id ?? "unknown",
+                    });
+                }
+
+                // Within budget — execute normally
+                console.log(`📋 [Middleware] Tool ${_toolCalls}/${TOOL_BUDGET}: ${toolName}`);
+                return handler(request);
+            },
+        });
+
         // -- Create agent & invoke ----------------------------------------
         const agent = createAgent({
             model: gpt5Mini,
             tools: dbAgentTools,
             systemPrompt: SYSTEM_PROMPT,
             contextSchema: githubContextSchema,
-            middleware: [
-                // Hard-enforce 15 tool calls per run (prompt-based limit is advisory)
-                toolCallLimitMiddleware({
-                    runLimit: 15,
-                    exitBehavior: "end",
-                }),
-                // Hard-enforce 3 searchCode calls per run
-                toolCallLimitMiddleware({
-                    toolName: "searchCode",
-                    runLimit: 3,
-                    exitBehavior: "continue",
-                }),
-            ],
+            middleware: [toolBudgetMiddleware],
         });
 
         // NOTE: intermediateSteps and agentLog contain the raw accessToken
@@ -524,69 +554,38 @@ Return the compact findings digest required by the system prompt. Do not call an
             },
             {
                 context: { owner, repo, branch, accessToken },
-                recursionLimit: 40,
+                recursionLimit: 50,
                 callbacks: [
                     {
-                        handleAgentAction(action: any, _runId: string, _parentRunId?: string, _tags?: string[], metadata?: Record<string, any>) {
-                            // Use LangGraph's built-in step counter if available
-                            if (metadata?.langgraph_step != null) {
-                                stepCounter = metadata.langgraph_step;
-                            } else {
-                                stepCounter++;
-                            }
-                            const toolName = resolveCallbackToolName(action, action.tool);
-                            lastToolName = toolName;
-                            pendingDecisionReasoning =
-                                typeof action.log === "string" && action.log.trim().length > 0
-                                    ? action.log.trim()
-                                    : null;
-                            agentLog.steps.push({
-                                stepNumber: stepCounter,
-                                type: "decision",
-                                timestamp: new Date().toISOString(),
-                                toolName,
-                                toolInput: action.toolInput,
-                                reasoning: action.log,
-                            });
-                            console.log("\nâ”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”");
-                            console.log(`[Step ${stepCounter}] AGENT DECISION`);
-                            console.log(`Tool: ${toolName}`);
-                            console.log(`Reasoning: ${action.log}`);
-                            console.log("â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”");
-                            if (pendingDecisionReasoning) {
-                                emit({
-                                    type: "agent_thought",
-                                    stepNumber: stepCounter,
-                                    timestamp: new Date().toISOString(),
-                                    elapsedMs: Date.now() - startTime,
-                                    toolName,
-                                    reasoning: pendingDecisionReasoning,
-                                    cumulativeTokens: {
-                                        inputTokens: cumulativeInputTokens,
-                                        outputTokens: cumulativeOutputTokens,
-                                        totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
-                                    },
-                                });
-                            }
-                        },
-                        handleToolStart(tool: any, input: string, _runId?: string, _parentRunId?: string, _tags?: string[], metadata?: Record<string, any>) {
-                            if (metadata?.langgraph_step != null) {
-                                stepCounter = metadata.langgraph_step;
-                            }
+                        handleToolStart(tool: any, input: string) {
+                            // Increment tool call counter (this is the only reliable callback that fires per tool call)
+                            toolCallCount++;
+
+                            // Resolve tool name — try multiple paths since LangChain serializes differently
                             const toolName = resolveCallbackToolName(tool, lastToolName);
                             lastToolName = toolName;
+
                             let parsedInput: unknown = input;
-                            try {
-                                parsedInput = JSON.parse(input);
-                            } catch {
-                                // keep raw string
-                            }
-                            console.log(`\n[Step ${stepCounter}/50] -> Calling ${toolName}`);
-                            console.log(`Input: ${JSON.stringify(parsedInput, null, 2).slice(0, 300)}`);
+                            try { parsedInput = JSON.parse(input); } catch { /* keep raw */ }
+
+                            const inputPreview = typeof parsedInput === "object"
+                                ? JSON.stringify(parsedInput).slice(0, 200)
+                                : String(parsedInput).slice(0, 200);
+
+                            console.log(`\n🔧 [Step ${toolCallCount}/15] TOOL CALL: ${toolName}`);
+                            console.log(`   Input: ${inputPreview}`);
+
+                            agentLog.steps.push({
+                                stepNumber: toolCallCount,
+                                type: "tool_call",
+                                timestamp: new Date().toISOString(),
+                                toolName,
+                                toolInput: parsedInput,
+                            });
 
                             emit({
                                 type: "tool_start",
-                                stepNumber: stepCounter,
+                                stepNumber: toolCallCount,
                                 timestamp: new Date().toISOString(),
                                 elapsedMs: Date.now() - startTime,
                                 toolName,
@@ -597,35 +596,61 @@ Return the compact findings digest required by the system prompt. Do not call an
                                     totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
                                 },
                             });
-                            pendingDecisionReasoning = null;
                         },
+
                         handleToolEnd(output: any) {
-                            const outputStr: string =
-                                typeof output === "string"
-                                    ? output
-                                    : JSON.stringify(output, null, 2) ?? "";
+                            // Extract clean content from LangChain ToolMessage objects
+                            let cleanOutput: string;
+                            if (typeof output === "string") {
+                                cleanOutput = output;
+                            } else if (output?.content != null) {
+                                // ToolMessage object — extract .content directly
+                                cleanOutput = typeof output.content === "string"
+                                    ? output.content
+                                    : JSON.stringify(output.content);
+                            } else if (output?.kwargs?.content != null) {
+                                // Serialized ToolMessage — extract from .kwargs.content
+                                cleanOutput = typeof output.kwargs.content === "string"
+                                    ? output.kwargs.content
+                                    : JSON.stringify(output.kwargs.content);
+                            } else {
+                                cleanOutput = JSON.stringify(output) ?? "";
+                            }
+
+                            // Detect middleware limit responses
+                            const isMiddlewareBlock = cleanOutput.includes("Tool call limit")
+                                || cleanOutput.includes("ToolCallLimitExceeded")
+                                || cleanOutput.includes("tool call limit reached");
+
+                            // Log to agent step history
                             const lastDecisionStep = [...agentLog.steps]
                                 .reverse()
                                 .find((s) => s.type === "decision");
                             if (lastDecisionStep) {
                                 lastDecisionStep.toolOutput =
-                                    outputStr.length > 3000
-                                        ? outputStr.slice(0, 3000) + "\n... [truncated]"
-                                        : outputStr;
+                                    cleanOutput.length > 3000
+                                        ? cleanOutput.slice(0, 3000) + "\n... [truncated]"
+                                        : cleanOutput;
                             }
-                            console.log(`[Step ${stepCounter}] â† Tool response: ${outputStr.length} chars`);
-                            console.log(`Preview: ${outputStr.slice(0, 500)}`);
+
+                            if (isMiddlewareBlock) {
+                                console.log(`🚫 [Step ${toolCallCount}/15] MIDDLEWARE BLOCKED: ${lastToolName}`);
+                                console.log(`   Reason: ${cleanOutput.slice(0, 300)}`);
+                            } else {
+                                console.log(`📄 [Step ${toolCallCount}/15] TOOL RESPONSE: ${lastToolName} (${cleanOutput.length} chars)`);
+                                console.log(`   Preview: ${cleanOutput.slice(0, 200)}${cleanOutput.length > 200 ? "..." : ""}`);
+                            }
 
                             emit({
                                 type: "tool_end",
-                                stepNumber: stepCounter,
+                                stepNumber: toolCallCount,
                                 timestamp: new Date().toISOString(),
                                 elapsedMs: Date.now() - startTime,
                                 toolName: lastToolName,
-                                toolOutput: outputStr.length > 5000
-                                    ? outputStr.slice(0, 5000) + "\n... [truncated]"
-                                    : outputStr,
-                                toolOutputLength: outputStr.length,
+                                toolOutput: cleanOutput.length > 5000
+                                    ? cleanOutput.slice(0, 5000) + "\n... [truncated]"
+                                    : cleanOutput,
+                                toolOutputLength: cleanOutput.length,
                                 cumulativeTokens: {
                                     inputTokens: cumulativeInputTokens,
                                     outputTokens: cumulativeOutputTokens,
@@ -633,12 +658,8 @@ Return the compact findings digest required by the system prompt. Do not call an
                                 },
                             });
                         },
-                        handleLLMEnd(output: any, _runId?: string, _parentRunId?: string, _tags?: string[], metadata?: Record<string, any>) {
-                            // Sync step counter from LangGraph metadata
-                            if (metadata?.langgraph_step != null) {
-                                stepCounter = metadata.langgraph_step;
-                            }
 
+                        handleLLMEnd(output: any) {
                             // Extract token usage from LangChain output metadata
                             const usage = output?.llmOutput?.tokenUsage
                                 ?? output?.llmOutput?.usage
@@ -656,39 +677,92 @@ Return the compact findings digest required by the system prompt. Do not call an
 
                             const generation = output.generations?.[0]?.[0];
                             const message = (generation as any)?.message;
-                            const fnCall = message?.additional_kwargs?.function_call;
-                            if (fnCall) {
-                                console.log(`[Step ${stepCounter}] Agent selecting: ${fnCall.name}`);
-                            } else {
-                                const content = String(message?.content ?? "").trim();
-                                if (content.length > 0) {
-                                    agentLog.steps.push({
-                                        stepNumber: stepCounter,
-                                        type: "agent_thought",
-                                        timestamp: new Date().toISOString(),
-                                        reasoning: content.slice(0, 1000),
-                                    });
-                                    console.log(`[Step ${stepCounter}] Agent thought: ${content.slice(0, 300)}`);
 
-                                    emit({
-                                        type: "agent_thought",
-                                        stepNumber: stepCounter,
-                                        timestamp: new Date().toISOString(),
-                                        elapsedMs: Date.now() - startTime,
-                                        reasoning: content.slice(0, 2000),
-                                        cumulativeTokens: {
-                                            inputTokens: cumulativeInputTokens,
-                                            outputTokens: cumulativeOutputTokens,
-                                            totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
-                                        },
-                                    });
+                            // --- Extract agent reasoning text from all possible locations ---
+                            // Different LangChain/model versions put content in different places
+                            let content = "";
+
+                            // 1. Direct message.content (most common)
+                            const rawContent = message?.content ?? message?.kwargs?.content;
+                            if (typeof rawContent === "string" && rawContent.trim().length > 0) {
+                                content = rawContent.trim();
+                            } else if (Array.isArray(rawContent)) {
+                                // OpenAI multi-part content format: [{type:"text", text:"..."}]
+                                const textParts = rawContent
+                                    .filter((p: any) => p?.type === "text" && p?.text)
+                                    .map((p: any) => p.text);
+                                if (textParts.length > 0) content = textParts.join("\n").trim();
+                            }
+
+                            // 2. Fallback: generation.text (older LangChain format)
+                            if (!content && typeof (generation as any)?.text === "string") {
+                                content = (generation as any).text.trim();
+                            }
+
+                            // 3. Fallback: reasoning_content (some models put CoT here)
+                            if (!content) {
+                                const reasoning = message?.reasoning_content ?? message?.additional_kwargs?.reasoning_content;
+                                if (typeof reasoning === "string" && reasoning.trim().length > 0) {
+                                    content = reasoning.trim();
                                 }
                             }
 
-                            // Always emit llm_end with token info
+                            if (content.length > 0) {
+                                agentLog.steps.push({
+                                    stepNumber: toolCallCount,
+                                    type: "agent_thought",
+                                    timestamp: new Date().toISOString(),
+                                    reasoning: content.slice(0, 1000),
+                                });
+                                console.log(`💭 [LLM] Agent reasoning: ${content.slice(0, 400)}${content.length > 400 ? "..." : ""}`);
+
+                                emit({
+                                    type: "agent_thought",
+                                    stepNumber: toolCallCount,
+                                    timestamp: new Date().toISOString(),
+                                    elapsedMs: Date.now() - startTime,
+                                    reasoning: content.slice(0, 2000),
+                                    cumulativeTokens: {
+                                        inputTokens: cumulativeInputTokens,
+                                        outputTokens: cumulativeOutputTokens,
+                                        totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                                    },
+                                });
+                            } else {
+                                // Debug: log what we received so we can trace missing reasoning
+                                const hasToolCalls = (message?.tool_calls?.length ?? 0) > 0
+                                    || (message?.additional_kwargs?.tool_calls?.length ?? 0) > 0;
+                                if (!hasToolCalls) {
+                                    console.log(`⚠️ [LLM] No content extracted. Keys: ${Object.keys(message ?? {}).join(", ")}`);
+                                }
+                            }
+
+                            // --- Extract tool selection info ---
+                            const toolCalls = message?.tool_calls ?? message?.additional_kwargs?.tool_calls ?? [];
+                            if (toolCalls.length > 0) {
+                                const names = toolCalls.map((tc: any) => tc.name ?? tc.function?.name ?? "?").join(", ");
+                                console.log(`🤖 [LLM] Selecting tool(s): ${names}`);
+                                // Pre-set lastToolName for the upcoming handleToolStart
+                                if (toolCalls[0]?.name) lastToolName = toolCalls[0].name;
+                                else if (toolCalls[0]?.function?.name) lastToolName = toolCalls[0].function.name;
+                            } else {
+                                // Check legacy function_call format
+                                const fnCall = message?.additional_kwargs?.function_call;
+                                if (fnCall) {
+                                    console.log(`🤖 [LLM] Selecting tool: ${fnCall.name}`);
+                                    lastToolName = fnCall.name;
+                                }
+                                // If no tool_calls and no fnCall, it's a pure text response (final answer)
+                            }
+
+                            // Token usage summary
+                            if (inputTokens > 0 || outputTokens > 0) {
+                                console.log(`📊 [LLM] Tokens: +${inputTokens}in/+${outputTokens}out (cumulative: ${cumulativeInputTokens}in/${cumulativeOutputTokens}out)`);
+                            }
+
                             emit({
                                 type: "llm_end",
-                                stepNumber: stepCounter,
+                                stepNumber: toolCallCount,
                                 timestamp: new Date().toISOString(),
                                 elapsedMs: Date.now() - startTime,
                                 tokenUsage: {
@@ -703,19 +777,21 @@ Return the compact findings digest required by the system prompt. Do not call an
                                 },
                             });
                         },
+
                         handleChainError(error: Error) {
                             agentLog.steps.push({
-                                stepNumber: ++stepCounter,
+                                stepNumber: toolCallCount,
                                 type: "error",
                                 timestamp: new Date().toISOString(),
                                 reasoning: error.message,
                             });
                             agentLog.error = error.message;
-                            console.log(`\n[dbAgent] CHAIN ERROR: ${error.message}`);
+
+                            console.log(`\n❌ [dbAgent] CHAIN ERROR: ${error.message}`);
 
                             emit({
                                 type: "error",
-                                stepNumber: stepCounter,
+                                stepNumber: toolCallCount,
                                 timestamp: new Date().toISOString(),
                                 elapsedMs: Date.now() - startTime,
                                 error: error.message,
@@ -731,7 +807,6 @@ Return the compact findings digest required by the system prompt. Do not call an
             }
         );
 
-        // -- Extract findings from the agent's final AI message ----------
         const messages = result.messages ?? [];
         const toolMessages = messages.filter(
             (msg: any) => msg.role === "tool" || msg.tool_calls?.length > 0
@@ -765,14 +840,12 @@ Return the compact findings digest required by the system prompt. Do not call an
             };
         }
 
-        console.log(
-            `[dbAgent] Complete. Findings length: ${rawFindings.length} chars, ${totalToolCalls} tool calls`
-        );
-        console.log(`[dbAgent] Execution time: ${executionTimeMs}ms`);
+        console.log(`\n✅ [dbAgent] Complete. ${totalToolCalls} tool calls, ${rawFindings.length} chars findings, ${executionTimeMs}ms`);
+        console.log(`📊 [dbAgent] Final tokens: ${cumulativeInputTokens}in / ${cumulativeOutputTokens}out`);
 
         // Finalize log
         agentLog.endTime = new Date().toISOString();
-        agentLog.totalSteps = stepCounter;
+        agentLog.totalSteps = toolCallCount;
         agentLog.finalReport = { rawFindings };
 
         // Write to JSON file
@@ -785,16 +858,12 @@ Return the compact findings digest required by the system prompt. Do not call an
         const logPath = path.join(logDir, logFileName);
         fs.writeFileSync(logPath, JSON.stringify(agentLog, null, 2));
 
-        console.log(`\n[dbAgent] â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”`);
-        console.log(`[dbAgent] Full log written to:`);
-        console.log(`[dbAgent] ${logPath}`);
-        console.log(`[dbAgent] Total steps: ${stepCounter}`);
-        console.log(`[dbAgent] â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”`);
+        console.log(`📁 [dbAgent] Log: ${logPath}`);
 
         // Emit done event with final totals
         emit({
             type: "done",
-            stepNumber: stepCounter,
+            stepNumber: toolCallCount,
             timestamp: new Date().toISOString(),
             elapsedMs: executionTimeMs,
             rawFindings,
@@ -822,7 +891,7 @@ Return the compact findings digest required by the system prompt. Do not call an
 
         // Write partial error log so you can see what happened before the crash
         agentLog.endTime = new Date().toISOString();
-        agentLog.totalSteps = stepCounter;
+        agentLog.totalSteps = toolCallCount;
         agentLog.error = message;
 
         const logDir = path.join(process.cwd(), "agent-logs");
@@ -837,7 +906,7 @@ Return the compact findings digest required by the system prompt. Do not call an
 
         emit({
             type: "done",
-            stepNumber: stepCounter,
+            stepNumber: toolCallCount,
             timestamp: new Date().toISOString(),
             elapsedMs: executionTimeMs,
             rawFindings: null,
