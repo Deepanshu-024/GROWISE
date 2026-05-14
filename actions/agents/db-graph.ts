@@ -3,6 +3,13 @@
 import fs from "fs";
 import path from "path";
 import { createAgent } from "langchain";
+import {
+    createToolBudgetMiddleware,
+    resolveCallbackToolName as _resolveToolName,
+    type StreamEvent as _StreamEvent,
+    type AgentLog as _AgentLog,
+    type AgentLogStep as _AgentLogStep,
+} from "./agent-middleware";
 import { tool } from "langchain";
 import { z } from "zod";
 import { gpt5Mini } from "@/lib/llm";
@@ -458,16 +465,19 @@ export async function runDatabaseGraphAgent(
         totalSteps: 0,
         steps: [],
     };
-    let stepCounter = 0;
-    let cumulativeInputTokens = 0;
-    let cumulativeOutputTokens = 0;
-    let lastToolName = "unknown";
-    let pendingDecisionReasoning: string | null = null;
-
     const emit = (event: StreamEvent) => {
         try { onEvent?.(event); } catch { /* ignore stream errors */ }
     };
 
+    const shared = {
+        toolCallCount: 0,
+        cumulativeInputTokens: 0,
+        cumulativeOutputTokens: 0,
+        lastToolName: "unknown",
+        startTime,
+        agentLog,
+        emit,
+    };
     try {
         const repository = await findRepositoryByAnyId(repositoryId, {
             id: true,
@@ -489,9 +499,9 @@ export async function runDatabaseGraphAgent(
                 elapsedMs: Date.now() - startTime,
                 error: errorMessage,
                 cumulativeTokens: {
-                    inputTokens: cumulativeInputTokens,
-                    outputTokens: cumulativeOutputTokens,
-                    totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                    inputTokens: shared.cumulativeInputTokens,
+                    outputTokens: shared.cumulativeOutputTokens,
+                    totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens,
                 },
             });
 
@@ -505,9 +515,9 @@ export async function runDatabaseGraphAgent(
                 executionTimeMs: Date.now() - startTime,
                 error: errorMessage,
                 cumulativeTokens: {
-                    inputTokens: cumulativeInputTokens,
-                    outputTokens: cumulativeOutputTokens,
-                    totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                    inputTokens: shared.cumulativeInputTokens,
+                    outputTokens: shared.cumulativeOutputTokens,
+                    totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens,
                 },
             });
 
@@ -539,9 +549,9 @@ export async function runDatabaseGraphAgent(
                 elapsedMs: Date.now() - startTime,
                 error: errorMessage,
                 cumulativeTokens: {
-                    inputTokens: cumulativeInputTokens,
-                    outputTokens: cumulativeOutputTokens,
-                    totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                    inputTokens: shared.cumulativeInputTokens,
+                    outputTokens: shared.cumulativeOutputTokens,
+                    totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens,
                 },
             });
 
@@ -555,9 +565,9 @@ export async function runDatabaseGraphAgent(
                 executionTimeMs: Date.now() - startTime,
                 error: errorMessage,
                 cumulativeTokens: {
-                    inputTokens: cumulativeInputTokens,
-                    outputTokens: cumulativeOutputTokens,
-                    totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                    inputTokens: shared.cumulativeInputTokens,
+                    outputTokens: shared.cumulativeOutputTokens,
+                    totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens,
                 },
             });
 
@@ -594,11 +604,19 @@ export async function runDatabaseGraphAgent(
                 `Graph nodes: ${graphNodeCount}, flows: ${graphFlowCount}.`,
         });
 
+        const { middleware: toolBudgetMiddleware } = createToolBudgetMiddleware({
+            agentLabel: "dbGraphAgent",
+            toolBudget: 15,
+            searchBudget: 3,
+            shared,
+        });
+
         const agent = createAgent({
             model: gpt5Mini,
             tools: dbGraphTools,
             systemPrompt: GRAPH_SYSTEM_PROMPT,
             contextSchema: githubContextSchema,
+            middleware: [toolBudgetMiddleware],
         });
 
         // NOTE: intermediateSteps and agentLog contain the raw accessToken
@@ -632,253 +650,32 @@ export async function runDatabaseGraphAgent(
                 recursionLimit: 150,
                 callbacks: [
                     {
-                        handleAgentAction(action: any) {
-                            stepCounter++;
-                            const toolName = resolveCallbackToolName(action, action.tool);
-                            lastToolName = toolName;
-                            pendingDecisionReasoning =
-                                typeof action.log === "string" && action.log.trim().length > 0
-                                    ? action.log.trim()
-                                    : null;
-                            agentLog.steps.push({
-                                stepNumber: stepCounter,
-                                type: "decision",
-                                timestamp: new Date().toISOString(),
-                                toolName,
-                                toolInput: action.toolInput,
-                                reasoning: action.log,
-                            });
-                            if (pendingDecisionReasoning) {
-                                emit({
-                                    type: "agent_thought",
-                                    stepNumber: stepCounter,
-                                    timestamp: new Date().toISOString(),
-                                    elapsedMs: Date.now() - startTime,
-                                    toolName,
-                                    reasoning: pendingDecisionReasoning,
-                                    cumulativeTokens: {
-                                        inputTokens: cumulativeInputTokens,
-                                        outputTokens: cumulativeOutputTokens,
-                                        totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
-                                    },
-                                });
-                            }
-                        },
                         handleToolStart(tool: any, input: string) {
-                            const toolName = resolveCallbackToolName(tool, lastToolName);
-                            lastToolName = toolName;
+                            shared.toolCallCount++;
+                            const toolName = resolveCallbackToolName(tool, shared.lastToolName);
+                            shared.lastToolName = toolName;
                             let parsedInput: unknown = input;
                             try { parsedInput = JSON.parse(input); } catch { /* keep raw */ }
-
-                            // ── Clean log ─────────────────────────────────────────────
-                            const inputPreview = JSON.stringify(parsedInput, null, 2).slice(0, 400);
-                            console.log([
-                                `\n┌─ STEP #${stepCounter} ─ TOOL CALL ─────────────────────────`,
-                                `│  Tool   : ${toolName}`,
-                                `│  Tokens : ${(cumulativeInputTokens + cumulativeOutputTokens).toLocaleString()} total (↑${cumulativeInputTokens.toLocaleString()} in / ↓${cumulativeOutputTokens.toLocaleString()} out)`,
-                                `│  Input  :`,
-                                inputPreview.split("\n").map(l => `│    ${l}`).join("\n"),
-                                `└─────────────────────────────────────────────────────`,
-                            ].join("\n"));
-
-                            emit({
-                                type: "tool_start",
-                                stepNumber: stepCounter,
-                                timestamp: new Date().toISOString(),
-                                elapsedMs: Date.now() - startTime,
-                                toolName,
-                                toolInput: parsedInput,
-                                cumulativeTokens: {
-                                    inputTokens: cumulativeInputTokens,
-                                    outputTokens: cumulativeOutputTokens,
-                                    totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
-                                },
-                            });
-                            pendingDecisionReasoning = null;
+                            const inputPreview = typeof parsedInput === "object"
+                                ? JSON.stringify(parsedInput).slice(0, 200)
+                                : String(parsedInput).slice(0, 200);
+                            console.log(`\n🔧 [Step ${shared.toolCallCount}/15] TOOL CALL: ${toolName}`);
+                            console.log(`   Input: ${inputPreview}`);
+                            agentLog.steps.push({ stepNumber: shared.toolCallCount, type: "tool_call", timestamp: new Date().toISOString(), toolName, toolInput: parsedInput });
+                            emit({ type: "tool_start", stepNumber: shared.toolCallCount, timestamp: new Date().toISOString(), elapsedMs: Date.now() - startTime, toolName, toolInput: parsedInput, cumulativeTokens: { inputTokens: shared.cumulativeInputTokens, outputTokens: shared.cumulativeOutputTokens, totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens } });
                         },
                         handleToolEnd(output: any) {
-                            // Extract the actual string content from LangChain's ToolMessage wrapper.
-                            // When output is a serialized ToolMessage object {lc:1, kwargs:{content:"..."}},
-                            // we want only the inner content string — not the whole object.
-                            let rawContent: string;
-                            if (typeof output === "string") {
-                                rawContent = output;
-                            } else if (typeof output?.kwargs?.content === "string") {
-                                rawContent = output.kwargs.content; // LangChain ToolMessage serialized
-                            } else if (typeof output?.content === "string") {
-                                rawContent = output.content;         // ToolMessage direct
-                            } else {
-                                rawContent = JSON.stringify(output, null, 2) ?? "";
-                            }
-                            const lastDecisionStep = [...agentLog.steps]
-                                .reverse()
-                                .find((s) => s.type === "decision");
-                            if (lastDecisionStep) {
-                                lastDecisionStep.toolOutput =
-                                    rawContent.length > 3000
-                                        ? rawContent.slice(0, 3000) + "\n... [truncated]"
-                                        : rawContent;
-                            }
-
-                            // Pretty-print JSON output
-                            let humanOutput = rawContent;
-                            if (rawContent.trim().startsWith("{") || rawContent.trim().startsWith("[")) {
-                                try { humanOutput = JSON.stringify(JSON.parse(rawContent), null, 2); } catch { /* keep raw */ }
-                            }
-
-                            // ── Clean log ─────────────────────────────────────────────
-                            const outputPreview = humanOutput.slice(0, 400);
-                            console.log([
-                                `│  Output : (${rawContent.length.toLocaleString()} chars)`,
-                                outputPreview.split("\n").map((l: string) => `│    ${l}`).join("\n"),
-                                humanOutput.length > 400 ? `│    … [${(humanOutput.length - 400).toLocaleString()} more chars]` : "",
-                                `└─────────────────────────────────────────────────────`,
-                            ].filter(Boolean).join("\n"));
-
-                            emit({
-                                type: "tool_end",
-                                stepNumber: stepCounter,
-                                timestamp: new Date().toISOString(),
-                                elapsedMs: Date.now() - startTime,
-                                toolName: lastToolName,
-                                toolOutput: humanOutput.length > 5000
-                                    ? humanOutput.slice(0, 5000) + "\n... [truncated]"
-                                    : humanOutput,
-                                toolOutputLength: rawContent.length,
-                                cumulativeTokens: {
-                                    inputTokens: cumulativeInputTokens,
-                                    outputTokens: cumulativeOutputTokens,
-                                    totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
-                                },
-                            });
+                            const outputStr = typeof output?.content === "string" ? output.content : typeof output === "string" ? output : JSON.stringify(output) ?? "";
+                            const preview = outputStr.slice(0, 300);
+                            console.log(`📄 [Step ${shared.toolCallCount}/15] TOOL RESPONSE: ${shared.lastToolName} (${outputStr.length} chars)`);
+                            console.log(`   Preview: ${preview}${outputStr.length > 300 ? "..." : ""}`);
+                            emit({ type: "tool_end", stepNumber: shared.toolCallCount, timestamp: new Date().toISOString(), elapsedMs: Date.now() - startTime, toolName: shared.lastToolName, toolOutput: outputStr.slice(0, 5000), toolOutputLength: outputStr.length, cumulativeTokens: { inputTokens: shared.cumulativeInputTokens, outputTokens: shared.cumulativeOutputTokens, totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens } });
                         },
-                        handleLLMEnd(output: any) {
-                            const generation = output.generations?.[0]?.[0];
-                            const message = (generation as any)?.message;
-
-                            // Token usage — standard format (usage_metadata) then legacy fallback
-                            const usageMeta = message?.usage_metadata ?? null;
-                            const legacyUsage = output?.llmOutput?.tokenUsage
-                                ?? output?.llmOutput?.usage
-                                ?? output?.llmOutput?.estimatedTokenUsage
-                                ?? null;
-
-                            let inputTokens = 0;
-                            let outputTokens = 0;
-                            if (usageMeta) {
-                                inputTokens = usageMeta.input_tokens ?? usageMeta.inputTokens ?? 0;
-                                outputTokens = usageMeta.output_tokens ?? usageMeta.outputTokens ?? 0;
-                            } else if (legacyUsage) {
-                                inputTokens = legacyUsage.promptTokens ?? legacyUsage.prompt_tokens ?? legacyUsage.inputTokens ?? legacyUsage.input_tokens ?? 0;
-                                outputTokens = legacyUsage.completionTokens ?? legacyUsage.completion_tokens ?? legacyUsage.outputTokens ?? legacyUsage.output_tokens ?? 0;
-                            }
-                            cumulativeInputTokens += inputTokens;
-                            cumulativeOutputTokens += outputTokens;
-
-                            // Tool name(s) from standard LangChain AIMessage format
-                            const resolveOneName = (tc: any): string | null =>
-                                tc?.name ?? tc?.function?.name ?? null;
-
-                            const stdToolCalls: any[] = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
-                            const altToolCalls: any[] = Array.isArray(message?.additional_kwargs?.tool_calls) ? message.additional_kwargs.tool_calls : [];
-                            const hasFnCall = Boolean(message?.additional_kwargs?.function_call);
-                            const isSelectingTool = stdToolCalls.length > 0 || altToolCalls.length > 0 || hasFnCall;
-
-                            const uniqueToolNames = [...new Set([
-                                ...stdToolCalls.map(resolveOneName),
-                                ...altToolCalls.map(resolveOneName),
-                                message?.additional_kwargs?.function_call?.name ?? null,
-                            ].filter(Boolean) as string[])];
-                            const primaryToolName = uniqueToolNames[0] ?? null;
-                            const toolNamesLabel = uniqueToolNames.join(", ") || "tool";
-
-                            // Store in lastToolName so handleToolStart can fall back to it
-                            if (primaryToolName) lastToolName = primaryToolName;
-
-                            // Reasoning text
-                            const content = String(message?.content ?? "").trim();
-
-                            if (content.length > 0) {
-                                const label = isSelectingTool
-                                    ? `[→ ${toolNamesLabel}]\n\n${content}`
-                                    : content;
-
-                                // ── Clean log ─────────────────────────────────────────
-                                console.log([
-                                    `\n┌─ STEP #${stepCounter} ─ REASONING ──────────────────────────`,
-                                    isSelectingTool ? `│  Selecting: ${toolNamesLabel}` : "",
-                                    `│  Tokens   : +${inputTokens.toLocaleString()} in / +${outputTokens.toLocaleString()} out  (Σ ${(cumulativeInputTokens + cumulativeOutputTokens).toLocaleString()})`,
-                                    `│  Reasoning:`,
-                                    content.slice(0, 300).split("\n").map(l => `│    ${l}`).join("\n"),
-                                    content.length > 300 ? `│    … [${content.length - 300} more chars]` : "",
-                                    `└─────────────────────────────────────────────────────`,
-                                ].filter(Boolean).join("\n"));
-
-                                agentLog.steps.push({
-                                    stepNumber: stepCounter,
-                                    type: "agent_thought",
-                                    timestamp: new Date().toISOString(),
-                                    reasoning: label,
-                                });
-                                emit({
-                                    type: "agent_thought",
-                                    stepNumber: stepCounter,
-                                    timestamp: new Date().toISOString(),
-                                    elapsedMs: Date.now() - startTime,
-                                    reasoning: label,
-                                    toolName: primaryToolName ?? undefined,
-                                    cumulativeTokens: {
-                                        inputTokens: cumulativeInputTokens,
-                                        outputTokens: cumulativeOutputTokens,
-                                        totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
-                                    },
-                                });
-                            } else if (isSelectingTool && primaryToolName) {
-                                // No prose — just log the selection and tokens
-                                console.log([
-                                    `\n┌─ STEP #${stepCounter} ─ SELECTING ──────────────────────────`,
-                                    `│  Tool   : ${toolNamesLabel}`,
-                                    `│  Tokens : +${inputTokens.toLocaleString()} in / +${outputTokens.toLocaleString()} out  (Σ ${(cumulativeInputTokens + cumulativeOutputTokens).toLocaleString()})`,
-                                    `└─────────────────────────────────────────────────────`,
-                                ].join("\n"));
-                            }
-
-                            emit({
-                                type: "llm_end",
-                                stepNumber: stepCounter,
-                                timestamp: new Date().toISOString(),
-                                elapsedMs: Date.now() - startTime,
-                                tokenUsage: { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens },
-                                cumulativeTokens: {
-                                    inputTokens: cumulativeInputTokens,
-                                    outputTokens: cumulativeOutputTokens,
-                                    totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
-                                },
-                            });
-                        },
-
                         handleChainError(error: Error) {
-                            agentLog.steps.push({
-                                stepNumber: ++stepCounter,
-                                type: "error",
-                                timestamp: new Date().toISOString(),
-                                reasoning: error.message,
-                            });
+                            agentLog.steps.push({ stepNumber: shared.toolCallCount, type: "error", timestamp: new Date().toISOString(), reasoning: error.message });
                             agentLog.error = error.message;
                             console.log(`\n[dbGraphAgent] CHAIN ERROR: ${error.message}`);
-
-                            emit({
-                                type: "error",
-                                stepNumber: stepCounter,
-                                timestamp: new Date().toISOString(),
-                                elapsedMs: Date.now() - startTime,
-                                error: error.message,
-                                cumulativeTokens: {
-                                    inputTokens: cumulativeInputTokens,
-                                    outputTokens: cumulativeOutputTokens,
-                                    totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
-                                },
-                            });
+                            emit({ type: "error", stepNumber: shared.toolCallCount, timestamp: new Date().toISOString(), elapsedMs: Date.now() - startTime, error: error.message, cumulativeTokens: { inputTokens: shared.cumulativeInputTokens, outputTokens: shared.cumulativeOutputTokens, totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens } });
                         },
                     },
                 ],
@@ -955,7 +752,7 @@ export async function runDatabaseGraphAgent(
 
         // Finalize log
         agentLog.endTime = new Date().toISOString();
-        agentLog.totalSteps = stepCounter;
+        agentLog.totalSteps = shared.toolCallCount;
         agentLog.finalReport = report;
 
         // Write to JSON file
@@ -971,22 +768,22 @@ export async function runDatabaseGraphAgent(
         console.log(`\n[dbAgent] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
         console.log(`[dbAgent] Full log written to:`);
         console.log(`[dbAgent] ${logPath}`);
-        console.log(`[dbAgent] Total steps: ${stepCounter}`);
+        console.log(`[dbAgent] Total steps: ${shared.toolCallCount}`);
         console.log(`[dbAgent] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 
         // Emit done event with final totals
         emit({
             type: "done",
-            stepNumber: stepCounter,
+            stepNumber: shared.toolCallCount,
             timestamp: new Date().toISOString(),
             elapsedMs: executionTimeMs,
             report,
             totalToolCalls,
             executionTimeMs,
             cumulativeTokens: {
-                inputTokens: cumulativeInputTokens,
-                outputTokens: cumulativeOutputTokens,
-                totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                inputTokens: shared.cumulativeInputTokens,
+                outputTokens: shared.cumulativeOutputTokens,
+                totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens,
             },
         });
 
@@ -1005,7 +802,7 @@ export async function runDatabaseGraphAgent(
 
         // Write partial error log so you can see what happened before the crash
         agentLog.endTime = new Date().toISOString();
-        agentLog.totalSteps = stepCounter;
+        agentLog.totalSteps = shared.toolCallCount;
         agentLog.error = message;
 
         const logDir = path.join(process.cwd(), "agent-logs");
@@ -1020,7 +817,7 @@ export async function runDatabaseGraphAgent(
 
         emit({
             type: "done",
-            stepNumber: stepCounter,
+            stepNumber: shared.toolCallCount,
             timestamp: new Date().toISOString(),
             elapsedMs: executionTimeMs,
             report: null,
@@ -1028,9 +825,9 @@ export async function runDatabaseGraphAgent(
             executionTimeMs,
             error: message,
             cumulativeTokens: {
-                inputTokens: cumulativeInputTokens,
-                outputTokens: cumulativeOutputTokens,
-                totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                inputTokens: shared.cumulativeInputTokens,
+                outputTokens: shared.cumulativeOutputTokens,
+                totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens,
             },
         });
 

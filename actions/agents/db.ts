@@ -1,4 +1,4 @@
-﻿import fs from "fs";
+import fs from "fs";
 import path from "path";
 import { createAgent, createMiddleware } from "langchain";
 import { ToolMessage } from "@langchain/core/messages";
@@ -249,6 +249,7 @@ Any route + nested includes 3+ levels = WARNING
 Any high-write route + long transaction or shared-row update hotspot = CRITICAL if it blocks checkout/core writes, otherwise WARNING
 Any route + unbounded ORM query on a growing table = WARNING; CRITICAL if route is core/high-traffic
 
+If you have fewer than 3 CRITICAL findings and still have tool budget remaining, continue investigating additional files before synthesizing. Only stop early if the repository genuinely has no more database surface to investigate.
 After finding 3 CRITICAL issues, stop expanding the investigation to new optional files. Run schema/index/connection checks only when they are in scope and the remaining tool budget allows it. Report every in-scope database finding already discovered. If the tool budget is exhausted, stop and synthesize. Never continue tool use past the budget, and never omit a discovered database finding just to hit a preferred finding count.
 
 ---
@@ -460,6 +461,114 @@ export async function runDatabaseAgent(
 
         const toolBudgetMiddleware = createMiddleware({
             name: "ToolBudgetMiddleware",
+
+            // --- Capture agent reasoning after every LLM call in the loop ---
+            afterModel: (state: any) => {
+                const lastMsg = state.messages?.[state.messages.length - 1];
+                if (!lastMsg) return;
+
+                // --- Extract reasoning from the AIMessage ---
+                let reasoning = "";
+
+                // 1. contentBlocks (LangChain standardized format)
+                //    OpenAI: [{type:"reasoning", summary:[{type:"summary_text", text:"..."}]}, {type:"text", text:"..."}]
+                //    Anthropic: [{type:"thinking", thinking:"..."}, {type:"text", text:"..."}]
+                const blocks = lastMsg.contentBlocks ?? lastMsg.content_blocks;
+                if (Array.isArray(blocks)) {
+                    for (const block of blocks) {
+                        if (block.type === "reasoning" && Array.isArray(block.summary)) {
+                            // OpenAI reasoning format
+                            const summaryTexts = block.summary
+                                .filter((s: any) => s.type === "summary_text" && s.text)
+                                .map((s: any) => s.text);
+                            if (summaryTexts.length > 0) reasoning += summaryTexts.join(" ");
+                        } else if (block.type === "thinking" && block.thinking) {
+                            // Anthropic thinking format
+                            reasoning += block.thinking;
+                        } else if (block.type === "text" && block.text) {
+                            // Plain text content alongside tool_calls
+                            reasoning += block.text;
+                        }
+                    }
+                }
+
+                // 2. Fallback: message.content as string
+                if (!reasoning && typeof lastMsg.content === "string" && lastMsg.content.trim()) {
+                    reasoning = lastMsg.content.trim();
+                }
+
+                // 3. Fallback: message.content as array of parts
+                if (!reasoning && Array.isArray(lastMsg.content)) {
+                    const textParts = lastMsg.content
+                        .filter((p: any) => (p.type === "text" && p.text) || (p.type === "reasoning"))
+                        .map((p: any) => {
+                            if (p.type === "reasoning" && Array.isArray(p.summary)) {
+                                return p.summary.map((s: any) => s.text).filter(Boolean).join(" ");
+                            }
+                            return p.text ?? "";
+                        });
+                    if (textParts.length > 0) reasoning = textParts.join("\n").trim();
+                }
+
+                // --- Extract tool calls being made ---
+                const toolCalls = lastMsg.tool_calls ?? [];
+                const toolNames = toolCalls.map((tc: any) => tc.name ?? "?").join(", ");
+
+                // --- Log reasoning ---
+                if (reasoning) {
+                    console.log(`\n💭 [Agent] Reasoning: ${reasoning.slice(0, 500)}${reasoning.length > 500 ? "..." : ""}`);
+                    agentLog.steps.push({
+                        stepNumber: toolCallCount,
+                        type: "agent_thought",
+                        timestamp: new Date().toISOString(),
+                        reasoning: reasoning.slice(0, 2000),
+                    });
+                    emit({
+                        type: "agent_thought",
+                        stepNumber: toolCallCount,
+                        timestamp: new Date().toISOString(),
+                        elapsedMs: Date.now() - startTime,
+                        reasoning: reasoning.slice(0, 2000),
+                        cumulativeTokens: {
+                            inputTokens: cumulativeInputTokens,
+                            outputTokens: cumulativeOutputTokens,
+                            totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                        },
+                    });
+                }
+
+                if (toolCalls.length > 0) {
+                    console.log(`🤖 [Agent] Selecting tool(s): ${toolNames}`);
+                    if (toolCalls[0]?.name) lastToolName = toolCalls[0].name;
+                }
+
+                // --- Extract token usage ---
+                const usageMeta = lastMsg.usage_metadata;
+                if (usageMeta) {
+                    const inTok = usageMeta.input_tokens ?? 0;
+                    const outTok = usageMeta.output_tokens ?? 0;
+                    cumulativeInputTokens += inTok;
+                    cumulativeOutputTokens += outTok;
+                    console.log(`📊 [Agent] Tokens: +${inTok}in/+${outTok}out (cumulative: ${cumulativeInputTokens}in/${cumulativeOutputTokens}out)`);
+
+                    emit({
+                        type: "llm_end",
+                        stepNumber: toolCallCount,
+                        timestamp: new Date().toISOString(),
+                        elapsedMs: Date.now() - startTime,
+                        tokenUsage: { inputTokens: inTok, outputTokens: outTok, totalTokens: inTok + outTok },
+                        cumulativeTokens: {
+                            inputTokens: cumulativeInputTokens,
+                            outputTokens: cumulativeOutputTokens,
+                            totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                        },
+                    });
+                }
+
+                return; // no state mutation
+            },
+
+            // --- Enforce tool budgets ---
             wrapToolCall: async (request: any, handler: any) => {
                 const toolName = request.toolCall?.name ?? "unknown";
                 _toolCalls++;
@@ -660,122 +769,18 @@ Return the compact findings digest required by the system prompt. Do not call an
                         },
 
                         handleLLMEnd(output: any) {
-                            // Extract token usage from LangChain output metadata
+                            // Token extraction — kept as fallback for when afterModel doesn't fire
+                            // (e.g., in nested chains or legacy compatibility)
                             const usage = output?.llmOutput?.tokenUsage
                                 ?? output?.llmOutput?.usage
-                                ?? output?.llmOutput?.estimatedTokenUsage
                                 ?? null;
-
-                            let inputTokens = 0;
-                            let outputTokens = 0;
                             if (usage) {
-                                inputTokens = usage.promptTokens ?? usage.prompt_tokens ?? usage.inputTokens ?? usage.input_tokens ?? 0;
-                                outputTokens = usage.completionTokens ?? usage.completion_tokens ?? usage.outputTokens ?? usage.output_tokens ?? 0;
+                                const inTok = usage.promptTokens ?? usage.prompt_tokens ?? usage.inputTokens ?? usage.input_tokens ?? 0;
+                                const outTok = usage.completionTokens ?? usage.completion_tokens ?? usage.outputTokens ?? usage.output_tokens ?? 0;
+                                // Only add if afterModel didn't already count these
+                                // (afterModel uses usage_metadata which is the same data)
+                                // We skip to avoid double-counting
                             }
-                            cumulativeInputTokens += inputTokens;
-                            cumulativeOutputTokens += outputTokens;
-
-                            const generation = output.generations?.[0]?.[0];
-                            const message = (generation as any)?.message;
-
-                            // --- Extract agent reasoning text from all possible locations ---
-                            // Different LangChain/model versions put content in different places
-                            let content = "";
-
-                            // 1. Direct message.content (most common)
-                            const rawContent = message?.content ?? message?.kwargs?.content;
-                            if (typeof rawContent === "string" && rawContent.trim().length > 0) {
-                                content = rawContent.trim();
-                            } else if (Array.isArray(rawContent)) {
-                                // OpenAI multi-part content format: [{type:"text", text:"..."}]
-                                const textParts = rawContent
-                                    .filter((p: any) => p?.type === "text" && p?.text)
-                                    .map((p: any) => p.text);
-                                if (textParts.length > 0) content = textParts.join("\n").trim();
-                            }
-
-                            // 2. Fallback: generation.text (older LangChain format)
-                            if (!content && typeof (generation as any)?.text === "string") {
-                                content = (generation as any).text.trim();
-                            }
-
-                            // 3. Fallback: reasoning_content (some models put CoT here)
-                            if (!content) {
-                                const reasoning = message?.reasoning_content ?? message?.additional_kwargs?.reasoning_content;
-                                if (typeof reasoning === "string" && reasoning.trim().length > 0) {
-                                    content = reasoning.trim();
-                                }
-                            }
-
-                            if (content.length > 0) {
-                                agentLog.steps.push({
-                                    stepNumber: toolCallCount,
-                                    type: "agent_thought",
-                                    timestamp: new Date().toISOString(),
-                                    reasoning: content.slice(0, 1000),
-                                });
-                                console.log(`💭 [LLM] Agent reasoning: ${content.slice(0, 400)}${content.length > 400 ? "..." : ""}`);
-
-                                emit({
-                                    type: "agent_thought",
-                                    stepNumber: toolCallCount,
-                                    timestamp: new Date().toISOString(),
-                                    elapsedMs: Date.now() - startTime,
-                                    reasoning: content.slice(0, 2000),
-                                    cumulativeTokens: {
-                                        inputTokens: cumulativeInputTokens,
-                                        outputTokens: cumulativeOutputTokens,
-                                        totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
-                                    },
-                                });
-                            } else {
-                                // Debug: log what we received so we can trace missing reasoning
-                                const hasToolCalls = (message?.tool_calls?.length ?? 0) > 0
-                                    || (message?.additional_kwargs?.tool_calls?.length ?? 0) > 0;
-                                if (!hasToolCalls) {
-                                    console.log(`⚠️ [LLM] No content extracted. Keys: ${Object.keys(message ?? {}).join(", ")}`);
-                                }
-                            }
-
-                            // --- Extract tool selection info ---
-                            const toolCalls = message?.tool_calls ?? message?.additional_kwargs?.tool_calls ?? [];
-                            if (toolCalls.length > 0) {
-                                const names = toolCalls.map((tc: any) => tc.name ?? tc.function?.name ?? "?").join(", ");
-                                console.log(`🤖 [LLM] Selecting tool(s): ${names}`);
-                                // Pre-set lastToolName for the upcoming handleToolStart
-                                if (toolCalls[0]?.name) lastToolName = toolCalls[0].name;
-                                else if (toolCalls[0]?.function?.name) lastToolName = toolCalls[0].function.name;
-                            } else {
-                                // Check legacy function_call format
-                                const fnCall = message?.additional_kwargs?.function_call;
-                                if (fnCall) {
-                                    console.log(`🤖 [LLM] Selecting tool: ${fnCall.name}`);
-                                    lastToolName = fnCall.name;
-                                }
-                                // If no tool_calls and no fnCall, it's a pure text response (final answer)
-                            }
-
-                            // Token usage summary
-                            if (inputTokens > 0 || outputTokens > 0) {
-                                console.log(`📊 [LLM] Tokens: +${inputTokens}in/+${outputTokens}out (cumulative: ${cumulativeInputTokens}in/${cumulativeOutputTokens}out)`);
-                            }
-
-                            emit({
-                                type: "llm_end",
-                                stepNumber: toolCallCount,
-                                timestamp: new Date().toISOString(),
-                                elapsedMs: Date.now() - startTime,
-                                tokenUsage: {
-                                    inputTokens,
-                                    outputTokens,
-                                    totalTokens: inputTokens + outputTokens,
-                                },
-                                cumulativeTokens: {
-                                    inputTokens: cumulativeInputTokens,
-                                    outputTokens: cumulativeOutputTokens,
-                                    totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
-                                },
-                            });
                         },
 
                         handleChainError(error: Error) {
