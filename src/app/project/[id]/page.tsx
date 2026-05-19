@@ -26,52 +26,16 @@ interface ChatMessage {
 
 /* ─── Markdown Renderer ────────────────────────────────────────────────────── */
 
-function MarkdownReport({ content }: { content: string }) {
-    // Convert markdown to styled HTML
-    const renderMarkdown = (md: string): string => {
-        let html = md
-            // Tables — full pipeline
-            .replace(/^(\|.+\|)\n(\|[\s:|-]+\|)\n((?:\|.+\|\n?)*)/gm, (_match, header: string, _sep: string, body: string) => {
-                const ths = header.split("|").filter((c: string) => c.trim()).map((c: string) => `<th>${c.trim()}</th>`).join("");
-                const rows = body.trim().split("\n").map((row: string) => {
-                    const tds = row.split("|").filter((c: string) => c.trim()).map((c: string) => `<td>${c.trim()}</td>`).join("");
-                    return `<tr>${tds}</tr>`;
-                }).join("");
-                return `<div class="table-wrap"><table><thead><tr>${ths}</tr></thead><tbody>${rows}</tbody></table></div>`;
-            })
-            // Headers
-            .replace(/^#### (.+)$/gm, '<h4 class="rpt-h4">$1</h4>')
-            .replace(/^### (.+)$/gm, '<h3 class="rpt-h3">$1</h3>')
-            .replace(/^## (.+)$/gm, '<h2 class="rpt-h2">$1</h2>')
-            .replace(/^# (.+)$/gm, '<h1 class="rpt-h1">$1</h1>')
-            // Bold + italic
-            .replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>")
-            .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-            .replace(/\*(.+?)\*/g, "<em>$1</em>")
-            // Inline code
-            .replace(/`([^`]+)`/g, '<code class="rpt-code">$1</code>')
-            // Unordered lists
-            .replace(/^- (.+)$/gm, '<li class="rpt-li">$1</li>')
-            // Horizontal rule
-            .replace(/^---$/gm, '<hr class="rpt-hr"/>')
-            // Line breaks → paragraphs for non-empty lines that aren't already tags
-            .split("\n").map(line => {
-                const trimmed = line.trim();
-                if (!trimmed) return "";
-                if (trimmed.startsWith("<")) return line;
-                return `<p class="rpt-p">${line}</p>`;
-            }).join("\n")
-            // Wrap consecutive <li> in <ul>
-            .replace(/((?:<li class="rpt-li">.*?<\/li>\n?)+)/g, '<ul class="rpt-ul">$1</ul>');
-
-        return html;
-    };
-
+function RawReport({ content }: { content: string }) {
     return (
-        <div
-            className="report-content"
-            dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }}
-        />
+        <div className="report-content">
+            <pre
+                className="whitespace-pre-wrap break-words text-sm leading-relaxed font-mono text-foreground/90 bg-muted/30 border border-border/50 rounded-xl p-6"
+                style={{ tabSize: 2 }}
+            >
+                {content}
+            </pre>
+        </div>
     );
 }
 
@@ -356,7 +320,7 @@ export default function ProjectPage() {
                 <div className="flex-1 overflow-y-auto min-w-0">
                     {hasReport ? (
                         <div className="max-w-4xl mx-auto px-6 sm:px-10 py-8">
-                            <MarkdownReport content={repository.compiledReport!} />
+                            <RawReport content={repository.compiledReport!} />
                         </div>
                     ) : (
                         <div className="flex flex-col items-center justify-center h-full gap-4 text-center px-8">
