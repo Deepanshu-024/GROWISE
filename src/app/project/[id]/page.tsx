@@ -1,19 +1,24 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
-    ArrowLeft, Loader2, Github, Send, Bot, User, FileText, MessageSquare, XCircle,
+    ArrowLeft, ArrowRight, Loader2, Github, Send, Bot, User, FileText,
+    MessageSquare, XCircle, Zap, Database, Globe, Cpu, Shield,
+    TrendingDown, Users, Scale, AlertTriangle, ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 /* ─── Types ────────────────────────────────────────────────────────────────── */
 
+interface Archetype { name: string; score: number }
+
 interface Repository {
     id: string;
     fullName: string;
     framework: string | null;
+    archetypes: Archetype[] | null;
     compiledReport: string | null;
     compiledReportAt: string | null;
     updatedAt: string;
@@ -24,17 +29,369 @@ interface ChatMessage {
     content: string;
 }
 
-/* ─── Markdown Renderer ────────────────────────────────────────────────────── */
+interface ParsedBirdsEye {
+    bottleneckLabel: string;
+    bottleneckExplanation: string;
+    maturityStage: string;
+    maturityJustification: string;
+    losses: string[];
+}
 
-function RawReport({ content }: { content: string }) {
+/* ─── XML Tag Helpers ──────────────────────────────────────────────────────── */
+
+function extractTag(xml: string, tag: string): string {
+    const re = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`);
+    const m = xml.match(re);
+    return m ? m[1].trim() : "";
+}
+
+function extractAllTags(xml: string, tag: string): string[] {
+    const re = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, "g");
+    const results: string[] = [];
+    let m;
+    while ((m = re.exec(xml)) !== null) results.push(m[1].trim());
+    return results;
+}
+
+function parseBirdsEye(report: string): ParsedBirdsEye | null {
+    const bev = extractTag(report, "birds_eye_view");
+    if (!bev) return null;
+    const pb = extractTag(bev, "primary_bottleneck");
+    const am = extractTag(bev, "architecture_maturity");
+    const pl = extractTag(bev, "possible_losses");
+    return {
+        bottleneckLabel: extractTag(pb, "label"),
+        bottleneckExplanation: extractTag(pb, "explanation"),
+        maturityStage: extractTag(am, "stage"),
+        maturityJustification: extractTag(am, "justification"),
+        losses: extractAllTags(pl, "loss"),
+    };
+}
+
+interface ParsedCluster {
+    risk: number | null;
+    severity: string;
+    title: string;
+    findingIds: string;
+    description: string;
+    technicalDetails: string;
+    files: { path: string; role: string }[];
+}
+
+function parseClusters(report: string): ParsedCluster[] {
+    const clustersBlock = extractTag(report, "clusters");
+    if (!clustersBlock) return [];
+    const clusterXmls = extractAllTags(clustersBlock, "cluster");
+    return clusterXmls.map((c) => {
+        const riskStr = extractTag(c, "risk");
+        const filesBlock = extractTag(c, "related_files");
+        const fileXmls = extractAllTags(filesBlock, "file");
+        return {
+            risk: riskStr ? parseInt(riskStr, 10) || null : null,
+            severity: extractTag(c, "severity"),
+            title: extractTag(c, "title"),
+            findingIds: extractTag(c, "finding_ids"),
+            description: extractTag(c, "description"),
+            technicalDetails: extractTag(c, "technical_details"),
+            files: fileXmls.map((f) => ({
+                path: extractTag(f, "path"),
+                role: extractTag(f, "role"),
+            })),
+        };
+    });
+}
+
+interface RevenueRiskItem {
+    clusterTitle: string;
+    findingIds: string;
+    consequence: string;
+}
+
+interface ParsedRevenueRisk {
+    directRevenueLoss: RevenueRiskItem[];
+    userChurnRisk: RevenueRiskItem[];
+    complianceRisk: RevenueRiskItem[];
+    verdict: string;
+}
+
+function parseRevenueRisk(report: string): ParsedRevenueRisk | null {
+    const rra = extractTag(report, "revenue_risk_assessment");
+    if (!rra) return null;
+    const parseItems = (category: string): RevenueRiskItem[] => {
+        const block = extractTag(rra, category);
+        if (!block) return [];
+        return extractAllTags(block, "item").map((item) => ({
+            clusterTitle: extractTag(item, "cluster_title"),
+            findingIds: extractTag(item, "finding_ids"),
+            consequence: extractTag(item, "consequence"),
+        }));
+    };
+    return {
+        directRevenueLoss: parseItems("direct_revenue_loss"),
+        userChurnRisk: parseItems("user_churn_risk"),
+        complianceRisk: parseItems("compliance_risk"),
+        verdict: extractTag(rra, "verdict"),
+    };
+}
+
+/* ─── Bottleneck Icon Helper ───────────────────────────────────────────────── */
+
+function BottleneckIcon({ label }: { label: string }) {
+    const l = label.toLowerCase();
+    if (l.includes("network")) return <Globe className="h-5 w-5" />;
+    if (l.includes("database")) return <Database className="h-5 w-5" />;
+    if (l.includes("api")) return <Globe className="h-5 w-5" />;
+    if (l.includes("compute")) return <Cpu className="h-5 w-5" />;
+    if (l.includes("auth")) return <Shield className="h-5 w-5" />;
+    return <Zap className="h-5 w-5" />;
+}
+
+function LossIcon({ type }: { type: string }) {
+    const t = type.toLowerCase();
+    if (t.includes("revenue")) return <TrendingDown className="h-4 w-4" />;
+    if (t.includes("churn")) return <Users className="h-4 w-4" />;
+    if (t.includes("compliance")) return <Scale className="h-4 w-4" />;
+    return <AlertTriangle className="h-4 w-4" />;
+}
+
+const MATURITY_COLORS: Record<string, { bg: string; text: string; border: string }> = {
+    "mvp-ready": { bg: "bg-amber-500/10", text: "text-amber-400", border: "border-amber-500/20" },
+    "growth-ready": { bg: "bg-blue-500/10", text: "text-blue-400", border: "border-blue-500/20" },
+    "enterprise-ready": { bg: "bg-emerald-500/10", text: "text-emerald-400", border: "border-emerald-500/20" },
+};
+
+const SEVERITY_COLORS: Record<string, { bg: string; text: string; border: string; dot: string }> = {
+    critical: { bg: "bg-red-500/10", text: "text-red-400", border: "border-red-500/20", dot: "bg-red-400" },
+    warning: { bg: "bg-amber-500/10", text: "text-amber-400", border: "border-amber-500/20", dot: "bg-amber-400" },
+    info: { bg: "bg-blue-500/10", text: "text-blue-400", border: "border-blue-500/20", dot: "bg-blue-400" },
+};
+
+/* ─── Clusters View Component ──────────────────────────────────────────────── */
+
+function ClustersView({ clusters }: { clusters: ParsedCluster[] }) {
+    const [openIdx, setOpenIdx] = useState<number | null>(null);
+
     return (
-        <div className="report-content">
-            <pre
-                className="whitespace-pre-wrap break-words text-sm leading-relaxed font-mono text-foreground/90 bg-muted/30 border border-border/50 rounded-xl p-6"
-                style={{ tabSize: 2 }}
+        <div className="space-y-3">
+            {clusters.map((cluster, i) => {
+                const isOpen = openIdx === i;
+                const sev = SEVERITY_COLORS[cluster.severity.toLowerCase()] || SEVERITY_COLORS.info;
+                return (
+                    <div key={i} className={`rounded-xl border ${isOpen ? sev.border : "border-border/50"} bg-card/50 overflow-hidden transition-colors`}>
+                        {/* Header — always visible */}
+                        <button
+                            onClick={() => setOpenIdx(isOpen ? null : i)}
+                            className="w-full flex items-center gap-3 p-4 text-left hover:bg-muted/30 transition-colors cursor-pointer"
+                        >
+                            {/* Risk badge */}
+                            {cluster.risk && (
+                                <span className="shrink-0 w-6 h-6 rounded-full bg-primary/20 text-primary text-xs font-bold flex items-center justify-center">
+                                    {cluster.risk}
+                                </span>
+                            )}
+                            {/* Severity dot */}
+                            <span className={`shrink-0 w-2.5 h-2.5 rounded-full ${sev.dot}`} />
+                            {/* Title + finding IDs */}
+                            <div className="flex-1 min-w-0">
+                                <p className="text-sm font-semibold truncate">{cluster.title}</p>
+                                <p className="text-[11px] text-muted-foreground truncate mt-0.5">{cluster.findingIds}</p>
+                            </div>
+                            {/* Severity label */}
+                            <span className={`shrink-0 px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${sev.bg} ${sev.text}`}>
+                                {cluster.severity}
+                            </span>
+                            {/* Chevron */}
+                            <ChevronRight className={`shrink-0 h-4 w-4 text-muted-foreground transition-transform ${isOpen ? "rotate-90" : ""}`} />
+                        </button>
+
+                        {/* Body — expanded */}
+                        {isOpen && (
+                            <div className="px-4 pb-4 space-y-3 border-t border-border/30 pt-3">
+                                <div>
+                                    <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Description</h4>
+                                    <p className="text-sm leading-relaxed text-foreground/90">{cluster.description}</p>
+                                </div>
+                                <div>
+                                    <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Technical Details</h4>
+                                    <p className="text-sm leading-relaxed text-foreground/80">{cluster.technicalDetails}</p>
+                                </div>
+                                {cluster.files.length > 0 && (
+                                    <div>
+                                        <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Related Files</h4>
+                                        <ul className="space-y-1">
+                                            {cluster.files.map((f, fi) => (
+                                                <li key={fi} className="flex items-start gap-2 text-xs">
+                                                    <code className="shrink-0 px-1.5 py-0.5 rounded bg-muted text-foreground/80 font-mono">{f.path}</code>
+                                                    <span className="text-muted-foreground">{f.role}</span>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                );
+            })}
+        </div>
+    );
+}
+
+/* ─── Revenue Risk View Component ──────────────────────────────────────────── */
+
+const RISK_CATEGORIES: { key: keyof Omit<ParsedRevenueRisk, "verdict">; label: string; icon: React.ReactNode; color: string }[] = [
+    { key: "directRevenueLoss", label: "Direct Revenue Loss", icon: <TrendingDown className="h-4 w-4" />, color: "text-red-400" },
+    { key: "userChurnRisk", label: "User Churn Risk", icon: <Users className="h-4 w-4" />, color: "text-amber-400" },
+    { key: "complianceRisk", label: "Compliance Risk", icon: <Scale className="h-4 w-4" />, color: "text-blue-400" },
+];
+
+function RevenueRiskView({ revenueRisk }: { revenueRisk: ParsedRevenueRisk }) {
+    return (
+        <div className="space-y-6">
+            {RISK_CATEGORIES.map((cat) => {
+                const items = revenueRisk[cat.key];
+                if (items.length === 0) return null;
+                return (
+                    <div key={cat.key} className="space-y-3">
+                        <div className={`flex items-center gap-2 ${cat.color}`}>
+                            {cat.icon}
+                            <h3 className="text-sm font-semibold uppercase tracking-wider">{cat.label}</h3>
+                        </div>
+                        <div className="space-y-2 pl-6">
+                            {items.map((item, i) => (
+                                <div key={i} className="rounded-lg border border-border/50 bg-card/50 p-3 space-y-1">
+                                    <div className="flex items-center justify-between gap-2">
+                                        <p className="text-sm font-medium">{item.clusterTitle}</p>
+                                        <span className="text-[10px] text-muted-foreground font-mono shrink-0">{item.findingIds}</span>
+                                    </div>
+                                    <p className="text-xs text-muted-foreground leading-relaxed">{item.consequence}</p>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                );
+            })}
+
+            {/* Verdict */}
+            {revenueRisk.verdict && (
+                <div className="rounded-xl border border-border/50 bg-card/50 p-4 space-y-2">
+                    <div className="flex items-center gap-2 text-foreground">
+                        <AlertTriangle className="h-4 w-4 text-orange-400" />
+                        <h3 className="text-sm font-semibold uppercase tracking-wider">Verdict</h3>
+                    </div>
+                    <p className="text-sm leading-relaxed text-foreground/90">{revenueRisk.verdict}</p>
+                </div>
+            )}
+        </div>
+    );
+}
+
+/* ─── Bird's-Eye View Component ────────────────────────────────────────────── */
+
+function BirdsEyeView({
+    birdsEye,
+    archetypes,
+    onViewClusters,
+}: {
+    birdsEye: ParsedBirdsEye;
+    archetypes: Archetype[] | null;
+    onViewClusters: () => void;
+}) {
+    const maturityKey = birdsEye.maturityStage.toLowerCase();
+    const mc = MATURITY_COLORS[maturityKey] || MATURITY_COLORS["mvp-ready"];
+    const sortedArchetypes = useMemo(
+        () => (archetypes ?? []).filter((a) => a.score > 0).sort((a, b) => b.score - a.score),
+        [archetypes],
+    );
+
+    return (
+        <div className="space-y-6">
+            {/* Title */}
+            <div>
+                <h2 className="text-xl font-bold tracking-tight">Scalability Overview</h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                    A bird&apos;s-eye view of your system&apos;s readiness to scale.
+                </p>
+            </div>
+
+            {/* Archetypes */}
+            {sortedArchetypes.length > 0 && (
+                <div className="space-y-2">
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Architecture</h3>
+                    <div className="flex flex-wrap gap-2">
+                        {sortedArchetypes.map((a) => (
+                            <span
+                                key={a.name}
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-primary/10 text-primary border border-primary/20"
+                            >
+                                {a.name}
+                                <span className="text-[10px] opacity-60">{Math.round(a.score * 100)}%</span>
+                            </span>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            {/* Cards Row */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {/* Bottleneck */}
+                <div className="rounded-xl border border-border/50 bg-card/50 p-4 space-y-2">
+                    <div className="flex items-center gap-2 text-red-400">
+                        <BottleneckIcon label={birdsEye.bottleneckLabel} />
+                        <span className="text-xs font-semibold uppercase tracking-wider">Primary Bottleneck</span>
+                    </div>
+                    <p className="text-sm font-semibold">{birdsEye.bottleneckLabel}</p>
+                    <p className="text-xs text-muted-foreground leading-relaxed">{birdsEye.bottleneckExplanation}</p>
+                </div>
+
+                {/* Maturity */}
+                <div className="rounded-xl border border-border/50 bg-card/50 p-4 space-y-2">
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                        <Zap className="h-4 w-4" />
+                        <span className="text-xs font-semibold uppercase tracking-wider">Architecture Maturity</span>
+                    </div>
+                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ${mc.bg} ${mc.text} border ${mc.border}`}>
+                        {birdsEye.maturityStage}
+                    </span>
+                    <p className="text-xs text-muted-foreground leading-relaxed">{birdsEye.maturityJustification}</p>
+                </div>
+
+                {/* Possible Losses */}
+                <div className="rounded-xl border border-border/50 bg-card/50 p-4 space-y-2">
+                    <div className="flex items-center gap-2 text-orange-400">
+                        <AlertTriangle className="h-4 w-4" />
+                        <span className="text-xs font-semibold uppercase tracking-wider">Risk Exposure</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                        {birdsEye.losses.map((loss) => (
+                            <span
+                                key={loss}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-orange-500/10 text-orange-400 border border-orange-500/20"
+                            >
+                                <LossIcon type={loss} />
+                                {loss}
+                            </span>
+                        ))}
+                    </div>
+                </div>
+            </div>
+
+            {/* CTA Arrow → Clusters */}
+            <button
+                onClick={onViewClusters}
+                className="w-full group flex items-center justify-between rounded-xl border border-border/50 bg-card/50 hover:bg-card/80 hover:border-primary/30 transition-all p-4 cursor-pointer"
             >
-                {content}
-            </pre>
+                <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-primary/10 border border-primary/20">
+                        <FileText className="h-5 w-5 text-primary" />
+                    </div>
+                    <div className="text-left">
+                        <p className="text-sm font-semibold">View Detailed Risk Clusters</p>
+                        <p className="text-xs text-muted-foreground">Explore all findings grouped by business impact</p>
+                    </div>
+                </div>
+                <ChevronRight className="h-5 w-5 text-muted-foreground group-hover:text-primary group-hover:translate-x-1 transition-all" />
+            </button>
         </div>
     );
 }
@@ -214,6 +571,7 @@ export default function ProjectPage() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [repository, setRepository] = useState<Repository | null>(null);
+    const [view, setView] = useState<"overview" | "clusters" | "risks">("overview");
 
     const fetchData = useCallback(async () => {
         try {
@@ -235,6 +593,16 @@ export default function ProjectPage() {
     useEffect(() => {
         if (id) fetchData();
     }, [id, fetchData]);
+
+    const birdsEye = useMemo(
+        () => (repository?.compiledReport ? parseBirdsEye(repository.compiledReport) : null),
+        [repository?.compiledReport],
+    );
+
+    const revenueRisk = useMemo(
+        () => (repository?.compiledReport ? parseRevenueRisk(repository.compiledReport) : null),
+        [repository?.compiledReport],
+    );
 
     /* Loading */
     if (loading) {
@@ -272,9 +640,18 @@ export default function ProjectPage() {
             <header className="shrink-0 bg-background/80 backdrop-blur-md border-b border-border/50 z-50">
                 <div className="max-w-[1920px] mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                        <Link href="/" className="p-2 -ml-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
-                            <ArrowLeft className="h-4 w-4" />
-                        </Link>
+                        {view !== "overview" ? (
+                            <button
+                                onClick={() => setView(view === "risks" ? "clusters" : "overview")}
+                                className="p-2 -ml-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                            >
+                                <ArrowLeft className="h-4 w-4" />
+                            </button>
+                        ) : (
+                            <Link href="/" className="p-2 -ml-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors">
+                                <ArrowLeft className="h-4 w-4" />
+                            </Link>
+                        )}
                         <div>
                             <h1 className="text-sm font-semibold flex items-center gap-2">
                                 <Github className="h-4 w-4 text-muted-foreground" />
@@ -307,7 +684,7 @@ export default function ProjectPage() {
                 </div>
             </header>
 
-            {/* ── Body: Chat + Report Side-by-Side ────────────────── */}
+            {/* ── Body ─────────────────────────────────────────────── */}
             <div className="flex-1 flex min-h-0 overflow-hidden">
                 {/* Left: Chat Panel */}
                 {hasReport && (
@@ -316,11 +693,74 @@ export default function ProjectPage() {
                     </div>
                 )}
 
-                {/* Right: Compiled Report */}
+                {/* Right: Content */}
                 <div className="flex-1 overflow-y-auto min-w-0">
                     {hasReport ? (
                         <div className="max-w-4xl mx-auto px-6 sm:px-10 py-8">
-                            <RawReport content={repository.compiledReport!} />
+                            {view === "overview" && birdsEye ? (
+                                <BirdsEyeView
+                                    birdsEye={birdsEye}
+                                    archetypes={repository.archetypes}
+                                    onViewClusters={() => setView("clusters")}
+                                />
+                            ) : view === "clusters" ? (
+                                <div className="space-y-5">
+                                    <div className="flex items-center justify-between">
+                                        <button
+                                            onClick={() => setView("overview")}
+                                            className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                                        >
+                                            <ArrowLeft className="h-3.5 w-3.5" />
+                                            Back to Overview
+                                        </button>
+                                        <span className="text-xs text-muted-foreground">
+                                            {parseClusters(repository.compiledReport!).length} clusters
+                                        </span>
+                                    </div>
+                                    <div>
+                                        <h2 className="text-xl font-bold tracking-tight">Risk Clusters</h2>
+                                        <p className="text-sm text-muted-foreground mt-1">All findings grouped by business impact. Click to expand.</p>
+                                    </div>
+                                    <ClustersView clusters={parseClusters(repository.compiledReport!)} />
+
+                                    {/* CTA → Revenue Risk */}
+                                    {revenueRisk && (
+                                        <button
+                                            onClick={() => setView("risks")}
+                                            className="w-full group flex items-center justify-between rounded-xl border border-border/50 bg-card/50 hover:bg-card/80 hover:border-orange-500/30 transition-all p-4 cursor-pointer mt-4"
+                                        >
+                                            <div className="flex items-center gap-3">
+                                                <div className="p-2 rounded-lg bg-orange-500/10 border border-orange-500/20">
+                                                    <TrendingDown className="h-5 w-5 text-orange-400" />
+                                                </div>
+                                                <div className="text-left">
+                                                    <p className="text-sm font-semibold">Revenue Risk Assessment</p>
+                                                    <p className="text-xs text-muted-foreground">See how risks translate to revenue, churn, and compliance impact</p>
+                                                </div>
+                                            </div>
+                                            <ChevronRight className="h-5 w-5 text-muted-foreground group-hover:text-orange-400 group-hover:translate-x-1 transition-all" />
+                                        </button>
+                                    )}
+                                </div>
+                            ) : (
+                                /* Revenue Risk Assessment view */
+                                <div className="space-y-5">
+                                    <div className="flex items-center justify-between">
+                                        <button
+                                            onClick={() => setView("clusters")}
+                                            className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                                        >
+                                            <ArrowLeft className="h-3.5 w-3.5" />
+                                            Back to Clusters
+                                        </button>
+                                    </div>
+                                    <div>
+                                        <h2 className="text-xl font-bold tracking-tight">Revenue Risk Assessment</h2>
+                                        <p className="text-sm text-muted-foreground mt-1">How scalability risks translate to business impact.</p>
+                                    </div>
+                                    {revenueRisk && <RevenueRiskView revenueRisk={revenueRisk} />}
+                                </div>
+                            )}
                         </div>
                     ) : (
                         <div className="flex flex-col items-center justify-center h-full gap-4 text-center px-8">
