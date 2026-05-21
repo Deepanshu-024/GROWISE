@@ -177,15 +177,15 @@ function ClustersView({ clusters }: { clusters: ParsedCluster[] }) {
                 const isOpen = openIdx === i;
                 const sev = SEVERITY_COLORS[cluster.severity.toLowerCase()] || SEVERITY_COLORS.info;
                 return (
-                    <div key={i} className={`rounded-xl border ${isOpen ? sev.border : "border-white/[0.06]"} bg-white/[0.03] backdrop-blur-sm overflow-hidden transition-all duration-300 ${isOpen ? sev.glow : "hover:border-white/[0.12]"}`}>
+                    <div key={i} className={`rounded-xl border ${isOpen ? sev.border : "border-white/6"} bg-white/3 backdrop-blur-sm overflow-hidden transition-all duration-300 ${isOpen ? sev.glow : "hover:border-white/12"}`}>
                         {/* Header — always visible */}
                         <button
                             onClick={() => setOpenIdx(isOpen ? null : i)}
-                            className="w-full flex items-center gap-3 p-4 text-left hover:bg-white/[0.04] transition-colors cursor-pointer"
+                            className="w-full flex items-center gap-3 p-4 text-left hover:bg-white/4 transition-colors cursor-pointer"
                         >
                             {/* Risk badge */}
                             {cluster.risk && (
-                                <span className="shrink-0 w-7 h-7 rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-500 text-white text-xs font-bold flex items-center justify-center shadow-[0_0_10px_rgba(168,85,247,0.5)]">
+                                <span className="shrink-0 w-7 h-7 rounded-full bg-linear-to-br from-violet-500 to-fuchsia-500 text-white text-xs font-bold flex items-center justify-center shadow-[0_0_10px_rgba(168,85,247,0.5)]">
                                     {cluster.risk}
                                 </span>
                             )}
@@ -259,10 +259,10 @@ function RevenueRiskView({ revenueRisk }: { revenueRisk: ParsedRevenueRisk }) {
                         </div>
                         <div className="space-y-2 pl-6">
                             {items.map((item, i) => (
-                                <div key={i} className={`rounded-lg border ${cat.borderColor} bg-white/[0.03] backdrop-blur-sm p-3.5 space-y-1.5`}>
+                                <div key={i} className={`rounded-lg border ${cat.borderColor} bg-white/3 backdrop-blur-sm p-3.5 space-y-1.5`}>
                                     <div className="flex items-center justify-between gap-2">
                                         <p className="text-sm font-semibold">{item.clusterTitle}</p>
-                                        <span className="text-[10px] text-muted-foreground font-mono shrink-0 px-1.5 py-0.5 rounded bg-white/[0.04]">{item.findingIds}</span>
+                                        <span className="text-[10px] text-muted-foreground font-mono shrink-0 px-1.5 py-0.5 rounded bg-white/4">{item.findingIds}</span>
                                     </div>
                                     <p className="text-xs text-muted-foreground leading-relaxed">{item.consequence}</p>
                                 </div>
@@ -274,7 +274,7 @@ function RevenueRiskView({ revenueRisk }: { revenueRisk: ParsedRevenueRisk }) {
 
             {/* Verdict */}
             {revenueRisk.verdict && (
-                <div className="rounded-xl border border-fuchsia-500/20 bg-gradient-to-r from-fuchsia-500/[0.04] to-rose-500/[0.04] backdrop-blur-sm p-5 space-y-2 shadow-[0_0_20px_rgba(217,70,239,0.06)]">
+                <div className="rounded-xl border border-fuchsia-500/20 bg-linear-to-r from-fuchsia-500/4 to-rose-500/4 backdrop-blur-sm p-5 space-y-2 shadow-[0_0_20px_rgba(217,70,239,0.06)]">
                     <div className="flex items-center gap-2">
                         <AlertTriangle className="h-4 w-4 text-fuchsia-400" />
                         <h3 className="text-sm font-bold uppercase tracking-wider text-fuchsia-300">Verdict</h3>
@@ -308,7 +308,7 @@ function BirdsEyeView({
         <div className="space-y-8">
             {/* Title */}
             <div>
-                <h2 className="text-2xl font-bold tracking-tight bg-gradient-to-r from-violet-400 via-fuchsia-300 to-cyan-400 bg-clip-text text-transparent">Scalability Overview</h2>
+                <h2 className="text-2xl font-bold tracking-tight bg-linear-to-r from-violet-400 via-fuchsia-300 to-cyan-400 bg-clip-text text-transparent">Scalability Overview</h2>
                 <p className="text-sm text-muted-foreground mt-1.5">
                     A bird&apos;s-eye view of your system&apos;s readiness to scale.
                 </p>
@@ -335,7 +335,7 @@ function BirdsEyeView({
             {/* Cards Row */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 {/* Bottleneck */}
-                <div className="rounded-xl border border-emerald-500/20 bg-white/[0.03] backdrop-blur-sm p-5 space-y-3 shadow-[0_0_20px_rgba(52,211,153,0.06)] hover:shadow-[0_0_25px_rgba(52,211,153,0.1)] transition-shadow">
+                <div className="rounded-xl border border-emerald-500/20 bg-white/3 backdrop-blur-sm p-5 space-y-3 shadow-[0_0_20px_rgba(52,211,153,0.06)] hover:shadow-[0_0_25px_rgba(52,211,153,0.1)] transition-shadow">
                     <div className="flex items-center gap-2 text-emerald-400">
                         <BottleneckIcon label={birdsEye.bottleneckLabel} />
                         <span className="text-xs font-semibold uppercase tracking-wider">Primary Bottleneck</span>
@@ -345,7 +345,7 @@ function BirdsEyeView({
                 </div>
 
                 {/* Maturity */}
-                <div className={`rounded-xl border ${mc.border} bg-white/[0.03] backdrop-blur-sm p-5 space-y-3 ${mc.glow} hover:shadow-[0_0_25px_rgba(34,211,238,0.1)] transition-shadow`}>
+                <div className={`rounded-xl border ${mc.border} bg-white/3 backdrop-blur-sm p-5 space-y-3 ${mc.glow} hover:shadow-[0_0_25px_rgba(34,211,238,0.1)] transition-shadow`}>
                     <div className={`flex items-center gap-2 ${mc.text}`}>
                         <Zap className="h-4 w-4" />
                         <span className="text-xs font-semibold uppercase tracking-wider">Architecture Maturity</span>
@@ -357,7 +357,7 @@ function BirdsEyeView({
                 </div>
 
                 {/* Possible Losses */}
-                <div className="rounded-xl border border-fuchsia-500/20 bg-white/[0.03] backdrop-blur-sm p-5 space-y-3 shadow-[0_0_20px_rgba(217,70,239,0.06)] hover:shadow-[0_0_25px_rgba(217,70,239,0.1)] transition-shadow">
+                <div className="rounded-xl border border-fuchsia-500/20 bg-white/3 backdrop-blur-sm p-5 space-y-3 shadow-[0_0_20px_rgba(217,70,239,0.06)] hover:shadow-[0_0_25px_rgba(217,70,239,0.1)] transition-shadow">
                     <div className="flex items-center gap-2 text-fuchsia-400">
                         <AlertTriangle className="h-4 w-4" />
                         <span className="text-xs font-semibold uppercase tracking-wider">Risk Exposure</span>
@@ -379,10 +379,10 @@ function BirdsEyeView({
             {/* CTA Arrow → Clusters */}
             <button
                 onClick={onViewClusters}
-                className="w-full group flex items-center justify-between rounded-xl border border-violet-500/20 bg-gradient-to-r from-violet-500/[0.05] to-cyan-500/[0.05] hover:from-violet-500/[0.1] hover:to-cyan-500/[0.1] hover:border-violet-400/40 transition-all p-5 cursor-pointer shadow-[0_0_20px_rgba(139,92,246,0.06)] hover:shadow-[0_0_30px_rgba(139,92,246,0.12)]"
+                className="w-full group flex items-center justify-between rounded-xl border border-violet-500/20 bg-linear-to-r from-violet-500/5 to-cyan-500/5 hover:from-violet-500/10 hover:to-cyan-500/10 hover:border-violet-400/40 transition-all p-5 cursor-pointer shadow-[0_0_20px_rgba(139,92,246,0.06)] hover:shadow-[0_0_30px_rgba(139,92,246,0.12)]"
             >
                 <div className="flex items-center gap-3">
-                    <div className="p-2.5 rounded-lg bg-gradient-to-br from-violet-500/20 to-cyan-500/20 border border-violet-400/20">
+                    <div className="p-2.5 rounded-lg bg-linear-to-br from-violet-500/20 to-cyan-500/20 border border-violet-400/20">
                         <FileText className="h-5 w-5 text-violet-300" />
                     </div>
                     <div className="text-left">
@@ -637,7 +637,7 @@ export default function ProjectPage() {
     return (
         <div className="h-screen flex flex-col bg-background overflow-hidden">
             {/* ── Header ──────────────────────────────────────────── */}
-            <header className="shrink-0 bg-background/60 backdrop-blur-xl border-b border-white/[0.06] z-50">
+            <header className="shrink-0 bg-background/60 backdrop-blur-xl border-b border-white/6 z-50">
                 <div className="max-w-[1920px] mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
                     <div className="flex items-center gap-3">
                         {view !== "overview" ? (
@@ -688,7 +688,7 @@ export default function ProjectPage() {
             <div className="flex-1 flex min-h-0 overflow-hidden">
                 {/* Left: Chat Panel */}
                 {hasReport && (
-                    <div className="w-[380px] shrink-0 border-r border-white/[0.06] bg-white/[0.02] backdrop-blur-sm flex flex-col min-h-0">
+                    <div className="w-[380px] shrink-0 border-r border-white/6 bg-white/2 backdrop-blur-sm flex flex-col min-h-0">
                         <ChatPanel repositoryId={id} />
                     </div>
                 )}
@@ -718,7 +718,7 @@ export default function ProjectPage() {
                                         </span>
                                     </div>
                                     <div>
-                                        <h2 className="text-2xl font-bold tracking-tight bg-gradient-to-r from-violet-400 via-fuchsia-300 to-cyan-400 bg-clip-text text-transparent">Risk Clusters</h2>
+                                        <h2 className="text-2xl font-bold tracking-tight bg-linear-to-r from-violet-400 via-fuchsia-300 to-cyan-400 bg-clip-text text-transparent">Risk Clusters</h2>
                                         <p className="text-sm text-muted-foreground mt-1">All findings grouped by business impact. Click to expand.</p>
                                     </div>
                                     <ClustersView clusters={parseClusters(repository.compiledReport!)} />
@@ -727,10 +727,10 @@ export default function ProjectPage() {
                                     {revenueRisk && (
                                         <button
                                             onClick={() => setView("risks")}
-                                            className="w-full group flex items-center justify-between rounded-xl border border-fuchsia-500/20 bg-gradient-to-r from-fuchsia-500/[0.05] to-rose-500/[0.05] hover:from-fuchsia-500/[0.1] hover:to-rose-500/[0.1] hover:border-fuchsia-400/40 transition-all p-5 cursor-pointer mt-4 shadow-[0_0_20px_rgba(217,70,239,0.06)] hover:shadow-[0_0_30px_rgba(217,70,239,0.12)]"
+                                            className="w-full group flex items-center justify-between rounded-xl border border-fuchsia-500/20 bg-linear-to-r from-fuchsia-500/5 to-rose-500/5 hover:from-fuchsia-500/10 hover:to-rose-500/10 hover:border-fuchsia-400/40 transition-all p-5 cursor-pointer mt-4 shadow-[0_0_20px_rgba(217,70,239,0.06)] hover:shadow-[0_0_30px_rgba(217,70,239,0.12)]"
                                         >
                                             <div className="flex items-center gap-3">
-                                                <div className="p-2.5 rounded-lg bg-gradient-to-br from-fuchsia-500/20 to-rose-500/20 border border-fuchsia-400/20">
+                                                <div className="p-2.5 rounded-lg bg-linear-to-br from-fuchsia-500/20 to-rose-500/20 border border-fuchsia-400/20">
                                                     <TrendingDown className="h-5 w-5 text-fuchsia-300" />
                                                 </div>
                                                 <div className="text-left">
@@ -755,7 +755,7 @@ export default function ProjectPage() {
                                         </button>
                                     </div>
                                     <div>
-                                        <h2 className="text-2xl font-bold tracking-tight bg-gradient-to-r from-violet-400 via-fuchsia-300 to-cyan-400 bg-clip-text text-transparent">Revenue Risk Assessment</h2>
+                                        <h2 className="text-2xl font-bold tracking-tight bg-linear-to-r from-violet-400 via-fuchsia-300 to-cyan-400 bg-clip-text text-transparent">Revenue Risk Assessment</h2>
                                         <p className="text-sm text-muted-foreground mt-1">How scalability risks translate to business impact.</p>
                                     </div>
                                     {revenueRisk && <RevenueRiskView revenueRisk={revenueRisk} />}
