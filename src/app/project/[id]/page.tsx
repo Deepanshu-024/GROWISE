@@ -308,9 +308,9 @@ function BirdsEyeView({
         <div className="space-y-8">
             {/* Title */}
             <div>
-                <h2 className="text-2xl font-bold tracking-tight bg-linear-to-r from-violet-400 via-fuchsia-300 to-cyan-400 bg-clip-text text-transparent">Scalability Overview</h2>
+                <h2 className="text-2xl font-bold tracking-tight">Bird&apos;s-Eye View</h2>
                 <p className="text-sm text-muted-foreground mt-1.5">
-                    A bird&apos;s-eye view of your system&apos;s readiness to scale.
+                    An overview of the project scale analysis.
                 </p>
             </div>
 
@@ -322,76 +322,78 @@ function BirdsEyeView({
                         {sortedArchetypes.map((a) => (
                             <span
                                 key={a.name}
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-cyan-500/10 text-cyan-300 border border-cyan-400/25 shadow-[0_0_8px_rgba(34,211,238,0.1)] hover:shadow-[0_0_14px_rgba(34,211,238,0.2)] transition-shadow"
+                                className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium bg-cyan-500/10 text-cyan-300 border border-cyan-400/25 shadow-[0_0_8px_rgba(34,211,238,0.1)] hover:shadow-[0_0_14px_rgba(34,211,238,0.2)] transition-shadow"
                             >
                                 {a.name}
-                                <span className="text-[10px] opacity-60">{Math.round(a.score * 100)}%</span>
                             </span>
                         ))}
                     </div>
                 </div>
             )}
 
-            {/* Cards Row */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {/* Bottleneck */}
-                <div className="rounded-xl border border-emerald-500/20 bg-white/3 backdrop-blur-sm p-5 space-y-3 shadow-[0_0_20px_rgba(52,211,153,0.06)] hover:shadow-[0_0_25px_rgba(52,211,153,0.1)] transition-shadow">
-                    <div className="flex items-center gap-2 text-emerald-400">
-                        <BottleneckIcon label={birdsEye.bottleneckLabel} />
-                        <span className="text-xs font-semibold uppercase tracking-wider">Primary Bottleneck</span>
+            {/* Cards + Right Arrow */}
+            <div className="flex gap-4 items-stretch">
+                {/* Cards — 3 columns */}
+                <div className="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    {/* Primary Bottleneck */}
+                    <div className="rounded-xl border border-white/10 bg-white/3 backdrop-blur-sm p-5 space-y-3 shadow-[0_0_16px_rgba(255,255,255,0.03)] hover:border-white/20 transition-all">
+                        <div className="flex items-center gap-2 text-emerald-400">
+                            <BottleneckIcon label={birdsEye.bottleneckLabel} />
+                            <span className="text-xs font-semibold uppercase tracking-wider">Primary Bottleneck</span>
+                        </div>
+                        <p className="text-sm font-bold text-foreground">{birdsEye.bottleneckLabel}</p>
+                        <p className="text-xs text-muted-foreground leading-relaxed">{birdsEye.bottleneckExplanation}</p>
                     </div>
-                    <p className="text-sm font-bold text-emerald-300">{birdsEye.bottleneckLabel}</p>
-                    <p className="text-xs text-muted-foreground leading-relaxed">{birdsEye.bottleneckExplanation}</p>
+
+                    {/* Product Maturity */}
+                    <div className="rounded-xl border border-white/10 bg-white/3 backdrop-blur-sm p-5 space-y-3 shadow-[0_0_16px_rgba(255,255,255,0.03)] hover:border-white/20 transition-all">
+                        <div className={`flex items-center gap-2 ${mc.text}`}>
+                            <Zap className="h-4 w-4" />
+                            <span className="text-xs font-semibold uppercase tracking-wider">Product Maturity</span>
+                        </div>
+                        <p className="text-sm font-bold text-foreground">{birdsEye.maturityStage}</p>
+                        <p className="text-xs text-muted-foreground leading-relaxed">{birdsEye.maturityJustification}</p>
+                    </div>
+
+                    {/* Risk Exposure */}
+                    <div className="rounded-xl border border-white/10 bg-white/3 backdrop-blur-sm p-5 space-y-3 shadow-[0_0_16px_rgba(255,255,255,0.03)] hover:border-white/20 transition-all">
+                        <div className="flex items-center gap-2 text-fuchsia-400">
+                            <AlertTriangle className="h-4 w-4" />
+                            <span className="text-xs font-semibold uppercase tracking-wider">Risk Exposure</span>
+                        </div>
+                        <div className="space-y-2">
+                            {birdsEye.losses.map((loss, idx) => {
+                                const severity = idx === 0 ? "High" : idx === 1 ? "Medium" : "Low";
+                                const sevColor = severity === "High"
+                                    ? "bg-rose-500/20 text-rose-400"
+                                    : severity === "Medium"
+                                        ? "bg-amber-500/20 text-amber-300"
+                                        : "bg-cyan-500/20 text-cyan-300";
+                                return (
+                                    <div key={loss} className="flex items-center justify-between gap-2">
+                                        <div className="flex items-center gap-2">
+                                            <LossIcon type={loss} />
+                                            <span className="text-sm">{loss}</span>
+                                        </div>
+                                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${sevColor}`}>
+                                            {severity}
+                                        </span>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
                 </div>
 
-                {/* Maturity */}
-                <div className={`rounded-xl border ${mc.border} bg-white/3 backdrop-blur-sm p-5 space-y-3 ${mc.glow} hover:shadow-[0_0_25px_rgba(34,211,238,0.1)] transition-shadow`}>
-                    <div className={`flex items-center gap-2 ${mc.text}`}>
-                        <Zap className="h-4 w-4" />
-                        <span className="text-xs font-semibold uppercase tracking-wider">Architecture Maturity</span>
-                    </div>
-                    <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold ${mc.bg} ${mc.text} border ${mc.border}`}>
-                        {birdsEye.maturityStage}
-                    </span>
-                    <p className="text-xs text-muted-foreground leading-relaxed">{birdsEye.maturityJustification}</p>
-                </div>
-
-                {/* Possible Losses */}
-                <div className="rounded-xl border border-fuchsia-500/20 bg-white/3 backdrop-blur-sm p-5 space-y-3 shadow-[0_0_20px_rgba(217,70,239,0.06)] hover:shadow-[0_0_25px_rgba(217,70,239,0.1)] transition-shadow">
-                    <div className="flex items-center gap-2 text-fuchsia-400">
-                        <AlertTriangle className="h-4 w-4" />
-                        <span className="text-xs font-semibold uppercase tracking-wider">Risk Exposure</span>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                        {birdsEye.losses.map((loss) => (
-                            <span
-                                key={loss}
-                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-fuchsia-500/10 text-fuchsia-300 border border-fuchsia-400/25 shadow-[0_0_6px_rgba(217,70,239,0.15)]"
-                            >
-                                <LossIcon type={loss} />
-                                {loss}
-                            </span>
-                        ))}
-                    </div>
-                </div>
+                {/* Right-side CTA arrow with pulsing glow */}
+                <button
+                    onClick={onViewClusters}
+                    className="shrink-0 self-center cursor-pointer hover:scale-110 transition-transform"
+                    title="View Detailed Risk Clusters"
+                >
+                    <span className="text-3xl font-light text-violet-400 animate-pulse-glow">&gt;</span>
+                </button>
             </div>
-
-            {/* CTA Arrow → Clusters */}
-            <button
-                onClick={onViewClusters}
-                className="w-full group flex items-center justify-between rounded-xl border border-violet-500/20 bg-linear-to-r from-violet-500/5 to-cyan-500/5 hover:from-violet-500/10 hover:to-cyan-500/10 hover:border-violet-400/40 transition-all p-5 cursor-pointer shadow-[0_0_20px_rgba(139,92,246,0.06)] hover:shadow-[0_0_30px_rgba(139,92,246,0.12)]"
-            >
-                <div className="flex items-center gap-3">
-                    <div className="p-2.5 rounded-lg bg-linear-to-br from-violet-500/20 to-cyan-500/20 border border-violet-400/20">
-                        <FileText className="h-5 w-5 text-violet-300" />
-                    </div>
-                    <div className="text-left">
-                        <p className="text-sm font-bold">View Detailed Risk Clusters</p>
-                        <p className="text-xs text-muted-foreground">Explore all findings grouped by business impact</p>
-                    </div>
-                </div>
-                <ChevronRight className="h-5 w-5 text-muted-foreground group-hover:text-violet-400 group-hover:translate-x-1 transition-all" />
-            </button>
         </div>
     );
 }
@@ -507,11 +509,10 @@ function ChatPanel({ repositoryId }: { repositoryId: string }) {
                             </div>
                         )}
                         <div
-                            className={`max-w-[85%] rounded-xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap ${
-                                msg.role === "user"
+                            className={`max-w-[85%] rounded-xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap ${msg.role === "user"
                                     ? "bg-primary text-primary-foreground rounded-br-sm"
                                     : "bg-muted/60 border border-border/50 rounded-bl-sm"
-                            }`}
+                                }`}
                         >
                             {msg.content}
                         </div>
