@@ -183,12 +183,6 @@ function ClustersView({ clusters }: { clusters: ParsedCluster[] }) {
                             onClick={() => setOpenIdx(isOpen ? null : i)}
                             className="w-full flex items-center gap-3 p-4 text-left hover:bg-white/4 transition-colors cursor-pointer"
                         >
-                            {/* Risk badge */}
-                            {cluster.risk && (
-                                <span className="shrink-0 w-7 h-7 rounded-full bg-linear-to-br from-violet-500 to-fuchsia-500 text-white text-xs font-bold flex items-center justify-center shadow-[0_0_10px_rgba(168,85,247,0.5)]">
-                                    {cluster.risk}
-                                </span>
-                            )}
                             {/* Severity dot */}
                             <span className={`shrink-0 w-2.5 h-2.5 rounded-full ${sev.dot} ${sev.glow}`} />
                             {/* Title + finding IDs */}
@@ -248,29 +242,35 @@ const RISK_CATEGORIES: { key: keyof Omit<ParsedRevenueRisk, "verdict">; label: s
 function RevenueRiskView({ revenueRisk }: { revenueRisk: ParsedRevenueRisk }) {
     return (
         <div className="space-y-6">
-            {RISK_CATEGORIES.map((cat) => {
+            {RISK_CATEGORIES.map((cat, catIdx) => {
                 const items = revenueRisk[cat.key];
                 if (items.length === 0) return null;
                 return (
-                    <div key={cat.key} className="space-y-3">
-                        <div className={`flex items-center gap-2 ${cat.color}`}>
-                            {cat.icon}
-                            <h3 className="text-sm font-semibold uppercase tracking-wider">{cat.label}</h3>
-                        </div>
-                        <div className="space-y-2 pl-6">
-                            {items.map((item, i) => (
-                                <div key={i} className={`rounded-lg border ${cat.borderColor} bg-white/3 backdrop-blur-sm p-3.5 space-y-1.5`}>
-                                    <div className="flex items-center justify-between gap-2">
-                                        <p className="text-sm font-semibold">{item.clusterTitle}</p>
-                                        <span className="text-[10px] text-muted-foreground font-mono shrink-0 px-1.5 py-0.5 rounded bg-white/4">{item.findingIds}</span>
+                    <div key={cat.key}>
+                        {catIdx > 0 && <div className="border-t border-white/15 my-5" />}
+                        <div className="space-y-3">
+                            <div className={`flex items-center gap-2 ${cat.color}`}>
+                                {cat.icon}
+                                <h3 className="text-sm font-semibold uppercase tracking-wider">{cat.label}</h3>
+                            </div>
+                            <div className="space-y-2">
+                                {items.map((item, i) => (
+                                    <div key={i} className={`rounded-lg border ${cat.borderColor} bg-white/3 backdrop-blur-sm p-3.5 space-y-1.5`}>
+                                        <div className="flex items-center justify-between gap-2">
+                                            <p className="text-sm font-semibold">{item.clusterTitle}</p>
+                                            <span className="text-[10px] text-muted-foreground font-mono shrink-0 px-1.5 py-0.5 rounded bg-white/4">{item.findingIds}</span>
+                                        </div>
+                                        <p className="text-xs text-muted-foreground leading-relaxed">{item.consequence}</p>
                                     </div>
-                                    <p className="text-xs text-muted-foreground leading-relaxed">{item.consequence}</p>
-                                </div>
-                            ))}
+                                ))}
+                            </div>
                         </div>
                     </div>
                 );
             })}
+
+            {/* Divider before verdict */}
+            {revenueRisk.verdict && <div className="border-t border-white/10 my-5" />}
 
             {/* Verdict */}
             {revenueRisk.verdict && (
@@ -705,62 +705,77 @@ export default function ProjectPage() {
                                     onViewClusters={() => setView("clusters")}
                                 />
                             ) : view === "clusters" ? (
-                                <div className="space-y-5">
-                                    <div className="flex items-center justify-between">
-                                        <button
-                                            onClick={() => setView("overview")}
-                                            className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                                        >
-                                            <ArrowLeft className="h-3.5 w-3.5" />
-                                            Back to Overview
-                                        </button>
-                                        <span className="text-xs text-muted-foreground">
-                                            {parseClusters(repository.compiledReport!).length} clusters
-                                        </span>
-                                    </div>
-                                    <div>
-                                        <h2 className="text-2xl font-bold tracking-tight bg-linear-to-r from-violet-400 via-fuchsia-300 to-cyan-400 bg-clip-text text-transparent">Risk Clusters</h2>
-                                        <p className="text-sm text-muted-foreground mt-1">All findings grouped by business impact. Click to expand.</p>
-                                    </div>
-                                    <ClustersView clusters={parseClusters(repository.compiledReport!)} />
+                                <>
+                                    {/* Left arrow — fixed to left edge of report panel */}
+                                    <button
+                                        onClick={() => setView("overview")}
+                                        className="fixed left-[420px] top-1/2 -translate-y-1/2 z-40 cursor-pointer hover:scale-110 transition-transform"
+                                        title="Back to Overview"
+                                    >
+                                        <span className="text-3xl font-light text-violet-400 animate-pulse-glow">&lt;</span>
+                                    </button>
 
-                                    {/* CTA → Revenue Risk */}
+                                    {/* Right arrow — fixed to right edge of report panel */}
                                     {revenueRisk && (
                                         <button
                                             onClick={() => setView("risks")}
-                                            className="w-full group flex items-center justify-between rounded-xl border border-fuchsia-500/20 bg-linear-to-r from-fuchsia-500/5 to-rose-500/5 hover:from-fuchsia-500/10 hover:to-rose-500/10 hover:border-fuchsia-400/40 transition-all p-5 cursor-pointer mt-4 shadow-[0_0_20px_rgba(217,70,239,0.06)] hover:shadow-[0_0_30px_rgba(217,70,239,0.12)]"
+                                            className="fixed right-10 top-1/2 -translate-y-1/2 z-40 cursor-pointer hover:scale-110 transition-transform"
+                                            title="Revenue Risk Assessment"
                                         >
-                                            <div className="flex items-center gap-3">
-                                                <div className="p-2.5 rounded-lg bg-linear-to-br from-fuchsia-500/20 to-rose-500/20 border border-fuchsia-400/20">
-                                                    <TrendingDown className="h-5 w-5 text-fuchsia-300" />
-                                                </div>
-                                                <div className="text-left">
-                                                    <p className="text-sm font-bold">Revenue Risk Assessment</p>
-                                                    <p className="text-xs text-muted-foreground">See how risks translate to revenue, churn, and compliance impact</p>
-                                                </div>
-                                            </div>
-                                            <ChevronRight className="h-5 w-5 text-muted-foreground group-hover:text-fuchsia-400 group-hover:translate-x-1 transition-all" />
+                                            <span className="text-3xl font-light text-violet-400 animate-pulse-glow">&gt;</span>
                                         </button>
                                     )}
-                                </div>
+
+                                    {/* Content */}
+                                    <div className="space-y-6">
+                                        {/* Header */}
+                                        <div>
+                                            <h2 className="text-2xl font-bold tracking-tight">Scale Issues</h2>
+                                            <p className="text-sm text-muted-foreground mt-1">Identified bottlenecks grouped by business impact. Click to expand.</p>
+                                        </div>
+
+                                        {(() => {
+                                            const allClusters = parseClusters(repository.compiledReport!);
+                                            const top3 = allClusters.slice(0, 3);
+                                            const rest = allClusters.slice(3);
+                                            return (
+                                                <div className="space-y-3">
+                                                    {/* Top 3 heading */}
+                                                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Top 3 Scale Issues</p>
+                                                    <ClustersView clusters={top3} />
+
+                                                    {rest.length > 0 && (
+                                                        <>
+                                                            {/* Thin divider */}
+                                                            <div className="border-t border-white/15 my-4" />
+                                                            <ClustersView clusters={rest} />
+                                                        </>
+                                                    )}
+                                                </div>
+                                            );
+                                        })()}
+                                    </div>
+                                </>
                             ) : (
                                 /* Revenue Risk Assessment view */
-                                <div className="space-y-5">
-                                    <div className="flex items-center justify-between">
-                                        <button
-                                            onClick={() => setView("clusters")}
-                                            className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                                        >
-                                            <ArrowLeft className="h-3.5 w-3.5" />
-                                            Back to Clusters
-                                        </button>
+                                <>
+                                    {/* Left arrow — fixed, back to Scale Issues */}
+                                    <button
+                                        onClick={() => setView("clusters")}
+                                        className="fixed left-[420px] top-1/2 -translate-y-1/2 z-40 cursor-pointer hover:scale-110 transition-transform"
+                                        title="Back to Scale Issues"
+                                    >
+                                        <span className="text-3xl font-light text-violet-400 animate-pulse-glow">&lt;</span>
+                                    </button>
+
+                                    <div className="space-y-5">
+                                        <div>
+                                            <h2 className="text-2xl font-bold tracking-tight">Revenue Risk Assessment</h2>
+                                            <p className="text-sm text-muted-foreground mt-1">How scalability risks translate to business impact.</p>
+                                        </div>
+                                        {revenueRisk && <RevenueRiskView revenueRisk={revenueRisk} />}
                                     </div>
-                                    <div>
-                                        <h2 className="text-2xl font-bold tracking-tight bg-linear-to-r from-violet-400 via-fuchsia-300 to-cyan-400 bg-clip-text text-transparent">Revenue Risk Assessment</h2>
-                                        <p className="text-sm text-muted-foreground mt-1">How scalability risks translate to business impact.</p>
-                                    </div>
-                                    {revenueRisk && <RevenueRiskView revenueRisk={revenueRisk} />}
-                                </div>
+                                </>
                             )}
                         </div>
                     ) : (
