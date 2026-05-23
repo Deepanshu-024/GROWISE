@@ -74,7 +74,10 @@ interface ParsedCluster {
     title: string;
     findingIds: string;
     description: string;
-    technicalDetails: string;
+    rootMechanism: string;
+    failureModes: string[];
+    ignoreCost: string;
+    mitigations: string[];
     files: { path: string; role: string }[];
 }
 
@@ -86,13 +89,19 @@ function parseClusters(report: string): ParsedCluster[] {
         const riskStr = extractTag(c, "risk");
         const filesBlock = extractTag(c, "related_files");
         const fileXmls = extractAllTags(filesBlock, "file");
+        const techBlock = extractTag(c, "technical_details");
+        const failureModesBlock = extractTag(techBlock, "failure_modes");
+        const mitigationsBlock = extractTag(techBlock, "mitigations");
         return {
             risk: riskStr ? parseInt(riskStr, 10) || null : null,
             severity: extractTag(c, "severity"),
             title: extractTag(c, "title"),
             findingIds: extractTag(c, "finding_ids"),
             description: extractTag(c, "description"),
-            technicalDetails: extractTag(c, "technical_details"),
+            rootMechanism: extractTag(techBlock, "root_mechanism"),
+            failureModes: extractAllTags(failureModesBlock, "point"),
+            ignoreCost: extractTag(techBlock, "ignore_cost"),
+            mitigations: extractAllTags(mitigationsBlock, "point"),
             files: fileXmls.map((f) => ({
                 path: extractTag(f, "path"),
                 role: extractTag(f, "role"),
@@ -205,10 +214,46 @@ function ClustersView({ clusters }: { clusters: ParsedCluster[] }) {
                                     <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Description</h4>
                                     <p className="text-sm leading-relaxed text-foreground/90">{cluster.description}</p>
                                 </div>
-                                <div>
-                                    <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Technical Details</h4>
-                                    <p className="text-sm leading-relaxed text-foreground/80">{cluster.technicalDetails}</p>
-                                </div>
+
+                                {/* Root Mechanism */}
+                                {cluster.rootMechanism && (
+                                    <div>
+                                        <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Root Mechanism</h4>
+                                        <p className="text-sm leading-relaxed text-foreground/80">{cluster.rootMechanism}</p>
+                                    </div>
+                                )}
+
+                                {/* Failure Modes */}
+                                {cluster.failureModes.length > 0 && (
+                                    <div>
+                                        <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Failure Modes</h4>
+                                        <ul className="space-y-1 pl-4">
+                                            {cluster.failureModes.map((fm, fi) => (
+                                                <li key={fi} className="text-sm leading-relaxed text-foreground/80 list-disc">{fm}</li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                )}
+
+                                {/* Cost of Ignoring */}
+                                {cluster.ignoreCost && (
+                                    <div>
+                                        <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Cost of Ignoring</h4>
+                                        <p className="text-sm leading-relaxed text-foreground/80">{cluster.ignoreCost}</p>
+                                    </div>
+                                )}
+
+                                {/* Mitigations */}
+                                {cluster.mitigations.length > 0 && (
+                                    <div>
+                                        <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Mitigations</h4>
+                                        <ul className="space-y-1 pl-4">
+                                            {cluster.mitigations.map((m, mi) => (
+                                                <li key={mi} className="text-sm leading-relaxed text-foreground/80 list-disc">{m}</li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                )}
                                 {cluster.files.length > 0 && (
                                     <div>
                                         <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Related Files</h4>
@@ -510,8 +555,8 @@ function ChatPanel({ repositoryId }: { repositoryId: string }) {
                         )}
                         <div
                             className={`max-w-[85%] rounded-xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap ${msg.role === "user"
-                                    ? "bg-primary text-primary-foreground rounded-br-sm"
-                                    : "bg-muted/60 border border-border/50 rounded-bl-sm"
+                                ? "bg-primary text-primary-foreground rounded-br-sm"
+                                : "bg-muted/60 border border-border/50 rounded-bl-sm"
                                 }`}
                         >
                             {msg.content}
@@ -737,7 +782,10 @@ export default function ProjectPage() {
                                         {(() => {
                                             const allClusters = parseClusters(repository.compiledReport!);
                                             const top3 = allClusters.slice(0, 3);
-                                            const rest = allClusters.slice(3);
+                                            const sevOrder: Record<string, number> = { critical: 0, warning: 1, info: 2 };
+                                            const rest = allClusters.slice(3).sort(
+                                                (a, b) => (sevOrder[a.severity.toLowerCase()] ?? 3) - (sevOrder[b.severity.toLowerCase()] ?? 3)
+                                            );
                                             return (
                                                 <div className="space-y-3">
                                                     {/* Top 3 heading */}

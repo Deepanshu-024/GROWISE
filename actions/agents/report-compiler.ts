@@ -73,7 +73,20 @@ Your complete output must follow this exact structure:
     <title>Cluster title (max 8 words)</title>
     <finding_ids>ID-1, ID-2, ID-3</finding_ids>
     <description>2-3 sentences explaining what this cluster of issues means for the business. Plain language. Be specific about when and how this will cause problems.</description>
-    <technical_details>A concise paragraph covering the shared technical mechanism across all findings in this cluster. Include failure mode(s), approximate threshold, and why these findings are interconnected.</technical_details>
+    <technical_details>
+      <root_mechanism>1-2 sentences describing the shared technical mechanism and the first likely breakpoint threshold.</root_mechanism>
+      <failure_modes>
+        <point>First failure mode explanation</point>
+        <point>Second failure mode explanation</point>
+        <!-- List ALL distinct failure modes. Every cluster MUST have at least one. -->
+      </failure_modes>
+      <ignore_cost>1-2 sentences describing the business cost of ignoring this cluster.</ignore_cost>
+      <mitigations>
+        <point>First mitigation or fix suggestion</point>
+        <point>Second mitigation or fix suggestion</point>
+        <!-- List ALL actionable mitigations. Every cluster MUST have at least one. -->
+      </mitigations>
+    </technical_details>
     <related_files>
       <file>
         <path>path/to/file1.ts</path>
@@ -146,6 +159,7 @@ SECTION RULES
 4. **Target exactly 7-10 clusters**. Adjust granularity to hit this range.
 5. **Sort clusters in decreasing severity**, influenced by the repository's primary archetypes. Within the same archetype relevance tier, rank by business impact: revenue loss > user-facing outage > performance degradation > technical debt.
 6. **Severity labels**: CRITICAL (any finding in the cluster is critical), WARNING (highest finding is warning), INFO (all findings are informational).
+7. **Technical details sub-sections**: Every cluster MUST include ALL four sub-tags inside <technical_details>: <root_mechanism>, <failure_modes> (with <point> items), <ignore_cost>, and <mitigations> (with <point> items). Never omit any of these four sub-sections.
 
 ### Top 3 Risk Marking Rules
 
@@ -358,7 +372,6 @@ Synthesize ALL the agent findings above into the 11-section founder-optimized re
 
 Founder-output requirements:
 - Include the first likely breakpoint: the earliest threshold where the product is likely to break as it scales.
-- Include estimated fix cost ranges in USD for each critical/high-priority issue and for each prioritized action item.
 - Include the cost of ignoring each important issue.
 - If you estimate a breakpoint or cost from incomplete evidence, label the assumption clearly instead of pretending it is certain.
 
