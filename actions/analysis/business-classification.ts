@@ -50,10 +50,10 @@ export async function classifyBusinessContext(
     console.log(`[SERVER] Installation ID provided: ${installationId || "No"}`);
 
     try {
-        const { userId } = await auth();
-        console.log(`[SERVER] ✅ User authenticated: ${userId}`);
+        const { userId: clerkId } = await auth();
+        console.log(`[SERVER] ✅ User authenticated: ${clerkId}`);
 
-        if (!userId) {
+        if (!clerkId) {
             return { error: "Unauthorized" };
         }
 
@@ -108,7 +108,7 @@ export async function classifyBusinessContext(
         if (!effectiveInstallationId) {
             console.log("[SERVER] 📊 Fetching installation ID from database...");
             const user = await prisma.user.findUnique({
-                where: { clerkId: userId },
+                where: { clerkId },
                 select: {
                     githubInstallationId: true,
                 },

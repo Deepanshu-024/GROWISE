@@ -19,15 +19,16 @@ model User {
   createdAt               DateTime     @default(now())
   updatedAt               DateTime     @updatedAt
   repositories            Repository[]
+  chatMessages            ChatMessage[]
 }
 
 model Repository {
-  id                           String   @id @default(uuid())
-  repositoryId                 String   @unique // GitHub repository ID
+  id                           String    @id @default(uuid())
+  repositoryId                 String    @unique // GitHub repository ID
   name                         String
   fullName                     String
   owner                        String
-  isSupported                  Boolean  @default(false)
+  isSupported                  Boolean   @default(false)
   framework                    String? // "next", "react", or null
   packageJson                  Json? // Store the entire package.json
   defaultBranch                String?
@@ -36,38 +37,39 @@ model Repository {
   archetypes                   Json? // [{ name: "ai-powered", score: 0.91 }, ...]
   archClassificationConfidence String? // "high" | "medium" | "low"
   userId                       String
-  user                         User     @relation(fields: [userId], references: [clerkId])
-  graphStatus                  String?  // "building", "ready", "failed"
-  graphBuiltAt                 DateTime?
-  repoSizeKB                   Int?     // GitHub-reported repo size in KB
-  compiledReport               String?  // Final compiled markdown report from report-compiler agent
+  user                         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // graphStatus                  String? // "building", "ready", "failed"
+  // graphBuiltAt                 DateTime?
+  repoSizeKB                   Int? // GitHub-reported repo size in KB
+  compiledReport               String? // Final compiled markdown report from report-compiler agent
   compiledReportAt             DateTime? // When the compiled report was last generated
-  createdAt                    DateTime @default(now())
-  updatedAt                    DateTime @updatedAt
+  createdAt                    DateTime  @default(now())
+  updatedAt                    DateTime  @updatedAt
 
-  codeNodes    CodeNode[]
-  codeEdges    CodeEdge[]
-  codeFlows    CodeFlow[]
+  // codeNodes    CodeNode[]
+  // codeEdges    CodeEdge[]
+  // codeFlows    CodeFlow[]
   agentReports AgentReport[]
+  chatMessages ChatMessage[]
 
   @@index([userId])
   @@index([repositoryId])
 }
 
 model AgentReport {
-  id              String     @id @default(uuid())
-  repositoryId    String
-  repository      Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  id           String     @id @default(uuid())
+  repositoryId String
+  repository   Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
 
-  archetype       String     // "database-heavy", "auth-heavy", etc.
-  rawFindings     String?    // The agent's raw text output
-  totalToolCalls  Int        @default(0)
-  executionTimeMs Int        @default(0)
-  status          String     @default("pending") // "pending" | "running" | "completed" | "failed"
+  archetype       String // "database-heavy", "auth-heavy", etc.
+  rawFindings     String? // The agent's raw text output
+  totalToolCalls  Int     @default(0)
+  executionTimeMs Int     @default(0)
+  status          String  @default("pending") // "pending" | "running" | "completed" | "failed"
   error           String?
 
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([repositoryId, archetype])
   @@index([repositoryId])
@@ -81,72 +83,88 @@ model GithubAuthState {
   createdAt DateTime @default(now())
 }
 
-model CodeNode {
-  id            String     @id @default(uuid())
-  repositoryId  String
-  repository    Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+// model CodeNode {
+//   id           String     @id @default(uuid())
+//   repositoryId String
+//   repository   Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
 
-  kind          String     // "File", "Class", "Function"
-  name          String
-  qualifiedName String     // "src/routes/users.ts::UserService.getUsers"
-  filePath      String
-  lineStart     Int?
-  lineEnd       Int?
-  language      String?    // "javascript", "typescript", "tsx"
-  parentName    String?    // enclosing class name
-  params        String?
-  returnType    String?
-  fileHash      String?
-  extra         Json       @default("{}")
+//   kind          String // "File", "Class", "Function"
+//   name          String
+//   qualifiedName String // "src/routes/users.ts::UserService.getUsers"
+//   filePath      String
+//   lineStart     Int?
+//   lineEnd       Int?
+//   language      String? // "javascript", "typescript", "tsx"
+//   parentName    String? // enclosing class name
+//   params        String?
+//   returnType    String?
+//   fileHash      String?
+//   extra         Json    @default("{}")
 
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
+//   createdAt DateTime @default(now())
+//   updatedAt DateTime @updatedAt
 
-  @@unique([repositoryId, qualifiedName])
+//   @@unique([repositoryId, qualifiedName])
+//   @@index([repositoryId])
+//   @@index([repositoryId, filePath])
+//   @@index([repositoryId, kind])
+// }
+
+// model CodeEdge {
+//   id           String     @id @default(uuid())
+//   repositoryId String
+//   repository   Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+//   kind            String // "CALLS", "IMPORTS_FROM", "INHERITS", "CONTAINS"
+//   sourceQualified String
+//   targetQualified String
+//   filePath        String
+//   line            Int    @default(0)
+//   extra           Json   @default("{}")
+
+//   createdAt DateTime @default(now())
+
+//   @@index([repositoryId])
+//   @@index([repositoryId, sourceQualified])
+//   @@index([repositoryId, targetQualified])
+//   @@index([repositoryId, kind])
+// }
+
+// model CodeFlow {
+//   id           String     @id @default(uuid())
+//   repositoryId String
+//   repository   Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+//   name         String // entry point name (e.g. "getUsers")
+//   entryPointQn String // qualified name of entry point
+//   depth        Int
+//   nodeCount    Int
+//   fileCount    Int
+//   criticality  Float   @default(0.0) // 0.0 - 1.0 scale-risk score
+//   dbCallCount  Int     @default(0) // total DB-touching calls across the entire flow
+//   hasN1Risk    Boolean @default(false) // true if any single node has fan-out>2 + DB call
+//   pathJson     Json    @default("[]") // ordered qualified names
+//   filesJson    Json    @default("[]") // distinct files touched
+
+//   createdAt DateTime @default(now())
+
+//   @@index([repositoryId])
+//   @@index([repositoryId, criticality])
+//   @@index([repositoryId, dbCallCount])
+// }
+
+model ChatMessage {
+  id                 String     @id @default(uuid())
+  userId             String
+  repositoryId       String
+  title              String?
+  messages           Json[]
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+  repository         Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  user               User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+
   @@index([repositoryId])
-  @@index([repositoryId, filePath])
-  @@index([repositoryId, kind])
-}
-
-model CodeEdge {
-  id              String     @id @default(uuid())
-  repositoryId    String
-  repository      Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
-
-  kind            String     // "CALLS", "IMPORTS_FROM", "INHERITS", "CONTAINS"
-  sourceQualified String
-  targetQualified String
-  filePath        String
-  line            Int        @default(0)
-  extra           Json       @default("{}")
-
-  createdAt       DateTime   @default(now())
-
-  @@index([repositoryId])
-  @@index([repositoryId, sourceQualified])
-  @@index([repositoryId, targetQualified])
-  @@index([repositoryId, kind])
-}
-
-model CodeFlow {
-  id             String     @id @default(uuid())
-  repositoryId   String
-  repository     Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
-
-  name           String     // entry point name (e.g. "getUsers")
-  entryPointQn   String     // qualified name of entry point
-  depth          Int
-  nodeCount      Int
-  fileCount      Int
-  criticality    Float      @default(0.0)  // 0.0 - 1.0 scale-risk score
-  dbCallCount    Int        @default(0)    // total DB-touching calls across the entire flow
-  hasN1Risk      Boolean    @default(false) // true if any single node has fan-out>2 + DB call
-  pathJson       Json       @default("[]") // ordered qualified names
-  filesJson      Json       @default("[]") // distinct files touched
-
-  createdAt      DateTime   @default(now())
-
-  @@index([repositoryId])
-  @@index([repositoryId, criticality])
-  @@index([repositoryId, dbCallCount])
+  @@index([repositoryId, createdAt])
 }

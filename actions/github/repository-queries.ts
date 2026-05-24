@@ -7,15 +7,18 @@ import prisma from "@/lib/prisma";
  * Get all repositories for the current user
  */
 export async function getUserRepositories() {
-    const { userId } = await auth();
+    const { userId: clerkId } = await auth();
 
-    if (!userId) {
+    if (!clerkId) {
         throw new Error("Unauthorized");
     }
 
+    const user = await prisma.user.findUnique({ where: { clerkId } });
+    if (!user) throw new Error("User not found");
+
     const repositories = await prisma.repository.findMany({
         where: {
-            userId: userId,
+            userId: user.id,
         },
         orderBy: {
             updatedAt: "desc",
@@ -29,16 +32,19 @@ export async function getUserRepositories() {
  * Get a specific repository by GitHub repository ID
  */
 export async function getRepositoryById(repositoryId: string) {
-    const { userId } = await auth();
+    const { userId: clerkId } = await auth();
 
-    if (!userId) {
+    if (!clerkId) {
         throw new Error("Unauthorized");
     }
+
+    const user = await prisma.user.findUnique({ where: { clerkId } });
+    if (!user) throw new Error("User not found");
 
     const repository = await prisma.repository.findFirst({
         where: {
             repositoryId: repositoryId,
-            userId: userId,
+            userId: user.id,
         },
     });
 
@@ -49,16 +55,19 @@ export async function getRepositoryById(repositoryId: string) {
  * Delete a repository from the database
  */
 export async function deleteRepository(repositoryId: string) {
-    const { userId } = await auth();
+    const { userId: clerkId } = await auth();
 
-    if (!userId) {
+    if (!clerkId) {
         throw new Error("Unauthorized");
     }
+
+    const user = await prisma.user.findUnique({ where: { clerkId } });
+    if (!user) throw new Error("User not found");
 
     await prisma.repository.delete({
         where: {
             repositoryId: repositoryId,
-            userId: userId,
+            userId: user.id,
         },
     });
 

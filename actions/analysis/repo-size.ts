@@ -17,14 +17,14 @@ export async function fetchAndStoreRepoSize(
     repositoryId: string,
     repoFullName: string,
 ): Promise<RepoSizeResult> {
-    const { userId } = await auth();
-    if (!userId) return { sizeKB: null, error: "Unauthorized" };
+    const { userId: clerkId } = await auth();
+    if (!clerkId) return { sizeKB: null, error: "Unauthorized" };
 
     try {
         // Get the user's installation ID
         const user = await prisma.user.findUnique({
-            where: { clerkId: userId },
-            select: { githubInstallationId: true },
+            where: { clerkId },
+            select: { id: true, githubInstallationId: true },
         });
 
         if (!user?.githubInstallationId) {
@@ -59,7 +59,7 @@ export async function fetchAndStoreRepoSize(
                 fullName: repoFullName,
                 owner,
                 repoSizeKB: sizeKB,
-                userId,
+                userId: user.id,
             },
         });
 
