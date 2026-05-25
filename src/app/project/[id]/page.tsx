@@ -7,6 +7,7 @@ import {
     ArrowLeft, ArrowRight, Loader2, Github, Send, Bot, User, FileText,
     MessageSquare, XCircle, Zap, Database, Globe, Cpu, Shield,
     TrendingDown, Users, Scale, AlertTriangle, ChevronRight,
+    Plus, ChevronDown, Check, ExternalLink, History,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -27,6 +28,18 @@ interface Repository {
 interface ChatMessage {
     role: "user" | "assistant";
     content: string;
+    mode?: string;
+    referencedClusters?: string[];
+    issueNumber?: number;
+    issueUrl?: string;
+}
+
+interface Conversation {
+    id: string;
+    title: string | null;
+    messageCount: number;
+    createdAt: string;
+    updatedAt: string;
 }
 
 interface ParsedBirdsEye {
@@ -443,23 +456,151 @@ function BirdsEyeView({
     );
 }
 
+/* ─── Suggestion Chips ──────────────────────────────────────────────────────── */
+
+const SUGGESTION_CHIPS = [
+    "What are the top 3 risks?",
+    "Which cluster should I fix first?",
+    "Create an issue for the highest priority cluster",
+    "Give me an implementation plan",
+];
+
 /* ─── Chat Panel ───────────────────────────────────────────────────────────── */
 
-function ChatPanel({ repositoryId }: { repositoryId: string }) {
+function ChatPanel({ repositoryId, clusterTitles }: { repositoryId: string; clusterTitles: string[] }) {
+    // ── Conversation management ──
+    const [conversations, setConversations] = useState<Conversation[]>([]);
+    const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+    const [loadingConversations, setLoadingConversations] = useState(true);
+
+    // ── Chat state ──
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [input, setInput] = useState("");
     const [loading, setLoading] = useState(false);
     const bottomRef = useRef<HTMLDivElement>(null);
 
+    // ── Cluster selector ──
+    const [selectedClusters, setSelectedClusters] = useState<string[]>([]);
+    const [clusterSelectorOpen, setClusterSelectorOpen] = useState(false);
+
+    // ── Conversation list dropdown ──
+    const [showConversationList, setShowConversationList] = useState(false);
+
+    // ── Auto-scroll ──
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }, [messages]);
 
-    const sendMessage = useCallback(async () => {
-        const text = input.trim();
+    // ── Load conversations on mount ──
+    const loadConversations = useCallback(async () => {
+        try {
+            setLoadingConversations(true);
+            const res = await fetch(`/api/project/${repositoryId}/chat/history`);
+            if (!res.ok) throw new Error("Failed to load conversations");
+            const data = await res.json();
+            const convos: Conversation[] = data.conversations ?? [];
+            setConversations(convos);
+
+            // If there are existing conversations and none is active, pick the latest
+            if (convos.length > 0 && !activeConversationId) {
+                setActiveConversationId(convos[0].id);
+            }
+        } catch (err) {
+            console.error("[ChatPanel] Failed to load conversations:", err);
+        } finally {
+            setLoadingConversations(false);
+        }
+    }, [repositoryId, activeConversationId]);
+
+    useEffect(() => {
+        loadConversations();
+    }, [loadConversations]);
+
+    // ── Load messages when active conversation changes ──
+    const loadConversationMessages = useCallback(async (convId: string) => {
+        try {
+            const res = await fetch(`/api/project/${repositoryId}/chat?conversationId=${convId}`);
+            if (!res.ok) {
+                console.error("[ChatPanel] Failed to load messages");
+                setMessages([]);
+                return;
+            }
+            const data = await res.json();
+            const msgs: ChatMessage[] = (data.messages ?? []).map((m: any) => ({
+                role: m.role,
+                content: m.content,
+                ...(m.mode ? { mode: m.mode } : {}),
+                ...(m.referencedClusters ? { referencedClusters: m.referencedClusters } : {}),
+                ...(m.issueNumber ? { issueNumber: m.issueNumber } : {}),
+                ...(m.issueUrl ? { issueUrl: m.issueUrl } : {}),
+            }));
+            setMessages(msgs);
+        } catch (err) {
+            console.error("[ChatPanel] Error loading messages:", err);
+            setMessages([]);
+        }
+    }, [repositoryId]);
+
+    useEffect(() => {
+        if (!activeConversationId) {
+            setMessages([]);
+            return;
+        }
+        loadConversationMessages(activeConversationId);
+    }, [activeConversationId, loadConversationMessages]);
+
+    // ── Create new conversation ──
+    const createNewConversation = useCallback(async () => {
+        try {
+            const res = await fetch(`/api/project/${repositoryId}/chat/history`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({}),
+            });
+            if (!res.ok) throw new Error("Failed to create conversation");
+            const data = await res.json();
+            const newConvo: Conversation = {
+                id: data.conversation.id,
+                title: data.conversation.title,
+                messageCount: 0,
+                createdAt: data.conversation.createdAt,
+                updatedAt: data.conversation.createdAt,
+            };
+            setConversations((prev) => [newConvo, ...prev]);
+            setActiveConversationId(newConvo.id);
+            setMessages([]);
+            setSelectedClusters([]);
+            return newConvo.id;
+        } catch (err) {
+            console.error("[ChatPanel] Failed to create conversation:", err);
+            return null;
+        }
+    }, [repositoryId]);
+
+    // ── Toggle cluster selection ──
+    const toggleCluster = useCallback((title: string) => {
+        setSelectedClusters((prev) =>
+            prev.includes(title) ? prev.filter((c) => c !== title) : [...prev, title],
+        );
+    }, []);
+
+    // ── Send message ──
+    const sendMessage = useCallback(async (overrideText?: string) => {
+        const text = (overrideText ?? input).trim();
         if (!text || loading) return;
 
-        const userMsg: ChatMessage = { role: "user", content: text };
+        // Ensure we have an active conversation
+        let convId = activeConversationId;
+        if (!convId) {
+            convId = await createNewConversation();
+            if (!convId) return;
+        }
+
+        const userMsg: ChatMessage = {
+            role: "user",
+            content: text,
+            ...(selectedClusters.length > 0 ? { referencedClusters: [...selectedClusters] } : {}),
+        };
         setMessages((prev) => [...prev, userMsg]);
         setInput("");
         setLoading(true);
@@ -470,7 +611,8 @@ function ChatPanel({ repositoryId }: { repositoryId: string }) {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     message: text,
-                    history: messages.slice(-10),
+                    conversationId: convId,
+                    ...(selectedClusters.length > 0 ? { referencedClusters: selectedClusters } : {}),
                 }),
             });
 
@@ -484,7 +626,7 @@ function ChatPanel({ repositoryId }: { repositoryId: string }) {
 
             const decoder = new TextDecoder();
             let buffer = "";
-            let assistantContent = "";
+            let assistantMsg: ChatMessage | null = null;
 
             while (true) {
                 const { done, value } = await reader.read();
@@ -498,20 +640,29 @@ function ChatPanel({ repositoryId }: { repositoryId: string }) {
                     try {
                         const event = JSON.parse(line.slice(6));
                         if (event.type === "response") {
-                            assistantContent = event.content;
+                            assistantMsg = {
+                                role: "assistant",
+                                content: event.content,
+                                mode: event.mode,
+                                ...(event.issueNumber ? { issueNumber: event.issueNumber } : {}),
+                                ...(event.issueUrl ? { issueUrl: event.issueUrl } : {}),
+                            };
                         } else if (event.type === "error") {
-                            assistantContent = `Error: ${event.error}`;
+                            assistantMsg = {
+                                role: "assistant",
+                                content: `Error: ${event.error}`,
+                            };
                         }
-                    } catch { /* ignore */ }
+                    } catch { /* ignore malformed SSE */ }
                 }
             }
 
-            if (assistantContent) {
-                setMessages((prev) => [
-                    ...prev,
-                    { role: "assistant", content: assistantContent },
-                ]);
+            if (assistantMsg) {
+                setMessages((prev) => [...prev, assistantMsg!]);
             }
+
+            // Clear cluster selection after sending
+            setSelectedClusters([]);
         } catch (err) {
             setMessages((prev) => [
                 ...prev,
@@ -523,51 +674,169 @@ function ChatPanel({ repositoryId }: { repositoryId: string }) {
         } finally {
             setLoading(false);
         }
-    }, [input, loading, messages, repositoryId]);
+    }, [input, loading, activeConversationId, selectedClusters, repositoryId, createNewConversation]);
 
     return (
         <div className="flex flex-col h-full">
             {/* Chat header */}
-            <div className="flex items-center gap-2 px-4 py-3 border-b border-border/50 shrink-0">
-                <Bot className="h-4 w-4 text-emerald-400" />
-                <span className="text-sm font-semibold">Report Assistant</span>
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border/50 shrink-0">
+                <div className="flex items-center gap-2">
+                    <Bot className="h-4 w-4 text-emerald-400" />
+                    <span className="text-sm font-semibold">ScaleBot</span>
+                    {activeConversationId && (
+                        <span className="text-[10px] text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded">
+                            {conversations.find((c) => c.id === activeConversationId)?.title || "New chat"}
+                        </span>
+                    )}
+                </div>
+                <div className="flex items-center gap-1">
+                    {conversations.length > 0 && (
+                        <button
+                            onClick={() => setShowConversationList((prev) => !prev)}
+                            className={`p-1.5 rounded-lg transition-colors ${
+                                showConversationList
+                                    ? "text-emerald-400 bg-emerald-500/10"
+                                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                            }`}
+                            title="Chat history"
+                        >
+                            <History className="h-4 w-4" />
+                        </button>
+                    )}
+                    <button
+                        onClick={createNewConversation}
+                        className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                        title="New conversation"
+                    >
+                        <Plus className="h-4 w-4" />
+                    </button>
+                </div>
             </div>
+
+            {/* Conversation list dropdown */}
+            {showConversationList && (
+                <div className="shrink-0 border-b border-border/50 bg-muted/20 max-h-[200px] overflow-y-auto">
+                    {conversations.map((convo) => {
+                        const isActive = convo.id === activeConversationId;
+                        return (
+                            <button
+                                key={convo.id}
+                                onClick={() => {
+                                    setActiveConversationId(convo.id);
+                                    setShowConversationList(false);
+                                }}
+                                className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors cursor-pointer ${
+                                    isActive
+                                        ? "bg-emerald-500/8 border-l-2 border-emerald-400"
+                                        : "hover:bg-muted/40 border-l-2 border-transparent"
+                                }`}
+                            >
+                                <MessageSquare className={`shrink-0 h-3.5 w-3.5 ${isActive ? "text-emerald-400" : "text-muted-foreground"}`} />
+                                <div className="flex-1 min-w-0">
+                                    <p className={`text-xs font-medium truncate ${isActive ? "text-emerald-300" : "text-foreground/80"}`}>
+                                        {convo.title || "New chat"}
+                                    </p>
+                                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                                        {convo.messageCount} message{convo.messageCount !== 1 ? "s" : ""} · {new Date(convo.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                                    </p>
+                                </div>
+                                {isActive && <Check className="shrink-0 h-3 w-3 text-emerald-400" />}
+                            </button>
+                        );
+                    })}
+                </div>
+            )}
 
             {/* Messages area */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
-                {messages.length === 0 && (
-                    <div className="flex flex-col items-center justify-center h-full text-center gap-3 opacity-60">
+                {loadingConversations ? (
+                    <div className="flex items-center justify-center h-full">
+                        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                    </div>
+                ) : messages.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-full text-center gap-4 opacity-70">
                         <MessageSquare className="h-10 w-10 text-muted-foreground" />
                         <div>
                             <p className="text-sm font-medium">Ask about the report</p>
                             <p className="text-xs text-muted-foreground mt-1">
-                                Try &quot;What are the top 3 risks?&quot; or &quot;How much will it cost to fix critical issues?&quot;
+                                Click a suggestion or type your own question.
                             </p>
                         </div>
-                    </div>
-                )}
-                {messages.map((msg, i) => (
-                    <div key={i} className={`flex gap-2.5 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                        {msg.role === "assistant" && (
-                            <div className="shrink-0 mt-0.5 p-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 h-fit">
-                                <Bot className="h-3.5 w-3.5 text-emerald-400" />
-                            </div>
-                        )}
-                        <div
-                            className={`max-w-[85%] rounded-xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap ${msg.role === "user"
-                                ? "bg-primary text-primary-foreground rounded-br-sm"
-                                : "bg-muted/60 border border-border/50 rounded-bl-sm"
-                                }`}
-                        >
-                            {msg.content}
+                        {/* Suggestion chips */}
+                        <div className="flex flex-wrap justify-center gap-2 max-w-[320px]">
+                            {SUGGESTION_CHIPS.map((chip) => (
+                                <button
+                                    key={chip}
+                                    onClick={() => sendMessage(chip)}
+                                    className="text-[11px] px-3 py-1.5 rounded-full border border-emerald-500/25 bg-emerald-500/5 text-emerald-300 hover:bg-emerald-500/15 hover:border-emerald-500/40 transition-all cursor-pointer"
+                                >
+                                    {chip}
+                                </button>
+                            ))}
                         </div>
-                        {msg.role === "user" && (
-                            <div className="shrink-0 mt-0.5 p-1.5 rounded-lg bg-primary/10 border border-primary/20 h-fit">
-                                <User className="h-3.5 w-3.5 text-primary" />
-                            </div>
-                        )}
                     </div>
-                ))}
+                ) : (
+                    <>
+                        {messages.map((msg, i) => (
+                            <div key={i} className={`flex gap-2.5 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                                {msg.role === "assistant" && (
+                                    <div className="shrink-0 mt-0.5 p-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 h-fit">
+                                        <Bot className="h-3.5 w-3.5 text-emerald-400" />
+                                    </div>
+                                )}
+                                <div className="max-w-[85%] space-y-1.5">
+                                    {/* Mode badge for assistant messages */}
+                                    {msg.role === "assistant" && msg.mode && msg.mode !== "answer" && (
+                                        <span className={`inline-block text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded ${
+                                            msg.mode === "create_issue"
+                                                ? "bg-violet-500/15 text-violet-300 border border-violet-500/25"
+                                                : msg.mode === "build_plan"
+                                                    ? "bg-cyan-500/15 text-cyan-300 border border-cyan-500/25"
+                                                    : "bg-amber-500/15 text-amber-300 border border-amber-500/25"
+                                        }`}>
+                                            {msg.mode === "create_issue" ? "Issue Created" : msg.mode === "build_plan" ? "Implementation Plan" : "Clarification"}
+                                        </span>
+                                    )}
+                                    {/* Referenced clusters badge for user messages */}
+                                    {msg.role === "user" && msg.referencedClusters && msg.referencedClusters.length > 0 && (
+                                        <div className="flex flex-wrap gap-1 justify-end">
+                                            {msg.referencedClusters.map((c) => (
+                                                <span key={c} className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">
+                                                    {c}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    )}
+                                    <div
+                                        className={`rounded-xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap ${msg.role === "user"
+                                            ? "bg-primary text-primary-foreground rounded-br-sm"
+                                            : "bg-muted/60 border border-border/50 rounded-bl-sm"
+                                        }`}
+                                    >
+                                        {msg.content}
+                                    </div>
+                                    {/* Issue link for create_issue mode */}
+                                    {msg.role === "assistant" && msg.issueUrl && (
+                                        <a
+                                            href={msg.issueUrl}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="inline-flex items-center gap-1.5 text-[11px] text-emerald-400 hover:text-emerald-300 transition-colors mt-1"
+                                        >
+                                            <ExternalLink className="h-3 w-3" />
+                                            View Issue #{msg.issueNumber} on GitHub
+                                        </a>
+                                    )}
+                                </div>
+                                {msg.role === "user" && (
+                                    <div className="shrink-0 mt-0.5 p-1.5 rounded-lg bg-primary/10 border border-primary/20 h-fit">
+                                        <User className="h-3.5 w-3.5 text-primary" />
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </>
+                )}
                 {loading && (
                     <div className="flex gap-2.5">
                         <div className="shrink-0 mt-0.5 p-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 h-fit">
@@ -580,6 +849,48 @@ function ChatPanel({ repositoryId }: { repositoryId: string }) {
                 )}
                 <div ref={bottomRef} />
             </div>
+
+            {/* Cluster selector */}
+            {clusterTitles.length > 0 && (
+                <div className="shrink-0 border-t border-border/30">
+                    <button
+                        onClick={() => setClusterSelectorOpen((prev) => !prev)}
+                        className="w-full flex items-center justify-between px-4 py-2 text-[11px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                    >
+                        <span className="font-medium">
+                            {selectedClusters.length > 0
+                                ? `${selectedClusters.length} cluster${selectedClusters.length > 1 ? "s" : ""} referenced`
+                                : "Reference clusters (optional)"}
+                        </span>
+                        <ChevronDown className={`h-3 w-3 transition-transform ${clusterSelectorOpen ? "rotate-180" : ""}`} />
+                    </button>
+                    {clusterSelectorOpen && (
+                        <div className="px-3 pb-2 space-y-1 max-h-[140px] overflow-y-auto">
+                            {clusterTitles.map((title) => {
+                                const isSelected = selectedClusters.includes(title);
+                                return (
+                                    <button
+                                        key={title}
+                                        onClick={() => toggleCluster(title)}
+                                        className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-left transition-colors cursor-pointer ${
+                                            isSelected
+                                                ? "bg-emerald-500/10 text-emerald-300 border border-emerald-500/20"
+                                                : "text-muted-foreground hover:bg-muted/40 hover:text-foreground border border-transparent"
+                                        }`}
+                                    >
+                                        <div className={`shrink-0 w-3.5 h-3.5 rounded border flex items-center justify-center ${
+                                            isSelected ? "bg-emerald-500/20 border-emerald-500/40" : "border-border/50"
+                                        }`}>
+                                            {isSelected && <Check className="h-2.5 w-2.5" />}
+                                        </div>
+                                        <span className="truncate">{title}</span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+            )}
 
             {/* Input area */}
             <div className="shrink-0 border-t border-border/50 p-3">
@@ -595,7 +906,7 @@ function ChatPanel({ repositoryId }: { repositoryId: string }) {
                     />
                     <Button
                         size="sm"
-                        onClick={sendMessage}
+                        onClick={() => sendMessage()}
                         disabled={!input.trim() || loading}
                         className="h-9 w-9 p-0 shrink-0"
                     >
@@ -735,7 +1046,7 @@ export default function ProjectPage() {
                 {/* Left: Chat Panel */}
                 {hasReport && (
                     <div className="w-[380px] shrink-0 border-r border-white/6 bg-white/2 backdrop-blur-sm flex flex-col min-h-0">
-                        <ChatPanel repositoryId={id} />
+                        <ChatPanel repositoryId={id} clusterTitles={parseClusters(repository.compiledReport!).map((c) => c.title)} />
                     </div>
                 )}
 
