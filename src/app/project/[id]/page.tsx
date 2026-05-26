@@ -10,6 +10,13 @@ import {
     Plus, ChevronDown, Check, ExternalLink, History,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+    getConversations,
+    createConversation,
+    getConversationMessages,
+    sendChatMessage,
+} from "../../../../actions/chat";
+//import type { ConversationSummary } from "../../../../actions/chat";
 
 /* ─── Types ────────────────────────────────────────────────────────────────── */
 
@@ -459,7 +466,6 @@ function BirdsEyeView({
 /* ─── Suggestion Chips ──────────────────────────────────────────────────────── */
 
 const SUGGESTION_CHIPS = [
-    "What are the top 3 risks?",
     "Which cluster should I fix first?",
     "Create an issue for the highest priority cluster",
     "Give me an implementation plan",
@@ -495,15 +501,20 @@ function ChatPanel({ repositoryId, clusterTitles }: { repositoryId: string; clus
     const loadConversations = useCallback(async () => {
         try {
             setLoadingConversations(true);
-            const res = await fetch(`/api/project/${repositoryId}/chat/history`);
-            if (!res.ok) throw new Error("Failed to load conversations");
-            const data = await res.json();
-            const convos: Conversation[] = data.conversations ?? [];
-            setConversations(convos);
+            const convos = await getConversations(repositoryId);
+            // Map Date objects to strings for client state
+            const mapped: Conversation[] = convos.map((c) => ({
+                id: c.id,
+                title: c.title,
+                messageCount: c.messageCount,
+                createdAt: c.createdAt instanceof Date ? c.createdAt.toISOString() : String(c.createdAt),
+                updatedAt: c.updatedAt instanceof Date ? c.updatedAt.toISOString() : String(c.updatedAt),
+            }));
+            setConversations(mapped);
 
             // If there are existing conversations and none is active, pick the latest
-            if (convos.length > 0 && !activeConversationId) {
-                setActiveConversationId(convos[0].id);
+            if (mapped.length > 0 && !activeConversationId) {
+                setActiveConversationId(mapped[0].id);
             }
         } catch (err) {
             console.error("[ChatPanel] Failed to load conversations:", err);
@@ -519,13 +530,7 @@ function ChatPanel({ repositoryId, clusterTitles }: { repositoryId: string; clus
     // ── Load messages when active conversation changes ──
     const loadConversationMessages = useCallback(async (convId: string) => {
         try {
-            const res = await fetch(`/api/project/${repositoryId}/chat?conversationId=${convId}`);
-            if (!res.ok) {
-                console.error("[ChatPanel] Failed to load messages");
-                setMessages([]);
-                return;
-            }
-            const data = await res.json();
+            const data = await getConversationMessages(repositoryId, convId);
             const msgs: ChatMessage[] = (data.messages ?? []).map((m: any) => ({
                 role: m.role,
                 content: m.content,
@@ -552,19 +557,13 @@ function ChatPanel({ repositoryId, clusterTitles }: { repositoryId: string; clus
     // ── Create new conversation ──
     const createNewConversation = useCallback(async () => {
         try {
-            const res = await fetch(`/api/project/${repositoryId}/chat/history`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({}),
-            });
-            if (!res.ok) throw new Error("Failed to create conversation");
-            const data = await res.json();
+            const convo = await createConversation(repositoryId);
             const newConvo: Conversation = {
-                id: data.conversation.id,
-                title: data.conversation.title,
+                id: convo.id,
+                title: convo.title,
                 messageCount: 0,
-                createdAt: data.conversation.createdAt,
-                updatedAt: data.conversation.createdAt,
+                createdAt: convo.createdAt instanceof Date ? convo.createdAt.toISOString() : String(convo.createdAt),
+                updatedAt: convo.createdAt instanceof Date ? convo.createdAt.toISOString() : String(convo.createdAt),
             };
             setConversations((prev) => [newConvo, ...prev]);
             setActiveConversationId(newConvo.id);
@@ -606,59 +605,30 @@ function ChatPanel({ repositoryId, clusterTitles }: { repositoryId: string; clus
         setLoading(true);
 
         try {
-            const res = await fetch(`/api/project/${repositoryId}/chat`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    message: text,
-                    conversationId: convId,
-                    ...(selectedClusters.length > 0 ? { referencedClusters: selectedClusters } : {}),
-                }),
-            });
+            const result = await sendChatMessage(
+                repositoryId,
+                convId,
+                text,
+                selectedClusters.length > 0 ? selectedClusters : undefined,
+            );
 
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({}));
-                throw new Error(err.error || `HTTP ${res.status}`);
-            }
+            const assistantMsg: ChatMessage = {
+                role: "assistant",
+                content: result.content,
+                mode: result.mode,
+                ...(result.issueNumber ? { issueNumber: result.issueNumber } : {}),
+                ...(result.issueUrl ? { issueUrl: result.issueUrl } : {}),
+            };
 
-            const reader = res.body?.getReader();
-            if (!reader) throw new Error("No response body");
+            setMessages((prev) => [...prev, assistantMsg]);
 
-            const decoder = new TextDecoder();
-            let buffer = "";
-            let assistantMsg: ChatMessage | null = null;
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split("\n");
-                buffer = lines.pop() ?? "";
-
-                for (const line of lines) {
-                    if (!line.startsWith("data: ")) continue;
-                    try {
-                        const event = JSON.parse(line.slice(6));
-                        if (event.type === "response") {
-                            assistantMsg = {
-                                role: "assistant",
-                                content: event.content,
-                                mode: event.mode,
-                                ...(event.issueNumber ? { issueNumber: event.issueNumber } : {}),
-                                ...(event.issueUrl ? { issueUrl: event.issueUrl } : {}),
-                            };
-                        } else if (event.type === "error") {
-                            assistantMsg = {
-                                role: "assistant",
-                                content: `Error: ${event.error}`,
-                            };
-                        }
-                    } catch { /* ignore malformed SSE */ }
-                }
-            }
-
-            if (assistantMsg) {
-                setMessages((prev) => [...prev, assistantMsg!]);
+            // Update conversation title if it was set
+            if (result.updatedTitle) {
+                setConversations((prev) =>
+                    prev.map((c) =>
+                        c.id === convId ? { ...c, title: result.updatedTitle! } : c,
+                    ),
+                );
             }
 
             // Clear cluster selection after sending
