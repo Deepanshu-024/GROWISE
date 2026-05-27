@@ -52,7 +52,7 @@ export default function Home() {
               duration: 0.6,
               ease: "easeInOut",
             }}
-            className="w-full max-w-4xl px-4"
+            className="w-full max-w-4xl px-4 flex items-center justify-center"
           >
             <PromptInput
               placeholder="Paste your GitHub repo URL or describe your codebase..."

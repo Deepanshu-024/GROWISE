@@ -93,7 +93,7 @@ export default function PromptInput({ placeholder, buttonText, mode }: PromptInp
   }
 
   return (
-    <div className="w-full max-w-3xl">
+    <div className="w-full max-w-3xl flex items-center justify-center">
 
       {/* Main Input */}
       {/* <form onSubmit={handleSubmit} className="mb-4">
@@ -144,7 +144,7 @@ export default function PromptInput({ placeholder, buttonText, mode }: PromptInp
       <button
         onClick={handleImportRepository}
         disabled={checkingGithub}
-        className="w-full mt-4 px-6 py-3 border border-[#22c55e]/40 hover:border-[#22c55e]/70 hover:shadow-[0_0_15px_rgba(34,197,94,0.3)] text-muted-foreground hover:text-[#22c55e] transition-all duration-200 rounded-xl font-medium text-sm bg-transparent hover:bg-[#22c55e]/5 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+        className="w-2/3 mt-4 px-6 py-3 border border-[#22c55e]/40 hover:border-[#22c55e]/70 hover:shadow-[0_0_15px_rgba(34,197,94,0.3)] text-muted-foreground hover:text-[#22c55e] transition-all duration-200 rounded-xl font-medium text-sm bg-transparent hover:bg-[#22c55e]/5 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed "
       >
         <Github className="w-4 h-4" />
         {githubConnected ? "Import GitHub Repository" : "Connect GitHub & Import Repository"}
