@@ -96,7 +96,7 @@ export default function PromptInput({ placeholder, buttonText, mode }: PromptInp
     <div className="w-full max-w-3xl">
 
       {/* Main Input */}
-      <form onSubmit={handleSubmit} className="mb-4">
+      {/* <form onSubmit={handleSubmit} className="mb-4">
         <div className="relative group">
           <div
             className={`absolute inset-0 rounded-2xl blur-xl transition-all duration-300 ${isFocused
@@ -131,14 +131,14 @@ export default function PromptInput({ placeholder, buttonText, mode }: PromptInp
             </button>
           </div>
         </div>
-      </form>
+      </form> */}
 
       {/* OR Divider */}
-      <div className="flex items-center justify-center gap-4">
+      {/* <div className="flex items-center justify-center gap-4">
         <div className="h-px bg-[#22c55e]/30 flex-1" />
         <span className="text-xs text-muted-foreground uppercase tracking-wide">OR</span>
         <div className="h-px bg-[#22c55e]/30 flex-1" />
-      </div>
+      </div> */}
 
       {/* Import Repository Button */}
       <button
