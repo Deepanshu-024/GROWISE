@@ -7,11 +7,15 @@ export default function Navigation() {
     <nav className="fixed top-0 w-full z-50 bg-background/80 backdrop-blur-md border-b border-border/50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center">
         {/* Logo — fixed width so center stays centered */}
-        <div className="flex items-center gap-2 w-48">
-          <div className="w-8 h-8 bg-primary text-primary-foreground rounded-md flex items-center justify-center font-bold text-lg">
-            G
-          </div>
-          <span className="font-semibold text-lg hidden sm:inline">Gro(W)ise</span>
+        <div className="flex items-center gap-2.5 w-48">
+          {/* <div className="w-8 h-8 bg-gradient-to-br from-emerald-400 to-emerald-600 rounded-lg flex items-center justify-center shadow-[0_0_12px_rgba(16,185,129,0.3)]">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M13 3h8v8" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M21 3L10 14" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M6 21c-1-3-1-7 2-10" stroke="white" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+          </div> */}
+          <span className="font-semibold text-lg hidden sm:inline bg-gradient-to-r from-emerald-400 to-white bg-clip-text text-transparent">Gro(W)ise</span>
         </div>
 
         {/* Center Navigation — true center */}

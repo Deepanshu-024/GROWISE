@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react"
 import { Github, Lock, Globe, Plus, Loader2, ChevronRight } from "lucide-react"
 import { useRouter } from "next/navigation"
+import { useUser, useClerk } from "@clerk/nextjs"
 
 interface Repository {
   id: number
@@ -20,6 +21,8 @@ interface GitHubSectionProps {
 
 export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) {
   const router = useRouter()
+  const { isSignedIn, isLoaded: isAuthLoaded } = useUser()
+  const { openSignUp } = useClerk()
   const [checkingGithub, setCheckingGithub] = useState(true)
   const [githubConnected, setGithubConnected] = useState(false)
   const [githubUsername, setGithubUsername] = useState<string | null>(null)
@@ -27,8 +30,20 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
   const [loadingRepos, setLoadingRepos] = useState(false)
 
   useEffect(() => {
+    if (!isAuthLoaded) return
+
+    if (!isSignedIn) {
+      // User logged out — reset everything
+      setGithubConnected(false)
+      setGithubUsername(null)
+      setRepositories([])
+      setCheckingGithub(false)
+      onStatusResolved?.(false)
+      return
+    }
+
     checkGitHubStatus()
-  }, [])
+  }, [isSignedIn, isAuthLoaded])
 
   const checkGitHubStatus = async () => {
     try {
@@ -70,6 +85,11 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
   }
 
   const handleConnect = () => {
+    if (!isAuthLoaded) return
+    if (!isSignedIn) {
+      openSignUp({ redirectUrl: "/dashboard" })
+      return
+    }
     window.location.href = "/api/github/install"
   }
 
