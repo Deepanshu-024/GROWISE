@@ -1,8 +1,18 @@
 "use client"
 
 import { SignInButton, SignUpButton, SignedIn, SignedOut, UserButton } from '@clerk/nextjs'
+import { usePathname } from 'next/navigation'
+
+const navLinks = [
+  { label: "Home", href: "/" },
+  { label: "Dashboard", href: "/dashboard" },
+  { label: "Pricing", href: "/pricing" },
+  { label: "Contact", href: "/contact" },
+]
 
 export default function Navigation() {
+  const pathname = usePathname()
+
   return (
     <nav className="fixed top-0 w-full z-50 bg-background/80 backdrop-blur-md border-b border-border/50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center">
@@ -20,23 +30,19 @@ export default function Navigation() {
 
         {/* Center Navigation — true center */}
         <div className="flex-1 hidden md:flex items-center justify-center gap-8">
-          <a href="#" className="text-muted-foreground hover:text-foreground transition-colors text-sm">
-            Home
-          </a>
-          <a href="#" className="text-muted-foreground hover:text-foreground transition-colors text-sm">
-            Community
-          </a>
-          <a href="#" className="text-muted-foreground hover:text-foreground transition-colors text-sm">
-            Pricing
-          </a>
-          <a href="#" className="text-muted-foreground hover:text-foreground transition-colors text-sm">
-            Contact
-          </a>
-          <SignedIn>
-            <a href="/dashboard" className="text-muted-foreground hover:text-foreground transition-colors text-sm">
-              Dashboard
-            </a>
-          </SignedIn>
+          {navLinks.map(({ label, href }) => {
+            const isActive = href === "/" ? pathname === "/" : pathname.startsWith(href) && href !== "#"
+            return (
+              <a
+                key={label}
+                href={href}
+                className={`transition-colors text-sm ${isActive ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground"
+                  }`}
+              >
+                {label}
+              </a>
+            )
+          })}
         </div>
 
         {/* Auth Buttons — same fixed width as logo */}
