@@ -5,17 +5,17 @@ import { SignInButton, SignUpButton, SignedIn, SignedOut, UserButton } from '@cl
 export default function Navigation() {
   return (
     <nav className="fixed top-0 w-full z-50 bg-background/80 backdrop-blur-md border-b border-border/50">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
-        {/* Logo */}
-        <div className="flex items-center gap-2">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center">
+        {/* Logo — fixed width so center stays centered */}
+        <div className="flex items-center gap-2 w-48">
           <div className="w-8 h-8 bg-primary text-primary-foreground rounded-md flex items-center justify-center font-bold text-lg">
             G
           </div>
           <span className="font-semibold text-lg hidden sm:inline">Gro(W)ise</span>
         </div>
 
-        {/* Center Navigation */}
-        <div className="hidden md:flex items-center gap-8">
+        {/* Center Navigation — true center */}
+        <div className="flex-1 hidden md:flex items-center justify-center gap-8">
           <a href="#" className="text-muted-foreground hover:text-foreground transition-colors text-sm">
             Home
           </a>
@@ -35,8 +35,8 @@ export default function Navigation() {
           </SignedIn>
         </div>
 
-        {/* Auth Buttons */}
-        <div className="flex items-center gap-3">
+        {/* Auth Buttons — same fixed width as logo */}
+        <div className="flex items-center justify-end gap-3 w-48">
           <SignedOut>
             <SignInButton>
               <button className="px-4 py-2 text-sm font-medium border border-border hover:border-muted-foreground hover:text-foreground text-muted-foreground transition-colors rounded-full">

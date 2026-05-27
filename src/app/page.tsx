@@ -11,7 +11,7 @@ export default function Home() {
       <Navigation />
 
       {/* pt-16 pushes the lamp below the fixed 4rem/64px navbar */}
-      <div className="pt-12">
+      <div className="pt-6">
         <LampContainer>
           {/* Headline — appears first with the lamp */}
           <motion.div

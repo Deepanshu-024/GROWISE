@@ -39,7 +39,7 @@ export const LampContainer = ({
       <div className="relative flex w-full flex-1 scale-y-125 items-center justify-center isolate z-0 ">
         <motion.div
           initial={{ opacity: 0.5, width: "20rem" }}
-          whileInView={{ opacity: 1, width: "35rem" }}
+          whileInView={{ opacity: 1, width: "45rem" }}
           transition={{
             delay: 0.3,
             duration: 0.8,
@@ -55,7 +55,7 @@ export const LampContainer = ({
         </motion.div>
         <motion.div
           initial={{ opacity: 0.5, width: "20rem" }}
-          whileInView={{ opacity: 1, width: "35rem" }}
+          whileInView={{ opacity: 1, width: "45rem" }}
           transition={{
             delay: 0.3,
             duration: 0.8,
@@ -64,7 +64,7 @@ export const LampContainer = ({
           style={{
             backgroundImage: `conic-gradient(var(--conic-position), var(--tw-gradient-stops))`,
           }}
-          className="absolute inset-auto left-1/2 h-72 w-[35rem] bg-gradient-conic from-transparent via-transparent to-emerald-500 text-white [--conic-position:from_290deg_at_center_top]"
+          className="absolute inset-auto left-1/2 h-72 w-[45rem] bg-gradient-conic from-transparent via-transparent to-emerald-500 text-white [--conic-position:from_290deg_at_center_top]"
         >
           <div className="absolute  w-40 h-[100%] right-0 bg-slate-950  bottom-0 z-20 [mask-image:linear-gradient(to_left,white,transparent)]" />
           <div className="absolute  w-[100%] right-0 bg-slate-950 h-40 bottom-0 z-20 [mask-image:linear-gradient(to_top,white,transparent)]" />
@@ -84,7 +84,7 @@ export const LampContainer = ({
         ></motion.div>
         <motion.div
           initial={{ width: "20rem" }}
-          whileInView={{ width: "35rem" }}
+          whileInView={{ width: "30rem" }}
           transition={{
             delay: 0.3,
             duration: 0.8,
