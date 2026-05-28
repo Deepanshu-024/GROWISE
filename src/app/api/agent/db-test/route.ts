@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { runDatabaseAgent, StreamEvent } from "../../../../../actions/agents/db";
-import { runDatabaseGraphAgent } from "../../../../../actions/agents/db-graph";
+// import { runDatabaseGraphAgent } from "../../../../../actions/agents/db-graph";
 import { generateInstallationToken } from "@/lib/github";
 
 /**
@@ -45,9 +45,7 @@ export async function POST(req: NextRequest) {
         }
 
         const variant = agentVariant === "graph" ? "graph" : "legacy";
-        const runAgent = variant === "graph"
-            ? runDatabaseGraphAgent
-            : runDatabaseAgent;
+        const runAgent = runDatabaseAgent;
 
         const encoder = new TextEncoder();
 
