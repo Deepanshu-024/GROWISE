@@ -167,10 +167,10 @@ export async function checkPackageAndFramework(
     console.log(`[SERVER] Installation ID provided: ${installationId || "No"}`);
 
     try {
-        const { userId } = await auth();
-        console.log(`[SERVER] ✅ User authenticated: ${userId}`);
+        const { userId: clerkId } = await auth();
+        console.log(`[SERVER] ✅ User authenticated: ${clerkId}`);
 
-        if (!userId) {
+        if (!clerkId) {
             return { isSupported: false, framework: "", error: "Unauthorized" };
         }
 
@@ -217,17 +217,29 @@ export async function checkPackageAndFramework(
         let authToken: string;
         let effectiveInstallationId = installationId;
 
+        // Look up the internal user ID from the Clerk ID
+        const user = await prisma.user.findUnique({
+            where: { clerkId },
+            select: {
+                id: true,
+                githubInstallationId: true,
+            },
+        });
+
+        if (!user) {
+            console.log("[SERVER] ❌ User not found in database");
+            return {
+                isSupported: false,
+                framework: "",
+                error: "User not found.",
+            };
+        }
+
+        const dbUserId = user.id;
+
         // If installation ID not provided, fetch from database
         if (!effectiveInstallationId) {
-            console.log("[SERVER] 📊 Fetching installation ID from database...");
-            const user = await prisma.user.findUnique({
-                where: { clerkId: userId },
-                select: {
-                    githubInstallationId: true,
-                },
-            });
-
-            if (!user?.githubInstallationId) {
+            if (!user.githubInstallationId) {
                 console.log("[SERVER] ❌ No GitHub installation ID found in database");
                 return {
                     isSupported: false,
@@ -296,7 +308,7 @@ export async function checkPackageAndFramework(
                     fullName: repoFullName,
                     owner: earlyOwner,
                     repoSizeKB,
-                    userId,
+                    userId: dbUserId,
                 },
             });
             console.log(`[SERVER] ✅ Repo size stored`);
@@ -392,7 +404,7 @@ export async function checkPackageAndFramework(
                     baseDirectory: baseDirectory,
                     repoContent: repoContent || null,
                     repoSizeKB: repoSizeKB ?? undefined,
-                    userId: userId,
+                    userId: dbUserId,
                 },
             });
 

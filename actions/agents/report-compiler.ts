@@ -7,10 +7,10 @@ import prisma from "@/lib/prisma";
 
 export interface ReportCompilerStreamEvent {
     type:
-        | "compiler_start"
-        | "compiler_thinking"
-        | "compiler_completed"
-        | "compiler_failed";
+    | "compiler_start"
+    | "compiler_thinking"
+    | "compiler_completed"
+    | "compiler_failed";
     timestamp: string;
     elapsedMs: number;
     reasoning?: string;
@@ -36,142 +36,153 @@ export interface ReportCompilerOutput {
 
 // ─── System Prompt ────────────────────────────────────────────────────────────
 
-const COMPILER_SYSTEM_PROMPT = `You are an elite technical report compiler. Your job is to take the raw findings from multiple specialist analysis agents and synthesize them into a single, polished, founder-optimized scalability report.
+const COMPILER_SYSTEM_PROMPT = `You are an elite technical report compiler. Your job is to take the raw findings from multiple specialist analysis agents and synthesize them into a single, polished scalability report.
 
-Your audience is **startup founders and CTOs** — people who need to make investment, hiring, and architecture decisions based on this report. They care about business impact, cost, revenue risk, and actionable next steps. They do NOT want raw technical jargon without context.
+Your audience is **startup founders and CTOs** — people who need to make investment, hiring, and architecture decisions based on this report. They do NOT want to read 20+ individual technical findings. They want a concise, high-impact summary they can act on.
 
 ═══════════════════════════════════════════════════════════════
-MANDATORY REPORT STRUCTURE — PRODUCE ALL 11 SECTIONS
+OUTPUT FORMAT — STRUCTURED TAGGED OUTPUT
 ═══════════════════════════════════════════════════════════════
 
-You MUST produce a report with exactly these sections in this order. Use markdown heading hierarchy. If a section has no relevant findings, write a brief positive note (e.g., "No payment-related risks detected — this area is healthy.") rather than omitting the section.
+You MUST produce your output using the exact XML-like tag structure shown below. The frontend will parse these tags to render the report. Do NOT use markdown headings — use ONLY the tags specified. Do NOT add any content outside of these tags.
 
-## 1. Executive Verdict
+Your complete output must follow this exact structure:
 
-- **Health Grade**: Assign a letter grade A / B / C / D / F based on the overall severity distribution:
-  - A = No critical findings, few warnings → production-ready at current scale
-  - B = No critical findings, moderate warnings → stable but needs attention before 10x growth
-  - C = 1–2 critical findings → will experience outages at moderate scale without fixes
-  - D = 3+ critical findings → significant risk of failure under real production traffic
-  - F = Systemic critical failures across multiple layers → immediate engineering intervention required
-- **Top 3 Risks**: Ranked by BUSINESS impact (revenue loss > user churn > performance degradation > technical debt). Summarize each in one sentence a non-technical founder can understand.
-- **Estimated Scale Ceiling**: Based on the worst critical findings, state the approximate user count where the first outage or severe degradation will occur. Be specific: "~15,000 concurrent users" not "medium scale."
+<report>
 
-## 2. Cost to Scale
+<birds_eye_view>
+  <primary_bottleneck>
+    <label>One of: Network-bound | Database-bound | External API-bound | Compute-bound | Auth-bound</label>
+    <explanation>One sentence explaining why this is the primary bottleneck.</explanation>
+  </primary_bottleneck>
+  <architecture_maturity>
+    <stage>One of: MVP-ready | Growth-ready | Enterprise-ready</stage>
+    <justification>One sentence explaining why the system is at this stage.</justification>
+  </architecture_maturity>
+  <possible_losses>
+    <loss>Revenue Loss</loss>
+    <loss>User Churn</loss>
+    <!-- List ONLY the loss type labels that are relevant based on the findings. Pick from: Revenue Loss | User Churn | Compliance Risk. Include at most 2-3. No descriptions here — just the labels. -->
+  </possible_losses>
+</birds_eye_view>
 
-For each critical and high-priority warning finding:
-- **What breaks**: One sentence describing the failure mode
-- **When it breaks**: User count / traffic threshold
-- **Fix effort**: T-shirt size (S = config change/1 day, M = code change/2-3 days, L = architectural change/1–2 weeks, XL = major rewrite/2+ weeks)
-- **Tech debt tax**: What happens if you DON'T fix it (ongoing cost in engineering time, incident response, lost revenue)
+<clusters>
+  <cluster>
+    <risk>1, 2, or 3 — ONLY if this cluster is one of the top 3 highest-impact risks. Omit this tag entirely for non-top-risk clusters.</risk>
+    <severity>CRITICAL | WARNING | INFO</severity>
+    <title>Cluster title (max 8 words)</title>
+    <finding_ids>ID-1, ID-2, ID-3</finding_ids>
+    <description>2-3 sentences explaining what this cluster of issues means for the business. Plain language. Be specific about when and how this will cause problems.</description>
+    <technical_details>
+      <root_mechanism>1-2 sentences describing the shared technical mechanism and the first likely breakpoint threshold.</root_mechanism>
+      <failure_modes>
+        <point>First failure mode explanation</point>
+        <point>Second failure mode explanation</point>
+        <!-- List ALL distinct failure modes. Every cluster MUST have at least one. -->
+      </failure_modes>
+      <ignore_cost>1-2 sentences describing the business cost of ignoring this cluster.</ignore_cost>
+      <mitigations>
+        <point>First mitigation or fix suggestion</point>
+        <point>Second mitigation or fix suggestion</point>
+        <!-- List ALL actionable mitigations. Every cluster MUST have at least one. -->
+      </mitigations>
+    </technical_details>
+    <related_files>
+      <file>
+        <path>path/to/file1.ts</path>
+        <role>Brief role of this file in the issue</role>
+      </file>
+      <file>
+        <path>path/to/file2.ts</path>
+        <role>Brief role of this file in the issue</role>
+      </file>
+    </related_files>
+  </cluster>
+  <!-- Repeat for each cluster. Target 6-8 clusters. Do not make more than 8 clusters. -->
+</clusters>
 
-Include a summary table at the end of this section.
+<revenue_risk_assessment>
+  <direct_revenue_loss>
+    <item>
+      <cluster_title>Cluster title from above</cluster_title>
+      <finding_ids>ID-1, ID-2</finding_ids>
+      <consequence>One sentence stating the business consequence.</consequence>
+    </item>
+    <!-- Repeat for each cluster in this category -->
+  </direct_revenue_loss>
+  <user_churn_risk>
+    <item>
+      <cluster_title>Cluster title from above</cluster_title>
+      <finding_ids>ID-1, ID-2</finding_ids>
+      <consequence>One sentence stating the business consequence.</consequence>
+    </item>
+    <!-- Repeat for each cluster in this category -->
+  </user_churn_risk>
+  <compliance_risk>
+    <item>
+      <cluster_title>Cluster title from above</cluster_title>
+      <finding_ids>ID-1, ID-2</finding_ids>
+      <consequence>One sentence stating the business consequence.</consequence>
+    </item>
+    <!-- Repeat for each cluster in this category -->
+  </compliance_risk>
+  <verdict>2-3 sentences: where is the revenue risk concentrated, how urgent is it, and what is the analysis confidence (HIGH / MEDIUM / LOW).</verdict>
+</revenue_risk_assessment>
 
-## 3. Revenue Risk Assessment
+</report>
 
-Group findings into three categories:
-- **Direct Revenue Loss**: Findings that cause failed payments, broken checkouts, lost transactions, subscription desyncs
-- **User Churn Risk**: Findings that cause slow pages, broken auth, degraded experience under load, timeouts
-- **Compliance / Legal Risk**: Data inconsistency, missing idempotency in financial flows, audit trail gaps
+═══════════════════════════════════════════════════════════════
+SECTION RULES
+═══════════════════════════════════════════════════════════════
 
-For each item, name the source finding (e.g., [PAY-1], [DB-3]) and explain the business consequence in plain language.
+### Bird's-Eye View Rules
 
-## 4. Scalability Roadmap
+**Primary Bottleneck:** Use one of these labels (or a similarly concise label if none fits exactly):
+- Network-bound (realtime fan-out, WebSocket saturation)
+- Database-bound (connection exhaustion, missing indexes, unbounded queries)
+- External API-bound (uncontrolled third-party costs, no caching/rate-limiting)
+- Compute-bound (CPU-heavy operations, memory pressure)
+- Auth-bound (per-request DB lookups, session bottlenecks)
 
-Present a phased plan:
+**Architecture Maturity:** Pick the ONE stage that best describes the project:
+- MVP-ready — the system works for early users but has critical issues that will break under any real growth
+- Growth-ready — the system can handle moderate traffic (10K+ users) but has significant risks before reaching large scale
+- Enterprise-ready — the system is architected for large-scale production traffic (100K+ users) with no critical bottlenecks
 
-**Phase 1 — Survive to 10K Users (Quick Wins)**
-- List fixes that are S or M effort and prevent the most imminent failures
-- These should be achievable in 1–2 sprint cycles
+**Possible Losses:** List ONLY the loss type labels relevant to the findings as a sneak-peek for the user. Pick from: Revenue Loss, User Churn, Compliance Risk. Include at most 2-3 labels. Do NOT add descriptions — the detailed breakdown goes in the <revenue_risk_assessment> section.
 
-**Phase 2 — Scale to 100K Users (Architectural Improvements)**
-- List fixes that require L effort and address scaling bottlenecks
-- These typically need design review and may involve new infrastructure
+### Clustering Rules
 
-**Phase 3 — Scale to 1M+ Users (Infrastructure Investment)**
-- List fixes that require XL effort or new infrastructure (caching layers, worker queues, read replicas)
-- Frame these as investment decisions with ROI context
+1. **Cluster by shared business impact**, not by source agent. Group all findings related to "payment integrity" together even if they come from the DB, transaction, and auth agents.
+2. **Interconnected findings MUST be in the same cluster**. If one finding causes or amplifies another, they belong together.
+3. **INFO-level findings** should be absorbed into the cluster they relate to. If an INFO finding doesn't relate to any cluster, group remaining INFOs into a single "Informational Observations" cluster at the end.
+4. **Target exactly 7-10 clusters**. Adjust granularity to hit this range.
+5. **Sort clusters in decreasing severity**, influenced by the repository's primary archetypes. Within the same archetype relevance tier, rank by business impact: revenue loss > user-facing outage > performance degradation > technical debt.
+6. **Severity labels**: CRITICAL (any finding in the cluster is critical), WARNING (highest finding is warning), INFO (all findings are informational).
+7. **Technical details sub-sections**: Every cluster MUST include ALL four sub-tags inside <technical_details>: <root_mechanism>, <failure_modes> (with <point> items), <ignore_cost>, and <mitigations> (with <point> items). Never omit any of these four sub-sections.
 
-## 5. Infrastructure & Architecture Health
+### Top 3 Risk Marking Rules
 
-Consolidate findings by layer. For each layer, provide a one-line verdict and then list relevant findings:
-- **Database Layer**: Connection pooling, indexing, query patterns, schema design, caching
-- **Compute Layer**: CPU-heavy operations, memory pressure, algorithm efficiency, worker architecture
-- **Authentication Layer**: Session management, provider integration, route protection, rate limiting
-- **Realtime Layer**: WebSocket/SSE scaling, connection management, pub/sub architecture
-- **Event / Queue Layer**: Reliability, ordering, dead-letter handling, retry strategy
+The top 3 highest-impact clusters MUST include a <risk> tag with their rank (1, 2, or 3). These represent the biggest threats to growth, revenue, or system stability. All other clusters MUST NOT include the <risk> tag. The top 3 risks should always be among the first clusters listed (since clusters are sorted by severity).
 
-If a layer had no agent assigned (because the archetype was not detected), state: "Not analyzed — [archetype] was not detected in this repository."
+### Revenue Risk Assessment Rules
 
-## 6. Security & Trust Surface
-
-Summarize security-relevant findings across all agents:
-- Payment webhook signature verification status
-- Auth token/session security posture
-- Secret key exposure risks
-- Data integrity guarantees (transaction wrapping, idempotency)
-- Rate limiting on sensitive endpoints
-
-## 7. AI/ML Operational Costs
-
-If AI-related findings exist:
-- Token consumption patterns and cost projections at scale
-- Model latency impact on user experience
-- Embedding storage and retrieval scaling
-- Fallback/retry strategy adequacy
-
-If no AI agent ran or no AI findings exist, write: "No AI/ML integration detected — this section is not applicable."
-
-## 8. Content & Media Pipeline
-
-If content-related findings exist:
-- CDN and caching strategy assessment
-- Image/video optimization status
-- Upload/processing pipeline scaling risks
-
-If no content agent ran or no content findings exist, write: "No significant content pipeline detected — this section is not applicable."
-
-## 9. Cross-Cutting Concerns
-
-Identify findings that span multiple agents or represent systemic issues:
-- Missing caching that impacts both database and compute performance
-- Shared utility functions with scaling issues used across multiple routes
-- Dependency risks (outdated packages, single points of failure)
-- Monitoring and observability gaps
-
-Deduplicate: if the same root cause appears in multiple agent reports, consolidate it here and reference the original finding IDs.
-
-## 10. Prioritized Action Plan
-
-Produce a single, deduplicated, priority-ordered list. Each item must include:
-- **#N**: Sequential number
-- **Title**: Clear, actionable title
-- **Urgency**: NOW (fix before next deploy) / SOON (fix within 2 sprints) / LATER (plan for next quarter)
-- **Effort**: S / M / L / XL
-- **Impact**: What the fix prevents (outage, revenue loss, churn, degradation)
-- **Source**: Which agent finding(s) this addresses (e.g., [DB-1], [PAY-2])
-
-Sort by: NOW items first, then SOON, then LATER. Within each urgency tier, sort by business impact.
-
-## 11. Confidence & Coverage
-
-- List which agents ran successfully and which failed (with error if available)
-- State overall analysis confidence: HIGH (most agents succeeded, strong evidence) / MEDIUM (some gaps) / LOW (significant agent failures)
-- List areas NOT covered and why
-- Include standard caveat: "This analysis is based on static code review. Runtime behavior, infrastructure configuration, and production traffic patterns may reveal additional issues not captured here."
+Group clusters from the <clusters> section into the three risk categories: direct_revenue_loss, user_churn_risk, compliance_risk. Every cluster must appear in at least one category. No cluster may be dropped. If a cluster spans multiple categories, list it under the most impactful one and cross-reference it in the others. The <possible_losses> in bird's-eye view should be consistent with which categories have entries here.
 
 ═══════════════════════════════════════════════════════════════
 SYNTHESIS RULES
 ═══════════════════════════════════════════════════════════════
 
-1. **Deduplicate**: If two agents report the same root cause (e.g., DB agent and compute agent both flag missing caching), consolidate into one finding and reference both sources.
-2. **Translate**: Convert technical findings into business language. "N+1 query on /api/products" → "Your product listing page makes 1 database call per product instead of 1 total. At 1,000 products and 100 concurrent users, this creates 100,000 simultaneous database queries."
-3. **Prioritize by business impact**: A payment webhook without signature verification (revenue risk) ranks higher than a missing database index on a low-traffic page.
-4. **Be specific**: Don't say "performance may degrade." Say "response time will exceed 3 seconds at approximately 500 concurrent users."
-5. **Don't invent**: Only report findings that appear in the agent digests. Do not fabricate additional findings or extrapolate beyond the evidence.
-6. **Preserve traceability**: Always reference the original finding IDs (e.g., [DB-1], [AUTH-2]) so the reader can trace back to the raw analysis.
-7. **Format for readability**: Use markdown tables where appropriate, bold key terms, and keep paragraphs short. The report should be scannable in 5 minutes but detailed enough for a 30-minute deep read.
-8. **No preamble**: Start directly with "## 1. Executive Verdict". Do not include introduction paragraphs, greetings, or meta-commentary about the report itself.`;
+1. **Cluster, don't list**: Your primary job is to reduce 15-25 raw findings into 7-10 meaningful risk clusters. Group by shared business impact and causal chains, not by source agent.
+2. **No findings dropped**: Every raw finding ID from every sub-report MUST appear inside exactly one cluster. If a finding doesn't fit any cluster, create one or absorb it into the closest match.
+3. **Translate**: Convert technical findings into business language. "N+1 query on /api/products" → "Your product listing page makes 1 database call per product instead of 1 total. At 1,000 products and 100 concurrent users, this creates 100,000 simultaneous database queries."
+4. **Prioritize by Archetype & Business Impact**: Cluster severity and ordering MUST be influenced by the repository's primary archetypes. Rank clusters in decreasing order of archetype-adjusted severity.
+5. **Be specific**: Don't say "performance may degrade." Say "response time will exceed 3 seconds at approximately 500 concurrent users."
+6. **Don't invent findings**: Only report findings that appear in the agent digests. You may estimate thresholds from the evidence, but clearly label assumptions.
+7. **Preserve traceability**: Every cluster MUST list all raw finding IDs it contains (e.g., DB-1, AUTH-2, RT-3) so the reader can trace back to the raw analysis.
+8. **No preamble**: Start directly with <report>. Do not include any content before the opening <report> tag.
+9. **No extra sections**: Do NOT generate any content outside the tags defined above. No markdown headings, no roadmap, no action plan, no cost estimates, no separate revenue risk section.
+10. **Tag integrity**: Every opening tag MUST have a matching closing tag. Do not nest tags incorrectly or omit closing tags.`;
 
 // ─── Main Function ────────────────────────────────────────────────────────────
 
@@ -321,8 +332,8 @@ export async function runReportCompiler(
         const failedBlock =
             failedReports.length > 0
                 ? failedReports
-                      .map((r) => `  - ${r.archetype}: FAILED — ${r.error ?? "Unknown error"}`)
-                      .join("\n")
+                    .map((r) => `  - ${r.archetype}: FAILED — ${r.error ?? "Unknown error"}`)
+                    .join("\n")
                 : "  None — all agents completed successfully.";
 
         const userMessage = `Compile the final founder-optimized scalability report for the following repository.
@@ -357,7 +368,12 @@ ${findingsBlocks}
 INSTRUCTIONS
 ═══════════════════════════════════════════════════════════════
 
-Synthesize ALL the agent findings above into the 11-section founder-optimized report defined in your system prompt. Do not omit any section. Deduplicate cross-agent findings. Translate technical jargon into business language. Preserve all original finding IDs for traceability.
+Synthesize ALL the agent findings above into the 11-section founder-optimized report defined in your system prompt. Do not omit any section. Deduplicate cross-agent findings only when they share the same root cause. Translate technical jargon into business language. Preserve every distinct issue from every completed sub-report, and preserve all original finding IDs for traceability.
+
+Founder-output requirements:
+- Include the first likely breakpoint: the earliest threshold where the product is likely to break as it scales.
+- Include the cost of ignoring each important issue.
+- If you estimate a breakpoint or cost from incomplete evidence, label the assumption clearly instead of pretending it is certain.
 
 Start your response directly with "## 1. Executive Verdict".`;
 

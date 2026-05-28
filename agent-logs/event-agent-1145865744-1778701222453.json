@@ -1,0 +1,89 @@
+{
+  "repositoryId": "1145865744",
+  "startTime": "2026-05-13T19:38:54.532Z",
+  "totalSteps": 7,
+  "steps": [
+    {
+      "stepNumber": 1,
+      "type": "tool_call",
+      "timestamp": "2026-05-13T19:39:01.354Z",
+      "toolName": "getFileContent",
+      "toolInput": {
+        "path": "src/inngest/functions.ts"
+      }
+    },
+    {
+      "stepNumber": 2,
+      "type": "tool_call",
+      "timestamp": "2026-05-13T19:39:04.489Z",
+      "toolName": "getFileContent",
+      "toolInput": {
+        "path": "src/inngest/client.ts"
+      }
+    },
+    {
+      "stepNumber": 3,
+      "type": "tool_call",
+      "timestamp": "2026-05-13T19:39:07.457Z",
+      "toolName": "searchCode",
+      "toolInput": {
+        "query": "inngest.send",
+        "language": null,
+        "extension": null,
+        "path": null
+      }
+    },
+    {
+      "stepNumber": 4,
+      "type": "tool_call",
+      "timestamp": "2026-05-13T19:39:15.253Z",
+      "toolName": "searchCode",
+      "toolInput": {
+        "query": "inngest.createFunction",
+        "language": "typescript",
+        "extension": "ts",
+        "path": "src"
+      }
+    },
+    {
+      "stepNumber": 5,
+      "type": "tool_call",
+      "timestamp": "2026-05-13T19:39:19.329Z",
+      "toolName": "searchCode",
+      "toolInput": {
+        "query": "inngest",
+        "language": null,
+        "extension": null,
+        "path": "src"
+      }
+    },
+    {
+      "stepNumber": 6,
+      "type": "tool_call",
+      "timestamp": "2026-05-13T19:39:35.278Z",
+      "toolName": "getFileContent",
+      "toolInput": {
+        "path": "src/app/api/inngest/route.ts"
+      }
+    },
+    {
+      "stepNumber": 7,
+      "type": "tool_call",
+      "timestamp": "2026-05-13T19:39:39.477Z",
+      "toolName": "getFileContent",
+      "toolInput": {
+        "path": "src/app/api/webhook/github/route.ts"
+      }
+    },
+    {
+      "stepNumber": 7,
+      "type": "agent_thought",
+      "timestamp": "2026-05-13T19:40:22.449Z",
+      "reasoning": "--- CRITICAL FINDINGS ---\n\n[EVT-1] Idempotency keyed to projectId causes event loss\nFile: src/inngest/functions.ts (L70-L220)\nEvidence: Both generateReverseArchitectureFunction and regenerateReverseArchitectureFunction set idempotency to 'event.data.projectId', which will collapse distinct push/regenerate events for the same project into a single processed event. This misuses idempotency for events that differ by commit SHA/afterCommit so unique pushes are silently deduplicated.\nImpact: On a 10x spike of pushes to the same repo, many distinct commits will be dropped/unprocessed (lost async work) instead of queued, causing missing architecture updates. \nFix: Use a commit-unique idempotency key (e.g., commit SHA or delivery id) or include both projectId+afterCommit for idempotency so each distinct push is processed.\n\n[EVT-2] Expensive generation has no idempotency/backpressure\nFile: src/inngest/functions.ts (L1-L80)\nEvidence: generateArchitectureFunction comments and code indicate a 5–10 minute CPU/IO-heavy operation but it has no idempotency key and no producer-side throttling. The function throws on errors (delegating retries to Inngest) without coalescing or rate limits.\nImpact: A 10x burst of generate-architecture events will queue many long-running jobs, causing unbounded backlog, duplicated heavy work, consumer lag, and large cost spikes. \nFix: Add idempotency (e.g., generationId or user+context), enforce producer rate-limits/coalescing, and gate concurrent executions per user/project.\n\n[EVT-3] Webhook enqueues unthrottled Inngest tasks for Pro users\nFile: src/app/api/webhook/github/route.ts (L200-L420)\nEvidence: On push events for Pro users the webhook directly calls inngest.send({ name: \"reverse-architecture/regenerate\", data: ... }) with no rate limiting, batching, or backpressure; free users instead store a single pending commit. \nImpact: A 10x push spike from CI or many contributors will flood Inngest with expensive regenerate jobs, causing queue saturation"
+    }
+  ],
+  "endTime": "2026-05-13T19:40:22.452Z",
+  "finalReport": {
+    "rawFindings": "--- CRITICAL FINDINGS ---\n\n[EVT-1] Idempotency keyed to projectId causes event loss\nFile: src/inngest/functions.ts (L70-L220)\nEvidence: Both generateReverseArchitectureFunction and regenerateReverseArchitectureFunction set idempotency to 'event.data.projectId', which will collapse distinct push/regenerate events for the same project into a single processed event. This misuses idempotency for events that differ by commit SHA/afterCommit so unique pushes are silently deduplicated.\nImpact: On a 10x spike of pushes to the same repo, many distinct commits will be dropped/unprocessed (lost async work) instead of queued, causing missing architecture updates. \nFix: Use a commit-unique idempotency key (e.g., commit SHA or delivery id) or include both projectId+afterCommit for idempotency so each distinct push is processed.\n\n[EVT-2] Expensive generation has no idempotency/backpressure\nFile: src/inngest/functions.ts (L1-L80)\nEvidence: generateArchitectureFunction comments and code indicate a 5–10 minute CPU/IO-heavy operation but it has no idempotency key and no producer-side throttling. The function throws on errors (delegating retries to Inngest) without coalescing or rate limits.\nImpact: A 10x burst of generate-architecture events will queue many long-running jobs, causing unbounded backlog, duplicated heavy work, consumer lag, and large cost spikes. \nFix: Add idempotency (e.g., generationId or user+context), enforce producer rate-limits/coalescing, and gate concurrent executions per user/project.\n\n[EVT-3] Webhook enqueues unthrottled Inngest tasks for Pro users\nFile: src/app/api/webhook/github/route.ts (L200-L420)\nEvidence: On push events for Pro users the webhook directly calls inngest.send({ name: \"reverse-architecture/regenerate\", data: ... }) with no rate limiting, batching, or backpressure; free users instead store a single pending commit. \nImpact: A 10x push spike from CI or many contributors will flood Inngest with expensive regenerate jobs, causing queue saturation, slowdowns, and retry storms if downstream transient errors occur. \nFix: Apply per-repo/user rate limits, debounce/coalesce frequent pushes (enqueue only latest commit), or route to a durable throttled queue that limits concurrent regenerations.\n\n--- WARNING FINDINGS ---\n\n[EVT-4] No DLQ or explicit failure/exhausted-retry handling\nFile: src/inngest/functions.ts (L1-L400)\nEvidence: Functions throw errors to let Inngest retry but there are no explicit onFailure handlers, dead-letter writes, or alerts for exhausted retries; failures are logged only via console.error. \nImpact: Poison messages or persistent failures during a 10x spike can repeatedly retry or be silently dropped, increasing load and hiding lost events. \nFix: Add onFailure/step failure handlers to persist failures to a DLQ table, emit alerts, and surface retry counts.\n\n[EVT-5] Free-user pending commit state overwrites previous data\nFile: src/app/api/webhook/github/route.ts (L300-L420)\nEvidence: For non-Pro users the webhook updates project.pendingCommitData to the latest commit, overwriting any prior pendingCommitData rather than enqueuing or recording multiple updates. \nImpact: Under frequent pushes (10x spike) intermediate pushes are lost (coalesced without trace), causing missed regenerations and potential user confusion. \nFix: Replace single-slot pendingCommitData with a queued store (append or upsert by commit) or a coalescing queue that preserves the newest and records skipped commits.\n\n--- INFO ---\n\n[EVT-6] Webhook deduplication using github delivery id\nFile: src/app/api/webhook/github/route.ts (L80-L120)\nEvidence: The webhook upserts db.webhookEvent using the GitHub delivery header to dedupe duplicate deliveries, which prevents immediate duplicate processing."
+  }
+}

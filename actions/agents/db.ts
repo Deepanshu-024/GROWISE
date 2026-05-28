@@ -1,64 +1,12 @@
-﻿import fs from "fs";
+import fs from "fs";
 import path from "path";
-import { createAgent } from "langchain";
-import { tool } from "langchain";
-import { z } from "zod";
+import { createAgent, createMiddleware } from "langchain";
+import { ToolMessage } from "@langchain/core/messages";
 import { gpt5Mini } from "@/lib/llm";
 import prisma from "@/lib/prisma";
-import { getRepoTreeTool, searchCodeTool, getFileContentTool, githubContextSchema } from "../analysis/tools/agent-tools";
+import { searchCodeTool, getFileContentTool, githubContextSchema } from "../analysis/tools/agent-tools";
 
 // --- Types --------------------------------------------------------------------
-
-type ScaleVerdict = "healthy" | "degraded" | "critical" | "failure";
-type FindingSeverity = "critical" | "warning" | "info";
-type FindingCategory =
-    | "query_pattern"
-    | "missing_index"
-    | "connection_pool"
-    | "schema_design"
-    | "missing_cache"
-    | "transaction";
-
-interface ScaleTier {
-    verdict: ScaleVerdict;
-    primaryIssues: string[];
-}
-
-interface Finding {
-    id: string;
-    severity: FindingSeverity;
-    category: FindingCategory;
-    title: string;
-    detail: string;
-    evidence: Record<string, unknown>;
-    breaksAt: string;
-    fix: string;
-}
-
-interface ReportSummary {
-    totalFindings: number;
-    criticalCount: number;
-    warningCount: number;
-    infoCount: number;
-    overallRisk: "critical" | "warning" | "low";
-    topConcern: string;
-    estimatedScaleCeiling: string;
-}
-
-export interface DbAgentReport {
-    agentType: "database";
-    repositoryId: string;
-    archetypeScore: number;
-    scaleAnalysis: {
-        "10k_users": ScaleTier;
-        "100k_users": ScaleTier;
-        "1M_users": ScaleTier;
-    };
-    findings: Finding[];
-    summary: ReportSummary;
-    toolsUsed: string[];
-    confidence: number;
-}
 
 export interface StreamEvent {
     type: "tool_start" | "tool_end" | "llm_end" | "agent_thought" | "error" | "done" | "agent_start";
@@ -145,122 +93,6 @@ function resolveCallbackToolName(tool: any, fallback?: string): string {
     );
 }
 
-// --- Final Report Tool (defined in-file) --------------------------------------
-
-const finalReportSchema = z.object({
-    agentType: z.literal("database"),
-    repositoryId: z.string(),
-    archetypeScore: z.number(),
-
-    scaleAnalysis: z.object({
-        "10k_users": z.object({
-            verdict: z.enum(["healthy", "degraded", "critical", "failure"]),
-            primaryIssues: z.array(z.string()),
-        }),
-        "100k_users": z.object({
-            verdict: z.enum(["healthy", "degraded", "critical", "failure"]),
-            primaryIssues: z.array(z.string()),
-        }),
-        "1M_users": z.object({
-            verdict: z.enum(["healthy", "degraded", "critical", "failure"]),
-            primaryIssues: z.array(z.string()),
-        }),
-    }),
-
-    findings: z.array(
-        z.object({
-            id: z.string(),
-            severity: z.enum(["critical", "warning", "info"]),
-            category: z.enum([
-                "query_pattern",
-                "missing_index",
-                "connection_pool",
-                "schema_design",
-                "missing_cache",
-                "transaction",
-            ]),
-            title: z.string(),
-            detail: z.string(),
-            evidence: z.record(z.unknown()),
-            breaksAt: z.string(),
-            fix: z.string(),
-        })
-    ),
-
-    summary: z.object({
-        totalFindings: z.number(),
-        criticalCount: z.number(),
-        warningCount: z.number(),
-        infoCount: z.number(),
-        overallRisk: z.enum(["critical", "warning", "low"]),
-        topConcern: z.string(),
-        estimatedScaleCeiling: z.string(),
-    }),
-
-    toolsUsed: z.array(z.string()),
-    confidence: z.number().min(0).max(1),
-});
-
-const finalReportTool = tool(
-    async (input): Promise<string> => {
-        const parsed = input as z.infer<typeof finalReportSchema>;
-
-        // Fill safe defaults for any missing optional-ish fields
-        const report: DbAgentReport = {
-            agentType: "database",
-            repositoryId: parsed.repositoryId ?? "unknown",
-            archetypeScore: parsed.archetypeScore ?? 0,
-            scaleAnalysis: {
-                "10k_users": parsed.scaleAnalysis?.["10k_users"] ?? {
-                    verdict: "healthy",
-                    primaryIssues: [],
-                },
-                "100k_users": parsed.scaleAnalysis?.["100k_users"] ?? {
-                    verdict: "healthy",
-                    primaryIssues: [],
-                },
-                "1M_users": parsed.scaleAnalysis?.["1M_users"] ?? {
-                    verdict: "healthy",
-                    primaryIssues: [],
-                },
-            },
-            findings: (parsed.findings ?? []).map((f, i) => ({
-                id: f.id ?? `finding-${i + 1}`,
-                severity: f.severity ?? "info",
-                category: f.category ?? "query_pattern",
-                title: f.title ?? "Untitled finding",
-                detail: f.detail ?? "",
-                evidence: f.evidence ?? {},
-                breaksAt: f.breaksAt ?? "unknown",
-                fix: f.fix ?? "No fix suggested",
-            })),
-            summary: {
-                totalFindings: parsed.summary?.totalFindings ?? parsed.findings?.length ?? 0,
-                criticalCount: parsed.summary?.criticalCount ?? 0,
-                warningCount: parsed.summary?.warningCount ?? 0,
-                infoCount: parsed.summary?.infoCount ?? 0,
-                overallRisk: parsed.summary?.overallRisk ?? "low",
-                topConcern: parsed.summary?.topConcern ?? "No concerns identified",
-                estimatedScaleCeiling: parsed.summary?.estimatedScaleCeiling ?? "unknown",
-            },
-            toolsUsed: parsed.toolsUsed ?? [],
-            confidence: parsed.confidence ?? 0.5,
-        };
-
-        console.log("[dbAgent] FINAL_REPORT received");
-
-        return JSON.stringify(report);
-    },
-    {
-        name: "finalReport",
-        description:
-            "Submit the final structured findings report. You MUST call this tool when your investigation is complete. " +
-            "Pass the complete report with all fields: agentType, repositoryId, archetypeScore, scaleAnalysis, findings, summary, toolsUsed, confidence. " +
-            "Never output your final answer as prose - always use this tool. The orchestrator cannot read prose output.",
-        schema: finalReportSchema,
-    }
-);
-
 // --- System Prompt -------------------------------------------------------------
 
 const SYSTEM_PROMPT = `You are an elite database scalability analyst specializing in React/Next.js applications. Your mission is to analyze GitHub repositories and surface the database-layer issues that will cause real failures as the business scales - not theoretical edge cases, but the patterns that break under traffic.
@@ -276,26 +108,41 @@ STRATEGIC TOOL USAGE PHILOSOPHY:
 **Use tools ONLY when critical information cannot be inferred from existing context**
 - Start with provided package.json and repository file tree
 - The file tree above is the FULL project structure - use it to identify targets before making any tool calls
-- Make educated assumptions based on React/Next.js patterns
+- Make conservative findings from concrete evidence; if evidence is thin, report INFO instead of exploring endlessly
 - Tool calls should be surgical, not exhaustive
-- Maximum 15 tool calls total across all phases - spend them wisely
+- HARD LIMIT: use at most 15 tool calls total
+- After using 15 tool calls, stop immediately and return the findings digest from evidence gathered
+- Do not call another tool just to improve confidence, find line numbers, or validate a low-impact suspicion
 
-AVAILABLE TOOLS (Use Sparingly - repo details are injected automatically via context):
-1. **getRepoTree()** - No input needed. Returns full project file tree (only if the tree in context is incomplete or truncated)
-2. **getFileContent(path)** - Just pass the file path. For reading schema, ORM config, API routes, server actions
-3. **searchCode(query)** - Just pass the search query. For locating patterns: PrismaClient, $transaction, findMany, N+1
+AVAILABLE TOOLS:
+1. **getFileContent(path)** - Read schema files, ORM client config, high-priority API routes, server actions, DB utility files, and visible env examples
+2. **searchCode(query)** - Use only when package.json and file tree are not enough to choose target files or validate a specific database pattern. Choose compact repository-specific searches. Use at most 3 searches total. **EARLY EXIT RULE: if 2 consecutive searchCode calls return 0 results, stop all further searchCode usage immediately and fall back to navigating the file tree with getFileContent.**
 
 ---
 
 ## ANALYSIS FRAMEWORK - DATABASE SCALE SPECIALIST
 
----
+### NON-NEGOTIABLE SCOPE GATE - DATABASE ONLY
 
-### PHASE 1 - Stack & Project Understanding (No Tools)
+Only investigate and report findings that directly affect database scalability, query latency, lock contention, connection pool exhaustion, index coverage, ORM query shape, transaction safety, DB CPU, or DB IOPS under growth.
 
-**Step 1A - Infer the database stack from package.json:**
+Before reading a file, decide whether it is a database target. Use the injected package.json dependencies and repository file tree to discover which database libraries and patterns the project actually uses. A file is in scope when it imports, configures, or implements one of these:
+-> ORM/database clients: Prisma, Drizzle, TypeORM, Sequelize, Mongoose, Supabase DB client, raw SQL clients, query builders
+-> API routes/server actions that read or write growing tables/collections
+-> schema/model definitions, migrations, indexes, relation definitions, or database config
+-> high-traffic read paths: search, listing, feed, dashboard, profile, product/category browsing
+-> high-value write paths: checkout, order creation, billing, subscription, inventory, account mutation, webhook persistence
 
-Extract and note:
+Ignore and do not report non-database findings, even if they are real issues:
+-> UI rendering issues, static pages, styling, client-only state
+-> generic auth or payment correctness unless the evidence is specifically DB transaction/idempotency/storage related
+-> realtime/event/AI/content delivery issues unless the database is the direct bottleneck
+
+If a possible issue is adjacent, ask: "Would fixing this help the database handle 10x queries per second without degrading latency, exhausting connections, increasing lock waits, or saturating DB CPU/IOPS?" If no, discard it silently.
+
+### PHASE 1 - Database Stack Understanding (No Tools)
+
+Infer from package.json and file tree:
 - orm: prisma | drizzle | typeorm | mongoose | raw SQL
 - database: postgresql | mysql | mongodb | sqlite
 - framework: Next.js App Router | Pages Router
@@ -303,38 +150,26 @@ Extract and note:
 - cacheLayer: redis | memcached | NONE (from ioredis, upstash, etc.)
 - authLibs: clerk | next-auth | supabase-auth | custom
 - paymentLibs: stripe | razorpay | paddle | NONE
+- workloadShape: read-heavy | write-heavy | mixed | unknown
+- likelyHotTables: users | sessions | products | orders | events | messages | posts | workspaces | unknown
+- dbScaleSignals: indexes, pagination, batching, transactions, connection pooler, replicas, cache layer, queue-backed writes
 
-These directly shape severity of every finding:
+These directly shape severity:
 -> No cache layer = every DB bottleneck hits harder
 -> isServerless + no connection pooler = pool exhaustion guaranteed at scale
 -> paymentLibs present = financial flows must be transactional
 -> authLibs = session/user queries fire on every authenticated request
+-> read-heavy apps fail first through query latency and DB CPU/IOPS
+-> write-heavy apps fail first through lock contention, slow transactions, and connection saturation
 
-**Step 1B - Infer project type from root structure:**
-
-Scan folder names in provided root content:
-- E-commerce: /products, /cart, /checkout, /orders -> core flows are browse -> product -> cart -> checkout
-- SaaS: /dashboard, /analytics, /billing, /workspace -> core flows are login -> dashboard -> data interaction
-- Social: /feed, /posts, /profile, /notifications -> core flows are feed -> post -> profile -> interact
-- API Service: /api only -> every endpoint matters equally
-- Unknown: note uncertainty, assume all data routes are high-traffic
-
-Write down stack summary and project type before continuing.
+No database dependencies, schema/model files, ORM/client config, or database-looking route/action files = report INFO AND STOP WITHOUT USING TOOLS.
 
 ---
 
-### PHASE 2 - Identify Investigation Targets (Minimal Tools)
+### PHASE 2 - Identify Investigation Targets
 
-**Step 2A - Determine architecture pattern from root structure:**
-
-Infer from provided context first:
-- App Router with route.ts files -> API Routes pattern
-- Files named actions.ts / paths containing /actions/ -> Server Actions pattern
-- Both present -> Mixed pattern (most common in modern Next.js)
-
-Only call **getRepoTree** if the root structure is ambiguous and you cannot determine the architecture pattern. Do not retry if it fails.
-
-**Step 2B - Classify routes and actions by traffic priority:**
+Build a target list from package.json and file tree first. Use the injected file tree as authoritative; do not spend tools trying to rebuild the tree.
+Prefer files that own high-traffic reads, high-value writes, schema/indexes, or connection setup:
 
 CRITICAL - financial and core write operations:
 -> path contains: checkout, payment, order, purchase, confirm, verify-payment, create-order, razorpay, stripe, webhook
@@ -346,19 +181,19 @@ MEDIUM - authenticated user actions triggered less frequently:
 -> path contains: wishlist, reviews, address, coupon, settings, notifications, account
 
 LOW - skip entirely:
--> path contains: admin, export, report, seed, migrate, debug, test, dummy
-
-**Step 2C - Build your investigation list:**
+-> path contains: export, report, seed, migrate, debug, test, dummy
 
 Combine CRITICAL + top 3-4 HIGH items.
 Skip MEDIUM and LOW unless they are the only items found.
 Maximum 8 items total. Write the list explicitly before Phase 3.
+Use searchCode only if injected context is not enough to choose target files. Pick your own compact query based on repository signals. Do not run one search per keyword.
+Read highest-impact files first. Stop expanding when the failure mode is clear.
 
 ---
 
-### PHASE 3 - Deep File Analysis (Strategic Tool Calls)
+### PHASE 3 - Deep Database Analysis
 
-For each item in your investigation list, use **getFileContent** to read the route handler or server action file.
+For each item in your investigation list, use **getFileContent** to read the route handler or server action file. Read highest-impact files first. Stop expanding optional targets when the failure mode is clear.
 
 **What to extract from each file:**
 
@@ -383,9 +218,24 @@ Expensive Aggregates - count/groupBy on unindexed columns:
 -> COUNT(*) or SUM() on large tables with no index on the WHERE column
 -> Dashboard analytics queries are the most common offender
 
+Lock Contention and Write Hotspots:
+-> long transactions wrapping network calls or slow work
+-> repeated updates to the same row/counter/status record
+-> checkout/order/inventory writes without short, bounded transactional sections
+-> bulk writes performed synchronously in request handlers
+-> write amplification where one user action creates many DB writes
+
+ORM Misuse:
+-> unbounded .findMany(), .find(), scan, populate, or SELECT calls on growing data
+-> select/include fetching entire rows or deep relations when only a few fields are needed
+-> sequential awaits for independent queries that could be batched or joined safely
+-> client-side filtering/sorting after fetching large result sets
+-> missing take/limit/cursor pagination on user-facing lists
+
 **For server action files specifically:**
--> Use **searchCode** to find all files importing a high-frequency action
+-> Use **searchCode** only when import frequency changes severity or target selection
 -> High import count = high traffic = higher severity for any issue found
+-> Do not run one search per action; use one compact query for the shared export/import pattern
 
 **Severity assignment per finding:**
 
@@ -396,18 +246,21 @@ HIGH route + missing pagination = WARNING
 HIGH route + missing transaction on writes = CRITICAL (if financial)
 MEDIUM route + any issue = WARNING
 Any route + nested includes 3+ levels = WARNING
+Any high-write route + long transaction or shared-row update hotspot = CRITICAL if it blocks checkout/core writes, otherwise WARNING
+Any route + unbounded ORM query on a growing table = WARNING; CRITICAL if route is core/high-traffic
 
-After finding 3 CRITICAL issues, stop expanding the investigation to new non-required files. Still complete required schema and connection-pool checks, and report every finding already discovered. Never omit a discovered finding just to hit a preferred finding count.
+If you have fewer than 3 CRITICAL findings and still have tool budget remaining, continue investigating additional files before synthesizing. Only stop early if the repository genuinely has no more database surface to investigate.
+After finding 3 CRITICAL issues, stop expanding the investigation to new optional files. Run schema/index/connection checks only when they are in scope and the remaining tool budget allows it. Report every in-scope database finding already discovered. If the tool budget is exhausted, stop and synthesize. Never continue tool use past the budget, and never omit a discovered database finding just to hit a preferred finding count.
 
 ---
 
-### PHASE 4 - Schema & Connection Pool Analysis (Targeted Tool Calls)
+### PHASE 4 - Schema, Index & Connection Pool Checks
 
-**Always run this phase. Never skip it.**
+Run this phase only when database targets exist and the schema/client/config path is obvious from the injected file tree or discoverable with one compact search. Never exceed the tool budget to complete this phase.
 
-**Step 4A - Schema analysis:**
+Schema analysis:
 
-Use **getFileContent** to read the schema file.
+Use **getFileContent** to read the schema file. If the schema path is not visible in the tree, use at most one compact search to locate it.
 
 Correct file paths by ORM:
 - Prisma -> prisma/schema.prisma (NOT src/lib/prisma.ts - that is the client)
@@ -423,9 +276,9 @@ Cross-reference with Phase 3 findings:
 
 Missing indexes on high-traffic filter columns are silent until the table hits ~100k rows, then queries degrade from milliseconds to seconds.
 
-**Step 4B - Connection pool analysis:**
+Connection pool analysis:
 
-Use **searchCode** to find "PrismaClient" (or equivalent ORM client instantiation).
+Use **searchCode** to find "PrismaClient" (or equivalent ORM client instantiation) only if the likely ORM client file is not obvious from the tree. Prefer reading visible lib/db/prisma files directly.
 
 What to look for:
 - Is a singleton pattern used? (module-level client, not new Client() inside a function)
@@ -441,31 +294,28 @@ Severity:
 
 ---
 
-### PHASE 5 - Synthesis & Scale Projection
+### PHASE 5 - Synthesis
 
 Combine all findings and project scale ceilings:
 
-**Scale tier definitions:**
+Where it breaks:
+-> Query latency: slow scans, missing indexes, N+1, deep joins, aggregates, or fetching too much data
+-> Lock contention: long transactions, hot rows, repeated status/counter updates, write amplification
+-> Connection pool exhaustion: per-request clients, serverless cold starts, missing pooler, too many concurrent DB calls
 
-10k users (light traffic, ~50-200 concurrent):
--> CRITICAL findings on core routes = service degradation
--> Warnings only = noticeable slowdowns, not failures
--> No issues = healthy
-
-100k users (~500-2,000 concurrent):
--> Any CRITICAL finding = failure under load
--> Multiple warnings on core routes = cascading slowdowns
--> Single warnings = degraded but survivable
--> No issues = healthy
-
-1M users (high scale, 10k+ concurrent):
--> No caching + high DB load = guaranteed failure
--> Full table scans on large tables = critical
--> Connection pool exhaustion = total outage
--> Well-indexed + pooled = degraded only on write bottlenecks
+Scale analysis basis:
+For each core DB flow, estimate the 10x QPS failure mode using:
+-> read/write ratio: read-heavy, write-heavy, or mixed
+-> query complexity: joins, nested includes, aggregations, scans, client-side filtering
+-> index coverage: WHERE, JOIN/FK, ORDER BY, unique/idempotency, status/timestamp columns
+-> DB CPU + IOPS pressure: number of queries per request, rows scanned/read/written, fan-out from N+1, write amplification
+-> connection behavior: singleton/pooler, concurrent query count, serverless cold-start risk
 
 For each CRITICAL finding, state: "This breaks at approximately X concurrent users because..."
 Be specific. Vague scale estimates are not useful.
+
+For every meaningful finding, answer: "Can this database handle 10x queries per second without degrading latency?"
+State what fails first: query latency, lock contention, connection pool exhaustion, DB CPU, DB IOPS, or data inconsistency.
 
 ---
 
@@ -473,7 +323,7 @@ Be specific. Vague scale estimates are not useful.
 
 Return a compact findings digest, not a full report. The orchestrator will write the final user report.
 Do NOT include executive summary, stack recap, schema recap, connection-pool recap, priority list, code snippets, or "if you want" follow-ups.
-Do NOT call finalReport or any report tool. Output plain structured text only.
+Do NOT call any report tool. Output plain structured text only.
 
 Use exactly this format:
 
@@ -482,7 +332,7 @@ Use exactly this format:
 [DB-1] Short title, max 10 words
 File: path/to/file.ts (Lx-Ly)
 Evidence: max 2 sentences. State the exact code pattern and why it fails.
-Impact: max 1 sentence. Include scale trigger if known.
+Impact: max 1 sentence. Include what breaks at 10x QPS: query latency, lock contention, connection pool exhaustion, DB CPU/IOPS, or data inconsistency.
 Fix: max 1 sentence. State the concrete first fix.
 
 --- WARNING FINDINGS ---
@@ -501,15 +351,15 @@ Evidence: max 1 sentence.
 Use INFO only for useful context, healthy observations, or lower-confidence findings.
 
 Severity definitions:
-- CRITICAL: proven outage, data corruption, financial inconsistency, connection exhaustion, or severe DB overload on a core user path.
-- WARNING: proven performance degradation or scaling limit that becomes painful with table/traffic growth but is not an immediate outage.
+- CRITICAL: proven outage, data corruption, financial inconsistency, connection exhaustion, lock contention blocking core writes, or severe DB latency/CPU/IOPS overload on a core user path.
+- WARNING: proven query-latency, index, ORM, transaction, or connection-pool risk that becomes painful with table/traffic growth but is not an immediate outage.
 - INFO: context the orchestrator may optionally use; never include generic advice here.
 
 Compression rules:
-- Report every distinct finding you discovered. Do not drop, hide, or silently discard a discovered finding because of the output budget or preferred count.
+- Report every distinct in-scope database finding you discovered. Drop non-database findings silently.
 - Keep the digest compact by merging only genuinely overlapping instances of the same root cause; do not merge unrelated findings.
 - Target 3-6 findings when possible, but exceeding that is required if you discovered more distinct findings.
-- Sort by severity, then user impact.
+- Sort by severity, then 10x QPS impact.
 - Each finding must preserve: file, pattern/evidence, scale impact, and fix.
 - Maximum 120 words per CRITICAL finding and 90 words per WARNING finding; if there are many findings, shorten each field rather than omitting findings.
 - Prefer one consolidated missing-index finding over separate index bullets.
@@ -521,7 +371,6 @@ When your investigation is complete, output your findings as your final message.
 // --- Tools --------------------------------------------------------------------
 
 const dbAgentTools = [
-    getRepoTreeTool,
     searchCodeTool,
     getFileContentTool,
 ];
@@ -541,11 +390,10 @@ export async function runDatabaseAgent(
         totalSteps: 0,
         steps: [],
     };
-    let stepCounter = 0; // updated from langgraph_step metadata in callbacks
+    let toolCallCount = 0;
     let cumulativeInputTokens = 0;
     let cumulativeOutputTokens = 0;
     let lastToolName = "unknown";
-    let pendingDecisionReasoning: string | null = null;
 
     const emit = (event: StreamEvent) => {
         try { onEvent?.(event); } catch { /* ignore stream errors */ }
@@ -602,12 +450,163 @@ export async function runDatabaseAgent(
 
         console.log(`[dbAgent] Repo: ${repository.fullName} (${branch})`);
 
+        // -- Tool budget middleware (custom) ------------------------------
+        // The built-in toolCallLimitMiddleware sends a vague "Tool call limit exceeded"
+        // message that doesn't instruct the agent to produce its report.
+        // This custom middleware sends explicit instructions to generate findings.
+        const TOOL_BUDGET = 15;
+        const SEARCH_BUDGET = 3;
+        let _toolCalls = 0;
+        let _searchCalls = 0;
+
+        const toolBudgetMiddleware = createMiddleware({
+            name: "ToolBudgetMiddleware",
+
+            // --- Capture agent reasoning after every LLM call in the loop ---
+            afterModel: (state: any) => {
+                const lastMsg = state.messages?.[state.messages.length - 1];
+                if (!lastMsg) return;
+
+                // --- Extract reasoning from the AIMessage ---
+                let reasoning = "";
+
+                // 1. contentBlocks (LangChain standardized format)
+                //    OpenAI: [{type:"reasoning", summary:[{type:"summary_text", text:"..."}]}, {type:"text", text:"..."}]
+                //    Anthropic: [{type:"thinking", thinking:"..."}, {type:"text", text:"..."}]
+                const blocks = lastMsg.contentBlocks ?? lastMsg.content_blocks;
+                if (Array.isArray(blocks)) {
+                    for (const block of blocks) {
+                        if (block.type === "reasoning" && Array.isArray(block.summary)) {
+                            // OpenAI reasoning format
+                            const summaryTexts = block.summary
+                                .filter((s: any) => s.type === "summary_text" && s.text)
+                                .map((s: any) => s.text);
+                            if (summaryTexts.length > 0) reasoning += summaryTexts.join(" ");
+                        } else if (block.type === "thinking" && block.thinking) {
+                            // Anthropic thinking format
+                            reasoning += block.thinking;
+                        } else if (block.type === "text" && block.text) {
+                            // Plain text content alongside tool_calls
+                            reasoning += block.text;
+                        }
+                    }
+                }
+
+                // 2. Fallback: message.content as string
+                if (!reasoning && typeof lastMsg.content === "string" && lastMsg.content.trim()) {
+                    reasoning = lastMsg.content.trim();
+                }
+
+                // 3. Fallback: message.content as array of parts
+                if (!reasoning && Array.isArray(lastMsg.content)) {
+                    const textParts = lastMsg.content
+                        .filter((p: any) => (p.type === "text" && p.text) || (p.type === "reasoning"))
+                        .map((p: any) => {
+                            if (p.type === "reasoning" && Array.isArray(p.summary)) {
+                                return p.summary.map((s: any) => s.text).filter(Boolean).join(" ");
+                            }
+                            return p.text ?? "";
+                        });
+                    if (textParts.length > 0) reasoning = textParts.join("\n").trim();
+                }
+
+                // --- Extract tool calls being made ---
+                const toolCalls = lastMsg.tool_calls ?? [];
+                const toolNames = toolCalls.map((tc: any) => tc.name ?? "?").join(", ");
+
+                // --- Log reasoning ---
+                if (reasoning) {
+                    console.log(`\n💭 [Agent] Reasoning: ${reasoning.slice(0, 500)}${reasoning.length > 500 ? "..." : ""}`);
+                    agentLog.steps.push({
+                        stepNumber: toolCallCount,
+                        type: "agent_thought",
+                        timestamp: new Date().toISOString(),
+                        reasoning: reasoning.slice(0, 2000),
+                    });
+                    emit({
+                        type: "agent_thought",
+                        stepNumber: toolCallCount,
+                        timestamp: new Date().toISOString(),
+                        elapsedMs: Date.now() - startTime,
+                        reasoning: reasoning.slice(0, 2000),
+                        cumulativeTokens: {
+                            inputTokens: cumulativeInputTokens,
+                            outputTokens: cumulativeOutputTokens,
+                            totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                        },
+                    });
+                }
+
+                if (toolCalls.length > 0) {
+                    console.log(`🤖 [Agent] Selecting tool(s): ${toolNames}`);
+                    if (toolCalls[0]?.name) lastToolName = toolCalls[0].name;
+                }
+
+                // --- Extract token usage ---
+                const usageMeta = lastMsg.usage_metadata;
+                if (usageMeta) {
+                    const inTok = usageMeta.input_tokens ?? 0;
+                    const outTok = usageMeta.output_tokens ?? 0;
+                    cumulativeInputTokens += inTok;
+                    cumulativeOutputTokens += outTok;
+                    console.log(`📊 [Agent] Tokens: +${inTok}in/+${outTok}out (cumulative: ${cumulativeInputTokens}in/${cumulativeOutputTokens}out)`);
+
+                    emit({
+                        type: "llm_end",
+                        stepNumber: toolCallCount,
+                        timestamp: new Date().toISOString(),
+                        elapsedMs: Date.now() - startTime,
+                        tokenUsage: { inputTokens: inTok, outputTokens: outTok, totalTokens: inTok + outTok },
+                        cumulativeTokens: {
+                            inputTokens: cumulativeInputTokens,
+                            outputTokens: cumulativeOutputTokens,
+                            totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                        },
+                    });
+                }
+
+                return; // no state mutation
+            },
+
+            // --- Enforce tool budgets ---
+            wrapToolCall: async (request: any, handler: any) => {
+                const toolName = request.toolCall?.name ?? "unknown";
+                _toolCalls++;
+
+                // Per-tool limit: searchCode
+                if (toolName === "searchCode") {
+                    _searchCalls++;
+                    if (_searchCalls > SEARCH_BUDGET) {
+                        console.log(`🚫 [Middleware] searchCode BLOCKED (${_searchCalls}/${SEARCH_BUDGET})`);
+                        return new ToolMessage({
+                            content: `searchCode budget exhausted (${SEARCH_BUDGET}/${SEARCH_BUDGET} used). Do NOT call searchCode again. Use getFileContent to navigate the file tree instead, or if you have enough evidence, generate your findings report now.`,
+                            tool_call_id: request.toolCall?.id ?? "unknown",
+                        });
+                    }
+                }
+
+                // Global tool limit
+                if (_toolCalls > TOOL_BUDGET) {
+                    console.log(`🚫 [Middleware] TOOL BUDGET EXHAUSTED (${_toolCalls}/${TOOL_BUDGET}) — blocking ${toolName}`);
+                    return new ToolMessage({
+                        content: `TOOL BUDGET EXHAUSTED (${TOOL_BUDGET}/${TOOL_BUDGET} calls used). You MUST stop calling tools immediately. Generate your final findings report NOW using all evidence gathered so far. Output the compact findings digest as described in your system prompt. Do not attempt any more tool calls.`,
+                        tool_call_id: request.toolCall?.id ?? "unknown",
+                    });
+                }
+
+                // Within budget — execute normally
+                console.log(`📋 [Middleware] Tool ${_toolCalls}/${TOOL_BUDGET}: ${toolName}`);
+                return handler(request);
+            },
+        });
+
         // -- Create agent & invoke ----------------------------------------
         const agent = createAgent({
             model: gpt5Mini,
             tools: dbAgentTools,
             systemPrompt: SYSTEM_PROMPT,
             contextSchema: githubContextSchema,
+            middleware: [toolBudgetMiddleware],
         });
 
         // NOTE: intermediateSteps and agentLog contain the raw accessToken
@@ -634,17 +633,29 @@ REPOSITORY CONTEXT:
 3. **Transaction Safety** - Identify multi-write flows (especially financial) with no transaction wrapper
 4. **Index Gap Analysis** - Cross-reference query patterns against schema to find missing indexes
 5. **Connection Pool Risk** - Assess whether the connection strategy survives serverless cold starts at scale
+6. **Lock Contention Risk** - Identify long transactions, hot-row updates, and write amplification on core writes
+7. **10x QPS Capacity** - State whether query latency, lock contention, connection pool exhaustion, DB CPU, or DB IOPS breaks first
 
 **Analysis Approach:**
 - Start with the package.json and file tree provided above - identify API routes, schema files, and lib files immediately (Phase 1, no tools needed)
 - Classify routes and actions by traffic priority before reading any files
 - Use getFileContent(path) strategically on high-priority targets only
-- Use searchCode(query) to validate patterns (singleton usage, transaction usage, import frequency)
+- Use searchCode(query) only when the file tree is not enough to choose a target or validate a high-impact pattern
 - Read schema file once to cross-reference all query findings at once
+- For each finding, evaluate read/write ratio, query complexity, index coverage, DB CPU/IOPS pressure, and connection behavior
 - Tools already know the repo details - just pass the file path or search query
 
-**Constraint:** Minimize tool usage - leverage the file tree and package.json above first, then make targeted tool calls only for confirmed high-traffic files.
-**Reporting constraint:** If you discover a distinct finding, you must report it. Do not drop findings to satisfy a preferred count or budget; keep within budget by compressing wording and merging only genuinely overlapping duplicates.
+Tool constraints:
+- HARD LIMIT: use at most 15 tool calls total, then stop and return the digest, never exceed this limit
+- searchCode limit: use at most 3 searches total
+- searchCode EARLY EXIT: if 2 consecutive searches return 0 results, stop using searchCode entirely and navigate the file tree with getFileContent instead
+- Decide yourself whether searchCode is needed; do not follow a preset search query
+- Use package.json and file tree before tools
+
+**Constraint:** Minimize tool usage - leverage the file tree and package.json above first, then make targeted tool calls only for confirmed high-traffic files. If you are near the tool limit, stop using tools and synthesize from available evidence.
+**Scope constraint:** Only report database scalability risks: query latency, lock contention, connection pool exhaustion, missing indexes, ORM misuse, N+1 queries, unbounded queries, transaction safety, DB CPU, and DB IOPS. Ignore unrelated issues silently.
+**Key question:** Can this database handle 10x queries per second without degrading latency?
+**Reporting constraint:** If you discover a distinct in-scope database finding, you must report it. Drop non-database findings silently. Do not drop database findings to satisfy a preferred count or budget; keep within budget by compressing wording and merging only genuinely overlapping duplicates.
 
 Return the compact findings digest required by the system prompt. Do not call any report tool. Do not include executive summary, stack recap, priority list, code snippets, or follow-up offers.`,
                     },
@@ -652,69 +663,38 @@ Return the compact findings digest required by the system prompt. Do not call an
             },
             {
                 context: { owner, repo, branch, accessToken },
-                recursionLimit: 40,
+                recursionLimit: 50,
                 callbacks: [
                     {
-                        handleAgentAction(action: any, _runId: string, _parentRunId?: string, _tags?: string[], metadata?: Record<string, any>) {
-                            // Use LangGraph's built-in step counter if available
-                            if (metadata?.langgraph_step != null) {
-                                stepCounter = metadata.langgraph_step;
-                            } else {
-                                stepCounter++;
-                            }
-                            const toolName = resolveCallbackToolName(action, action.tool);
-                            lastToolName = toolName;
-                            pendingDecisionReasoning =
-                                typeof action.log === "string" && action.log.trim().length > 0
-                                    ? action.log.trim()
-                                    : null;
-                            agentLog.steps.push({
-                                stepNumber: stepCounter,
-                                type: "decision",
-                                timestamp: new Date().toISOString(),
-                                toolName,
-                                toolInput: action.toolInput,
-                                reasoning: action.log,
-                            });
-                            console.log("\nâ”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”");
-                            console.log(`[Step ${stepCounter}] AGENT DECISION`);
-                            console.log(`Tool: ${toolName}`);
-                            console.log(`Reasoning: ${action.log}`);
-                            console.log("â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”");
-                            if (pendingDecisionReasoning) {
-                                emit({
-                                    type: "agent_thought",
-                                    stepNumber: stepCounter,
-                                    timestamp: new Date().toISOString(),
-                                    elapsedMs: Date.now() - startTime,
-                                    toolName,
-                                    reasoning: pendingDecisionReasoning,
-                                    cumulativeTokens: {
-                                        inputTokens: cumulativeInputTokens,
-                                        outputTokens: cumulativeOutputTokens,
-                                        totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
-                                    },
-                                });
-                            }
-                        },
-                        handleToolStart(tool: any, input: string, _runId?: string, _parentRunId?: string, _tags?: string[], metadata?: Record<string, any>) {
-                            if (metadata?.langgraph_step != null) {
-                                stepCounter = metadata.langgraph_step;
-                            }
+                        handleToolStart(tool: any, input: string) {
+                            // Increment tool call counter (this is the only reliable callback that fires per tool call)
+                            toolCallCount++;
+
+                            // Resolve tool name — try multiple paths since LangChain serializes differently
                             const toolName = resolveCallbackToolName(tool, lastToolName);
                             lastToolName = toolName;
+
                             let parsedInput: unknown = input;
-                            try {
-                                parsedInput = JSON.parse(input);
-                            } catch {
-                                // keep raw string
-                            }
-                            console.log(`\n[Step ${stepCounter}/50] -> Calling ${toolName}`);
-                            console.log(`Input: ${JSON.stringify(parsedInput, null, 2).slice(0, 300)}`);
+                            try { parsedInput = JSON.parse(input); } catch { /* keep raw */ }
+
+                            const inputPreview = typeof parsedInput === "object"
+                                ? JSON.stringify(parsedInput).slice(0, 200)
+                                : String(parsedInput).slice(0, 200);
+
+                            console.log(`\n🔧 [Step ${toolCallCount}/15] TOOL CALL: ${toolName}`);
+                            console.log(`   Input: ${inputPreview}`);
+
+                            agentLog.steps.push({
+                                stepNumber: toolCallCount,
+                                type: "tool_call",
+                                timestamp: new Date().toISOString(),
+                                toolName,
+                                toolInput: parsedInput,
+                            });
 
                             emit({
                                 type: "tool_start",
-                                stepNumber: stepCounter,
+                                stepNumber: toolCallCount,
                                 timestamp: new Date().toISOString(),
                                 elapsedMs: Date.now() - startTime,
                                 toolName,
@@ -725,35 +705,61 @@ Return the compact findings digest required by the system prompt. Do not call an
                                     totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
                                 },
                             });
-                            pendingDecisionReasoning = null;
                         },
+
                         handleToolEnd(output: any) {
-                            const outputStr: string =
-                                typeof output === "string"
-                                    ? output
-                                    : JSON.stringify(output, null, 2) ?? "";
+                            // Extract clean content from LangChain ToolMessage objects
+                            let cleanOutput: string;
+                            if (typeof output === "string") {
+                                cleanOutput = output;
+                            } else if (output?.content != null) {
+                                // ToolMessage object — extract .content directly
+                                cleanOutput = typeof output.content === "string"
+                                    ? output.content
+                                    : JSON.stringify(output.content);
+                            } else if (output?.kwargs?.content != null) {
+                                // Serialized ToolMessage — extract from .kwargs.content
+                                cleanOutput = typeof output.kwargs.content === "string"
+                                    ? output.kwargs.content
+                                    : JSON.stringify(output.kwargs.content);
+                            } else {
+                                cleanOutput = JSON.stringify(output) ?? "";
+                            }
+
+                            // Detect middleware limit responses
+                            const isMiddlewareBlock = cleanOutput.includes("Tool call limit")
+                                || cleanOutput.includes("ToolCallLimitExceeded")
+                                || cleanOutput.includes("tool call limit reached");
+
+                            // Log to agent step history
                             const lastDecisionStep = [...agentLog.steps]
                                 .reverse()
                                 .find((s) => s.type === "decision");
                             if (lastDecisionStep) {
                                 lastDecisionStep.toolOutput =
-                                    outputStr.length > 3000
-                                        ? outputStr.slice(0, 3000) + "\n... [truncated]"
-                                        : outputStr;
+                                    cleanOutput.length > 3000
+                                        ? cleanOutput.slice(0, 3000) + "\n... [truncated]"
+                                        : cleanOutput;
                             }
-                            console.log(`[Step ${stepCounter}] â† Tool response: ${outputStr.length} chars`);
-                            console.log(`Preview: ${outputStr.slice(0, 500)}`);
+
+                            if (isMiddlewareBlock) {
+                                console.log(`🚫 [Step ${toolCallCount}/15] MIDDLEWARE BLOCKED: ${lastToolName}`);
+                                console.log(`   Reason: ${cleanOutput.slice(0, 300)}`);
+                            } else {
+                                console.log(`📄 [Step ${toolCallCount}/15] TOOL RESPONSE: ${lastToolName} (${cleanOutput.length} chars)`);
+                                console.log(`   Preview: ${cleanOutput.slice(0, 200)}${cleanOutput.length > 200 ? "..." : ""}`);
+                            }
 
                             emit({
                                 type: "tool_end",
-                                stepNumber: stepCounter,
+                                stepNumber: toolCallCount,
                                 timestamp: new Date().toISOString(),
                                 elapsedMs: Date.now() - startTime,
                                 toolName: lastToolName,
-                                toolOutput: outputStr.length > 5000
-                                    ? outputStr.slice(0, 5000) + "\n... [truncated]"
-                                    : outputStr,
-                                toolOutputLength: outputStr.length,
+                                toolOutput: cleanOutput.length > 5000
+                                    ? cleanOutput.slice(0, 5000) + "\n... [truncated]"
+                                    : cleanOutput,
+                                toolOutputLength: cleanOutput.length,
                                 cumulativeTokens: {
                                     inputTokens: cumulativeInputTokens,
                                     outputTokens: cumulativeOutputTokens,
@@ -761,89 +767,36 @@ Return the compact findings digest required by the system prompt. Do not call an
                                 },
                             });
                         },
-                        handleLLMEnd(output: any, _runId?: string, _parentRunId?: string, _tags?: string[], metadata?: Record<string, any>) {
-                            // Sync step counter from LangGraph metadata
-                            if (metadata?.langgraph_step != null) {
-                                stepCounter = metadata.langgraph_step;
-                            }
 
-                            // Extract token usage from LangChain output metadata
+                        handleLLMEnd(output: any) {
+                            // Token extraction — kept as fallback for when afterModel doesn't fire
+                            // (e.g., in nested chains or legacy compatibility)
                             const usage = output?.llmOutput?.tokenUsage
                                 ?? output?.llmOutput?.usage
-                                ?? output?.llmOutput?.estimatedTokenUsage
                                 ?? null;
-
-                            let inputTokens = 0;
-                            let outputTokens = 0;
                             if (usage) {
-                                inputTokens = usage.promptTokens ?? usage.prompt_tokens ?? usage.inputTokens ?? usage.input_tokens ?? 0;
-                                outputTokens = usage.completionTokens ?? usage.completion_tokens ?? usage.outputTokens ?? usage.output_tokens ?? 0;
+                                const inTok = usage.promptTokens ?? usage.prompt_tokens ?? usage.inputTokens ?? usage.input_tokens ?? 0;
+                                const outTok = usage.completionTokens ?? usage.completion_tokens ?? usage.outputTokens ?? usage.output_tokens ?? 0;
+                                // Only add if afterModel didn't already count these
+                                // (afterModel uses usage_metadata which is the same data)
+                                // We skip to avoid double-counting
                             }
-                            cumulativeInputTokens += inputTokens;
-                            cumulativeOutputTokens += outputTokens;
-
-                            const generation = output.generations?.[0]?.[0];
-                            const message = (generation as any)?.message;
-                            const fnCall = message?.additional_kwargs?.function_call;
-                            if (fnCall) {
-                                console.log(`[Step ${stepCounter}] Agent selecting: ${fnCall.name}`);
-                            } else {
-                                const content = String(message?.content ?? "").trim();
-                                if (content.length > 0) {
-                                    agentLog.steps.push({
-                                        stepNumber: stepCounter,
-                                        type: "agent_thought",
-                                        timestamp: new Date().toISOString(),
-                                        reasoning: content.slice(0, 1000),
-                                    });
-                                    console.log(`[Step ${stepCounter}] Agent thought: ${content.slice(0, 300)}`);
-
-                                    emit({
-                                        type: "agent_thought",
-                                        stepNumber: stepCounter,
-                                        timestamp: new Date().toISOString(),
-                                        elapsedMs: Date.now() - startTime,
-                                        reasoning: content.slice(0, 2000),
-                                        cumulativeTokens: {
-                                            inputTokens: cumulativeInputTokens,
-                                            outputTokens: cumulativeOutputTokens,
-                                            totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
-                                        },
-                                    });
-                                }
-                            }
-
-                            // Always emit llm_end with token info
-                            emit({
-                                type: "llm_end",
-                                stepNumber: stepCounter,
-                                timestamp: new Date().toISOString(),
-                                elapsedMs: Date.now() - startTime,
-                                tokenUsage: {
-                                    inputTokens,
-                                    outputTokens,
-                                    totalTokens: inputTokens + outputTokens,
-                                },
-                                cumulativeTokens: {
-                                    inputTokens: cumulativeInputTokens,
-                                    outputTokens: cumulativeOutputTokens,
-                                    totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
-                                },
-                            });
                         },
+
                         handleChainError(error: Error) {
                             agentLog.steps.push({
-                                stepNumber: ++stepCounter,
+                                stepNumber: toolCallCount,
                                 type: "error",
                                 timestamp: new Date().toISOString(),
                                 reasoning: error.message,
                             });
                             agentLog.error = error.message;
-                            console.log(`\n[dbAgent] CHAIN ERROR: ${error.message}`);
+
+                            console.log(`\n❌ [dbAgent] CHAIN ERROR: ${error.message}`);
 
                             emit({
                                 type: "error",
-                                stepNumber: stepCounter,
+                                stepNumber: toolCallCount,
                                 timestamp: new Date().toISOString(),
                                 elapsedMs: Date.now() - startTime,
                                 error: error.message,
@@ -859,7 +812,6 @@ Return the compact findings digest required by the system prompt. Do not call an
             }
         );
 
-        // -- Extract findings from the agent's final AI message ----------
         const messages = result.messages ?? [];
         const toolMessages = messages.filter(
             (msg: any) => msg.role === "tool" || msg.tool_calls?.length > 0
@@ -893,14 +845,12 @@ Return the compact findings digest required by the system prompt. Do not call an
             };
         }
 
-        console.log(
-            `[dbAgent] Complete. Findings length: ${rawFindings.length} chars, ${totalToolCalls} tool calls`
-        );
-        console.log(`[dbAgent] Execution time: ${executionTimeMs}ms`);
+        console.log(`\n✅ [dbAgent] Complete. ${totalToolCalls} tool calls, ${rawFindings.length} chars findings, ${executionTimeMs}ms`);
+        console.log(`📊 [dbAgent] Final tokens: ${cumulativeInputTokens}in / ${cumulativeOutputTokens}out`);
 
         // Finalize log
         agentLog.endTime = new Date().toISOString();
-        agentLog.totalSteps = stepCounter;
+        agentLog.totalSteps = toolCallCount;
         agentLog.finalReport = { rawFindings };
 
         // Write to JSON file
@@ -913,16 +863,12 @@ Return the compact findings digest required by the system prompt. Do not call an
         const logPath = path.join(logDir, logFileName);
         fs.writeFileSync(logPath, JSON.stringify(agentLog, null, 2));
 
-        console.log(`\n[dbAgent] â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”`);
-        console.log(`[dbAgent] Full log written to:`);
-        console.log(`[dbAgent] ${logPath}`);
-        console.log(`[dbAgent] Total steps: ${stepCounter}`);
-        console.log(`[dbAgent] â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”`);
+        console.log(`📁 [dbAgent] Log: ${logPath}`);
 
         // Emit done event with final totals
         emit({
             type: "done",
-            stepNumber: stepCounter,
+            stepNumber: toolCallCount,
             timestamp: new Date().toISOString(),
             elapsedMs: executionTimeMs,
             rawFindings,
@@ -950,7 +896,7 @@ Return the compact findings digest required by the system prompt. Do not call an
 
         // Write partial error log so you can see what happened before the crash
         agentLog.endTime = new Date().toISOString();
-        agentLog.totalSteps = stepCounter;
+        agentLog.totalSteps = toolCallCount;
         agentLog.error = message;
 
         const logDir = path.join(process.cwd(), "agent-logs");
@@ -965,7 +911,7 @@ Return the compact findings digest required by the system prompt. Do not call an
 
         emit({
             type: "done",
-            stepNumber: stepCounter,
+            stepNumber: toolCallCount,
             timestamp: new Date().toISOString(),
             elapsedMs: executionTimeMs,
             rawFindings: null,

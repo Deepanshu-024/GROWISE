@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Github, Loader2, HardDrive, CheckCircle2, XCircle, Clock, Zap } from "lucide-react";
+import { Github, Loader2, HardDrive, CheckCircle2, XCircle, Clock, Zap, FileText } from "lucide-react";
 import { toast } from "sonner";
 import { checkPackageAndFramework } from "../../actions/analysis/repository-analysis";
 import { classifyBusinessContext } from "../../actions/analysis/business-classification";
@@ -34,7 +34,8 @@ type PipelineStage =
     | "framework"         // Stage 2: framework analysis (auto)
     | "classification"    // Stage 3: business classification (auto)
     | "orchestration"     // Stage 4: agents running in parallel (auto)
-    | "complete";         // Stage 5: all done
+    | "compiling"         // Stage 5: compiling final report (auto)
+    | "complete";         // Stage 6: all done
 
 // ─── Per-Agent Status ─────────────────────────────────────────────────────────
 
@@ -93,6 +94,8 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
     const [agentStates, setAgentStates] = useState<AgentState[]>([]);
     const [orchestrationError, setOrchestrationError] = useState<string | null>(null);
     const [hasExistingReports, setHasExistingReports] = useState(false);
+    const [hasCompiledReport, setHasCompiledReport] = useState(false);
+    const [compilingReport, setCompilingReport] = useState(false);
     const abortRef = useRef<AbortController | null>(null);
 
     useEffect(() => {
@@ -137,6 +140,8 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
         setAgentStates([]);
         setOrchestrationError(null);
         setHasExistingReports(false);
+        setHasCompiledReport(false);
+        setCompilingReport(false);
 
         const repository = repositories.find((repo) => repo.fullName === repoFullName);
         if (!repository) return;
@@ -164,6 +169,9 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
                         );
                         if (completedReports.length > 0) {
                             setHasExistingReports(true);
+                        }
+                        if (data.repository?.compiledReport) {
+                            setHasCompiledReport(true);
                         }
                     }
                 } catch {
@@ -358,6 +366,21 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
                     )
                 );
                 break;
+            case "report_compiling":
+                setStage("compiling");
+                setCompilingReport(true);
+                break;
+            case "report_compiled":
+                setCompilingReport(false);
+                setHasCompiledReport(true);
+                toast.success("Final report compiled", {
+                    description: `Report: ${((event.reportCompileTimeMs ?? 0) / 1000).toFixed(1)}s`,
+                });
+                break;
+            case "report_failed":
+                setCompilingReport(false);
+                toast.error("Report compilation failed", { description: event.error });
+                break;
             case "orchestration_complete": {
                 if (event.error) {
                     setOrchestrationError(event.error);
@@ -365,6 +388,9 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
                     setStage("select");
                 } else {
                     setStage("complete");
+                    if (event.compiledReport) {
+                        setHasCompiledReport(true);
+                    }
                     toast.success(
                         `Analysis complete: ${event.completedAgents}/${event.totalAgents} agents succeeded`,
                         {
@@ -398,7 +424,7 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
         const classified = await runClassification(repoId);
         if (!classified) return;
 
-        // Step 3: Agent orchestration
+        // Step 3: Agent orchestration (includes report compilation)
         await runOrchestration(repoId);
     };
 
@@ -427,9 +453,80 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
         }
     };
 
+    // ─── Standalone Compile Trigger ─────────────────────────────────────
+
+    const handleCompileReport = useCallback(async () => {
+        if (!analyzedRepoId) return;
+        setStage("compiling");
+        setCompilingReport(true);
+        toast.info("Compiling final report...");
+
+        const controller = new AbortController();
+        abortRef.current = controller;
+
+        try {
+            const response = await fetch("/api/agent/compile-report", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ repositoryId: analyzedRepoId }),
+                signal: controller.signal,
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.error || `HTTP ${response.status}`);
+            }
+
+            const reader = response.body?.getReader();
+            if (!reader) throw new Error("No response body");
+
+            const decoder = new TextDecoder();
+            let buffer = "";
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split("\n");
+                buffer = lines.pop() ?? "";
+
+                for (const line of lines) {
+                    if (!line.startsWith("data: ")) continue;
+                    try {
+                        const event = JSON.parse(line.slice(6));
+                        if (event.type === "compiler_completed" || event.type === "result") {
+                            setCompilingReport(false);
+                            setHasCompiledReport(true);
+                            setStage("complete");
+                            toast.success("Final report compiled successfully", {
+                                description: `Execution time: ${((event.executionTimeMs ?? 0) / 1000).toFixed(1)}s`,
+                            });
+                        } else if (event.type === "compiler_failed" || event.type === "error") {
+                            setCompilingReport(false);
+                            setStage("select");
+                            toast.error("Report compilation failed", {
+                                description: event.error ?? "Unknown error",
+                            });
+                        }
+                    } catch {
+                        // ignore malformed events
+                    }
+                }
+            }
+        } catch (error) {
+            if ((error as any)?.name === "AbortError") return;
+            const msg = error instanceof Error ? error.message : "Unknown error";
+            console.error("[compile-report] Error:", msg);
+            setCompilingReport(false);
+            setStage("select");
+            toast.error("Report compilation failed", { description: msg });
+        }
+    }, [analyzedRepoId]);
+
     // ─── Computed values ──────────────────────────────────────────────
 
-    const isRunning = stage === "framework" || stage === "classification" || stage === "orchestration";
+    const isRunning = stage === "framework" || stage === "classification" || stage === "orchestration" || stage === "compiling";
     const completedCount = agentStates.filter((a) => a.status === "completed").length;
     const failedCount = agentStates.filter((a) => a.status === "failed").length;
     const totalAgents = agentStates.length;
@@ -439,6 +536,7 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
         framework: "Analyzing framework...",
         classification: "Classifying business context...",
         orchestration: `Running ${totalAgents} agents in parallel...`,
+        compiling: "Compiling final report...",
         complete: "Analysis complete",
     };
 
@@ -522,8 +620,8 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
                                 {/* Stage progress bar */}
                                 <div className="flex items-center gap-2">
                                     <div className="flex gap-1 flex-1">
-                                        {(["framework", "classification", "orchestration"] as PipelineStage[]).map((s, i) => {
-                                            const stageOrder = ["framework", "classification", "orchestration"];
+                                        {(["framework", "classification", "orchestration", "compiling"] as PipelineStage[]).map((s) => {
+                                            const stageOrder = ["framework", "classification", "orchestration", "compiling"];
                                             const currentIdx = stageOrder.indexOf(stage);
                                             const isActive = stageOrder.indexOf(s) === currentIdx;
                                             const isDone = stageOrder.indexOf(s) < currentIdx;
@@ -545,17 +643,18 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
 
                                 {/* Stage label */}
                                 <p className="text-sm text-muted-foreground">
-                                    {stage === "framework" && "Step 1/3 — Detecting framework..."}
-                                    {stage === "classification" && "Step 2/3 — Classifying business context..."}
+                                    {stage === "framework" && "Step 1/4 — Detecting framework..."}
+                                    {stage === "classification" && "Step 2/4 — Classifying business context..."}
                                     {stage === "orchestration" && (
-                                        <>Step 3/3 — {completedCount + failedCount}/{totalAgents} agents finished</>
+                                        <>Step 3/4 — {completedCount + failedCount}/{totalAgents} agents finished</>
                                     )}
+                                    {stage === "compiling" && "Step 4/4 — Compiling final report..."}
                                 </p>
                             </div>
                         )}
 
                         {/* Per-agent status chips (Stage 4) */}
-                        {(stage === "orchestration" || stage === "complete") && agentStates.length > 0 && (
+                        {(stage === "orchestration" || stage === "compiling" || stage === "complete") && agentStates.length > 0 && (
                             <div className="space-y-2 pt-2 border-t">
                                 <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
                                     <Zap className="h-3.5 w-3.5" />
@@ -613,6 +712,16 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
                                     }}
                                 >
                                     View Reports
+                                </Button>
+                            )}
+                            {stage === "select" && hasExistingReports && !hasCompiledReport && analyzedRepoId && (
+                                <Button
+                                    variant="default"
+                                    onClick={handleCompileReport}
+                                    disabled={isRunning}
+                                >
+                                    <FileText className="h-4 w-4 mr-1" />
+                                    Compile Report
                                 </Button>
                             )}
                             {(stage === "select" || stage === "complete") && (

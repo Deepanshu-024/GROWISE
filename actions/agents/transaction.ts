@@ -1,10 +1,16 @@
 import fs from "fs";
 import path from "path";
 import { createAgent } from "langchain";
+import {
+    createToolBudgetMiddleware,
+    resolveCallbackToolName as _resolveToolName,
+    type StreamEvent as _StreamEvent,
+    type AgentLog as _AgentLog,
+    type AgentLogStep as _AgentLogStep,
+} from "./agent-middleware";
 import { gpt5Mini } from "@/lib/llm";
 import prisma from "@/lib/prisma";
 import {
-    getRepoTreeTool,
     searchCodeTool,
     getFileContentTool,
     githubContextSchema,
@@ -109,15 +115,16 @@ REPOSITORY CONTEXT:
 STRATEGIC TOOL USAGE PHILOSOPHY:
 **Use tools ONLY when critical information cannot be inferred from existing context**
 - Start with provided package.json and repository file tree
-- The file tree above is the FULL project structure - use it to identify targets before making any tool calls
-- Make educated assumptions based on React/Next.js patterns
+- The file tree above is the FULL project structure - use it to identify payment targets before making tool calls
+- Make conservative findings from concrete evidence; if evidence is thin, report INFO instead of exploring endlessly
 - Tool calls should be surgical, not exhaustive
-- Maximum 15 tool calls total across all phases - spend them wisely
+- HARD LIMIT: use at most 15 tool calls total
+- After using 15 tool calls, stop immediately and return the findings digest from evidence gathered
+- Do not call another tool just to improve confidence, find line numbers, or validate a low-impact suspicion
 
-AVAILABLE TOOLS (Use Sparingly - repo details are injected automatically via context):
-1. **getRepoTree()** - No input needed. Returns full project file tree (only if the tree in context is incomplete or truncated)
-2. **getFileContent(path)** - Just pass the file path. For reading payment routes, checkout flows, webhook handlers, subscription logic, schema files
-3. **searchCode(query)** - Just pass the search query. For locating patterns: stripe, razorpay, paypal, paddle, checkout, payment_intent, subscription, webhook, refund, invoice
+AVAILABLE TOOLS:
+1. **getFileContent(path)** - Read payment routes, checkout flows, webhook handlers, subscription logic, refund/dispute code, schema files, and provider config
+2. **searchCode(query)** - Use only when package.json and file tree are not enough to choose target files. Choose compact repository-specific searches. Use at most 3 searches total. **EARLY EXIT RULE: if 2 consecutive searchCode calls return 0 results, stop all further searchCode usage immediately and fall back to navigating the file tree with getFileContent. Do not try alternative keywords or rephrased queries.**
 
 ---
 
@@ -185,13 +192,12 @@ Write down the classification before continuing.
 Combine CRITICAL + top 3-4 HIGH items.
 Maximum 8 items total. Write the list explicitly before Phase 3.
 
-Only call **getRepoTree** if the file tree in context is incomplete or ambiguous.
-
 **Step 2B - Search for payment patterns:**
 
-Use **searchCode** to gauge payment integration depth:
-- Search for: \`stripe\`, \`razorpay\`, \`checkout\`, \`webhook\`, \`payment_intent\`, \`subscription\`
-- This tells you whether the codebase has a mature payment integration or a minimal one
+Use **searchCode** only if the injected package.json and file tree are not enough to choose target files.
+Choose your own compact search query based on what the repository appears to use.
+Never run separate searches for each keyword.
+If your first 2 searchCode calls both return 0 results, abandon searchCode entirely. Switch to reading files directly via getFileContent using paths from the file tree.
 
 ---
 
@@ -245,9 +251,9 @@ Client-Side Security:
 
 ### PHASE 4 - Schema & Payment Model Analysis (Targeted Tool Calls)
 
-**Always run this phase when a schema file is visible.**
+Run this phase only when payment models exist AND the schema path is obvious from the injected file tree.
 
-Use **getFileContent** to read the schema once.
+Use **getFileContent** to read the schema once only if it fits inside the 15-tool total budget.
 
 Check:
 - Is there a Payment / Order / Subscription model with a provider ID field (stripePaymentIntentId, stripeSubscriptionId)?
@@ -265,7 +271,9 @@ Cross-reference with Phase 3:
 
 ### PHASE 5 - Synthesis
 
-After finding 3 CRITICAL issues, stop expanding the investigation to new non-required files. Still complete required schema checks and report every finding already discovered.
+If you have fewer than 3 CRITICAL findings and still have tool budget remaining, continue investigating additional files before synthesizing. Only stop early if the repository genuinely has no more payment/transaction surface to investigate.
+After finding 3 CRITICAL issues, stop expanding the investigation to new optional files. Report every finding already discovered.
+If the tool budget is exhausted, stop and synthesize. Never continue tool use past the budget.
 
 ---
 
@@ -326,7 +334,6 @@ When your investigation is complete, output your findings as your final message.
 // --- Tools --------------------------------------------------------------------
 
 const payAgentTools = [
-    getRepoTreeTool,
     searchCodeTool,
     getFileContentTool,
 ];
@@ -345,14 +352,18 @@ export async function runTransactionAgent(
         totalSteps: 0,
         steps: [],
     };
-    let stepCounter = 0;
-    let cumulativeInputTokens = 0;
-    let cumulativeOutputTokens = 0;
-    let lastToolName = "unknown";
-    let pendingDecisionReasoning: string | null = null;
-
     const emit = (event: StreamEvent) => {
         try { onEvent?.(event); } catch { /* ignore stream errors */ }
+    };
+
+    const shared = {
+        toolCallCount: 0,
+        cumulativeInputTokens: 0,
+        cumulativeOutputTokens: 0,
+        lastToolName: "unknown",
+        startTime,
+        agentLog,
+        emit,
     };
 
     console.log(`[payAgent] Starting investigation for: ${repositoryId}`);
@@ -405,12 +416,19 @@ export async function runTransactionAgent(
 
         console.log(`[payAgent] Repo: ${repository.fullName} (${branch})`);
 
-        // -- Create agent & invoke ----------------------------------------
+        const { middleware: toolBudgetMiddleware } = createToolBudgetMiddleware({
+            agentLabel: "payAgent",
+            toolBudget: 15,
+            searchBudget: 3,
+            shared,
+        });
+
         const agent = createAgent({
             model: gpt5Mini,
             tools: payAgentTools,
             systemPrompt: SYSTEM_PROMPT,
             contextSchema: githubContextSchema,
+            middleware: [toolBudgetMiddleware],
         });
 
         // NOTE: intermediateSteps and agentLog contain the raw accessToken
@@ -442,11 +460,18 @@ REPOSITORY CONTEXT:
 - Start with the package.json and file tree provided above - identify payment provider, checkout routes, webhook handlers, subscription logic (Phase 1, no tools needed)
 - Classify payment paths by revenue impact before reading any files
 - Use getFileContent(path) strategically on checkout flows, webhook handlers, and subscription logic
-- Use searchCode(query) to find payment patterns (stripe, razorpay, checkout, webhook, subscription, payment_intent)
-- Read schema file once to check payment models, idempotency constraints, and provider ID fields
+- Use searchCode(query) only when package.json and file tree are not enough to choose target files
+- Read schema file once only when payment models exist and the schema path is obvious from the file tree
 - Tools already know the repo details - just pass the file path or search query
 
-**Constraint:** Minimize tool usage - leverage the file tree and package.json above first, then make targeted tool calls only for confirmed payment-related files.
+Tool constraints:
+- HARD LIMIT: use at most 15 tool calls total, then stop and return the digest, never exceed this limit
+- Decide yourself whether searchCode is needed; do not follow a preset search query
+- searchCode EARLY EXIT: if 2 consecutive searches return 0 results, stop using searchCode entirely and navigate the file tree with getFileContent instead
+- Use package.json and file tree before tools
+- If package.json and file tree show no payment surface, return INFO without tool calls
+
+**Constraint:** Minimize tool usage - leverage the file tree and package.json above first, then make targeted tool calls only for confirmed payment-related files. If you are near the tool limit, stop using tools and synthesize from available evidence.
 **Scope constraint:** Only investigate and report findings that directly affect payment processing, checkout flows, subscription lifecycle, webhook handling, or financial data integrity. Ignore non-payment findings silently; do not include them as INFO.
 **Reporting constraint:** If you discover a distinct in-scope payment finding, you must report it. Do not drop findings to satisfy a preferred count or budget; keep within budget by compressing wording and merging only genuinely overlapping duplicates.
 
@@ -456,207 +481,35 @@ Return the compact findings digest required by the system prompt. Do not call an
             },
             {
                 context: { owner, repo, branch, accessToken },
-                recursionLimit: 40,
+                recursionLimit: 50,
                 callbacks: [
                     {
-                        handleAgentAction(action: any, _runId: string, _parentRunId?: string, _tags?: string[], metadata?: Record<string, any>) {
-                            // Use LangGraph's built-in step counter if available
-                            if (metadata?.langgraph_step != null) {
-                                stepCounter = metadata.langgraph_step;
-                            } else {
-                                stepCounter++;
-                            }
-                            const toolName = resolveCallbackToolName(action, action.tool);
-                            lastToolName = toolName;
-                            pendingDecisionReasoning =
-                                typeof action.log === "string" && action.log.trim().length > 0
-                                    ? action.log.trim()
-                                    : null;
-                            agentLog.steps.push({
-                                stepNumber: stepCounter,
-                                type: "decision",
-                                timestamp: new Date().toISOString(),
-                                toolName,
-                                toolInput: action.toolInput,
-                                reasoning: action.log,
-                            });
-                            console.log("\n──────────────────────────────────────────");
-                            console.log(`[Step ${stepCounter}] AGENT DECISION`);
-                            console.log(`Tool: ${toolName}`);
-                            console.log(`Reasoning: ${action.log}`);
-                            console.log("──────────────────────────────────────────");
-                            if (pendingDecisionReasoning) {
-                                emit({
-                                    type: "agent_thought",
-                                    stepNumber: stepCounter,
-                                    timestamp: new Date().toISOString(),
-                                    elapsedMs: Date.now() - startTime,
-                                    toolName,
-                                    reasoning: pendingDecisionReasoning,
-                                    cumulativeTokens: {
-                                        inputTokens: cumulativeInputTokens,
-                                        outputTokens: cumulativeOutputTokens,
-                                        totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
-                                    },
-                                });
-                            }
-                        },
-                        handleToolStart(tool: any, input: string, _runId?: string, _parentRunId?: string, _tags?: string[], metadata?: Record<string, any>) {
-                            if (metadata?.langgraph_step != null) {
-                                stepCounter = metadata.langgraph_step;
-                            }
-                            const toolName = resolveCallbackToolName(tool, lastToolName);
-                            lastToolName = toolName;
+                        handleToolStart(tool: any, input: string) {
+                            shared.toolCallCount++;
+                            const toolName = resolveCallbackToolName(tool, shared.lastToolName);
+                            shared.lastToolName = toolName;
                             let parsedInput: unknown = input;
-                            try {
-                                parsedInput = JSON.parse(input);
-                            } catch {
-                                // keep raw string
-                            }
-                            console.log(`\n[Step ${stepCounter}/50] -> Calling ${toolName}`);
-                            console.log(`Input: ${JSON.stringify(parsedInput, null, 2).slice(0, 300)}`);
-
-                            emit({
-                                type: "tool_start",
-                                stepNumber: stepCounter,
-                                timestamp: new Date().toISOString(),
-                                elapsedMs: Date.now() - startTime,
-                                toolName,
-                                toolInput: parsedInput,
-                                cumulativeTokens: {
-                                    inputTokens: cumulativeInputTokens,
-                                    outputTokens: cumulativeOutputTokens,
-                                    totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
-                                },
-                            });
-                            pendingDecisionReasoning = null;
+                            try { parsedInput = JSON.parse(input); } catch { /* keep raw */ }
+                            const inputPreview = typeof parsedInput === "object"
+                                ? JSON.stringify(parsedInput).slice(0, 200)
+                                : String(parsedInput).slice(0, 200);
+                            console.log(`\n🔧 [Step ${shared.toolCallCount}/15] TOOL CALL: ${toolName}`);
+                            console.log(`   Input: ${inputPreview}`);
+                            agentLog.steps.push({ stepNumber: shared.toolCallCount, type: "tool_call", timestamp: new Date().toISOString(), toolName, toolInput: parsedInput });
+                            emit({ type: "tool_start", stepNumber: shared.toolCallCount, timestamp: new Date().toISOString(), elapsedMs: Date.now() - startTime, toolName, toolInput: parsedInput, cumulativeTokens: { inputTokens: shared.cumulativeInputTokens, outputTokens: shared.cumulativeOutputTokens, totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens } });
                         },
                         handleToolEnd(output: any) {
-                            const outputStr: string =
-                                typeof output === "string"
-                                    ? output
-                                    : JSON.stringify(output, null, 2) ?? "";
-                            const lastDecisionStep = [...agentLog.steps]
-                                .reverse()
-                                .find((s) => s.type === "decision");
-                            if (lastDecisionStep) {
-                                lastDecisionStep.toolOutput =
-                                    outputStr.length > 3000
-                                        ? outputStr.slice(0, 3000) + "\n... [truncated]"
-                                        : outputStr;
-                            }
-                            console.log(`[Step ${stepCounter}] ← Tool response: ${outputStr.length} chars`);
-                            console.log(`Preview: ${outputStr.slice(0, 500)}`);
-
-                            emit({
-                                type: "tool_end",
-                                stepNumber: stepCounter,
-                                timestamp: new Date().toISOString(),
-                                elapsedMs: Date.now() - startTime,
-                                toolName: lastToolName,
-                                toolOutput: outputStr.length > 5000
-                                    ? outputStr.slice(0, 5000) + "\n... [truncated]"
-                                    : outputStr,
-                                toolOutputLength: outputStr.length,
-                                cumulativeTokens: {
-                                    inputTokens: cumulativeInputTokens,
-                                    outputTokens: cumulativeOutputTokens,
-                                    totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
-                                },
-                            });
-                        },
-                        handleLLMEnd(output: any, _runId?: string, _parentRunId?: string, _tags?: string[], metadata?: Record<string, any>) {
-                            // Sync step counter from LangGraph metadata
-                            if (metadata?.langgraph_step != null) {
-                                stepCounter = metadata.langgraph_step;
-                            }
-
-                            // Extract token usage from LangChain output metadata
-                            const usage = output?.llmOutput?.tokenUsage
-                                ?? output?.llmOutput?.usage
-                                ?? output?.llmOutput?.estimatedTokenUsage
-                                ?? null;
-
-                            let inputTokens = 0;
-                            let outputTokens = 0;
-                            if (usage) {
-                                inputTokens = usage.promptTokens ?? usage.prompt_tokens ?? usage.inputTokens ?? usage.input_tokens ?? 0;
-                                outputTokens = usage.completionTokens ?? usage.completion_tokens ?? usage.outputTokens ?? usage.output_tokens ?? 0;
-                            }
-                            cumulativeInputTokens += inputTokens;
-                            cumulativeOutputTokens += outputTokens;
-
-                            const generation = output.generations?.[0]?.[0];
-                            const message = (generation as any)?.message;
-                            const fnCall = message?.additional_kwargs?.function_call;
-                            if (fnCall) {
-                                console.log(`[Step ${stepCounter}] Agent selecting: ${fnCall.name}`);
-                            } else {
-                                const content = String(message?.content ?? "").trim();
-                                if (content.length > 0) {
-                                    agentLog.steps.push({
-                                        stepNumber: stepCounter,
-                                        type: "agent_thought",
-                                        timestamp: new Date().toISOString(),
-                                        reasoning: content.slice(0, 1000),
-                                    });
-                                    console.log(`[Step ${stepCounter}] Agent thought: ${content.slice(0, 300)}`);
-
-                                    emit({
-                                        type: "agent_thought",
-                                        stepNumber: stepCounter,
-                                        timestamp: new Date().toISOString(),
-                                        elapsedMs: Date.now() - startTime,
-                                        reasoning: content.slice(0, 2000),
-                                        cumulativeTokens: {
-                                            inputTokens: cumulativeInputTokens,
-                                            outputTokens: cumulativeOutputTokens,
-                                            totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
-                                        },
-                                    });
-                                }
-                            }
-
-                            // Always emit llm_end with token info
-                            emit({
-                                type: "llm_end",
-                                stepNumber: stepCounter,
-                                timestamp: new Date().toISOString(),
-                                elapsedMs: Date.now() - startTime,
-                                tokenUsage: {
-                                    inputTokens,
-                                    outputTokens,
-                                    totalTokens: inputTokens + outputTokens,
-                                },
-                                cumulativeTokens: {
-                                    inputTokens: cumulativeInputTokens,
-                                    outputTokens: cumulativeOutputTokens,
-                                    totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
-                                },
-                            });
+                            const outputStr = typeof output?.content === "string" ? output.content : typeof output === "string" ? output : JSON.stringify(output) ?? "";
+                            const preview = outputStr.slice(0, 300);
+                            console.log(`📄 [Step ${shared.toolCallCount}/15] TOOL RESPONSE: ${shared.lastToolName} (${outputStr.length} chars)`);
+                            console.log(`   Preview: ${preview}${outputStr.length > 300 ? "..." : ""}`);
+                            emit({ type: "tool_end", stepNumber: shared.toolCallCount, timestamp: new Date().toISOString(), elapsedMs: Date.now() - startTime, toolName: shared.lastToolName, toolOutput: outputStr.slice(0, 5000), toolOutputLength: outputStr.length, cumulativeTokens: { inputTokens: shared.cumulativeInputTokens, outputTokens: shared.cumulativeOutputTokens, totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens } });
                         },
                         handleChainError(error: Error) {
-                            agentLog.steps.push({
-                                stepNumber: ++stepCounter,
-                                type: "error",
-                                timestamp: new Date().toISOString(),
-                                reasoning: error.message,
-                            });
+                            agentLog.steps.push({ stepNumber: shared.toolCallCount, type: "error", timestamp: new Date().toISOString(), reasoning: error.message });
                             agentLog.error = error.message;
                             console.log(`\n[payAgent] CHAIN ERROR: ${error.message}`);
-
-                            emit({
-                                type: "error",
-                                stepNumber: stepCounter,
-                                timestamp: new Date().toISOString(),
-                                elapsedMs: Date.now() - startTime,
-                                error: error.message,
-                                cumulativeTokens: {
-                                    inputTokens: cumulativeInputTokens,
-                                    outputTokens: cumulativeOutputTokens,
-                                    totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
-                                },
-                            });
+                            emit({ type: "error", stepNumber: shared.toolCallCount, timestamp: new Date().toISOString(), elapsedMs: Date.now() - startTime, error: error.message, cumulativeTokens: { inputTokens: shared.cumulativeInputTokens, outputTokens: shared.cumulativeOutputTokens, totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens } });
                         },
                     },
                 ],
@@ -704,7 +557,7 @@ Return the compact findings digest required by the system prompt. Do not call an
 
         // Finalize log
         agentLog.endTime = new Date().toISOString();
-        agentLog.totalSteps = stepCounter;
+        agentLog.totalSteps = shared.toolCallCount;
         agentLog.finalReport = { rawFindings };
 
         // Write to JSON file
@@ -720,22 +573,22 @@ Return the compact findings digest required by the system prompt. Do not call an
         console.log(`\n[payAgent] ──────────────────────────────────`);
         console.log(`[payAgent] Full log written to:`);
         console.log(`[payAgent] ${logPath}`);
-        console.log(`[payAgent] Total steps: ${stepCounter}`);
+        console.log(`[payAgent] Total steps: ${shared.toolCallCount}`);
         console.log(`[payAgent] ──────────────────────────────────`);
 
         // Emit done event with final totals
         emit({
             type: "done",
-            stepNumber: stepCounter,
+            stepNumber: shared.toolCallCount,
             timestamp: new Date().toISOString(),
             elapsedMs: executionTimeMs,
             rawFindings,
             totalToolCalls,
             executionTimeMs,
             cumulativeTokens: {
-                inputTokens: cumulativeInputTokens,
-                outputTokens: cumulativeOutputTokens,
-                totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                inputTokens: shared.cumulativeInputTokens,
+                outputTokens: shared.cumulativeOutputTokens,
+                totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens,
             },
         });
 
@@ -754,7 +607,7 @@ Return the compact findings digest required by the system prompt. Do not call an
 
         // Write partial error log so you can see what happened before the crash
         agentLog.endTime = new Date().toISOString();
-        agentLog.totalSteps = stepCounter;
+        agentLog.totalSteps = shared.toolCallCount;
         agentLog.error = message;
 
         const logDir = path.join(process.cwd(), "agent-logs");
@@ -769,7 +622,7 @@ Return the compact findings digest required by the system prompt. Do not call an
 
         emit({
             type: "done",
-            stepNumber: stepCounter,
+            stepNumber: shared.toolCallCount,
             timestamp: new Date().toISOString(),
             elapsedMs: executionTimeMs,
             rawFindings: null,
@@ -777,9 +630,9 @@ Return the compact findings digest required by the system prompt. Do not call an
             executionTimeMs,
             error: message,
             cumulativeTokens: {
-                inputTokens: cumulativeInputTokens,
-                outputTokens: cumulativeOutputTokens,
-                totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                inputTokens: shared.cumulativeInputTokens,
+                outputTokens: shared.cumulativeOutputTokens,
+                totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens,
             },
         });
 
