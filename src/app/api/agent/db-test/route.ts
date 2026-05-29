@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { runDatabaseAgent, StreamEvent } from "../../../../../actions/agents/db";
 // import { runDatabaseGraphAgent } from "../../../../../actions/agents/db-graph";
-import { generateInstallationToken } from "@/lib/github";
+import { getInstallationToken } from "@/lib/github";
 
 /**
  * POST /api/agent/db-test
@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
         // Fall back to GitHub App installation token when OAuth token is absent
         if (!resolvedToken && installationId) {
             console.log("[api/agent/db-test] No access token – generating installation token for", installationId);
-            const { token } = await generateInstallationToken(String(installationId));
+            const { token } = await getInstallationToken(String(installationId));
             resolvedToken = token;
         }
 

@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import prisma from "@/lib/prisma";
-import { generateInstallationToken } from "@/lib/github";
+import { getInstallationToken } from "@/lib/github";
 
 // ─── Agent Runners ────────────────────────────────────────────────────────────
 
@@ -173,7 +173,7 @@ export async function orchestrateAgents(
     let accessToken = repo.user?.githubAccessToken ?? "";
     if (!accessToken && repo.user?.githubInstallationId) {
         try {
-            const { token } = await generateInstallationToken(
+            const { token } = await getInstallationToken(
                 repo.user.githubInstallationId,
             );
             accessToken = token;

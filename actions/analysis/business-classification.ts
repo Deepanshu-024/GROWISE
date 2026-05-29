@@ -2,7 +2,7 @@
 
 import { auth } from "@clerk/nextjs/server";
 import prisma from "@/lib/prisma";
-import { generateInstallationToken } from "@/lib/github";
+import { getInstallationToken } from "@/lib/github";
 import { gpt5Mini } from "@/lib/llm";
 import { businessClassificationPrompt } from "../../prompts/bussinessClassification";
 import { getFileContentTool, getRepoTreeTool, searchCodeTool } from "./tools/agent-tools";
@@ -127,7 +127,7 @@ export async function classifyBusinessContext(
 
         // Generate token from GitHub App installation
         console.log("[SERVER] 🎫 Generating installation token...");
-        const { token } = await generateInstallationToken(effectiveInstallationId);
+        const { token } = await getInstallationToken(effectiveInstallationId);
         authToken = token;
         console.log("[SERVER] ✅ Token generated successfully");
 

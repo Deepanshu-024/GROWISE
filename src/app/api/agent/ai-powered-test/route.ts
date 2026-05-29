@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { runAiPoweredAgent, StreamEvent } from "../../../../../actions/agents/ai-powered";
-import { generateInstallationToken } from "@/lib/github";
+import { getInstallationToken } from "@/lib/github";
 
 export async function POST(req: NextRequest) {
     try {
@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
         let resolvedToken: string = accessToken ?? "";
         if (!resolvedToken && installationId) {
             console.log("[api/agent/ai-powered-test] No access token; generating installation token for", installationId);
-            const { token } = await generateInstallationToken(String(installationId));
+            const { token } = await getInstallationToken(String(installationId));
             resolvedToken = token;
         }
         if (!resolvedToken) {

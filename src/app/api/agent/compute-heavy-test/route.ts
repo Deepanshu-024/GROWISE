@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { runComputeHeavyAgent, StreamEvent } from "../../../../../actions/agents/compute-heavy";
-import { generateInstallationToken } from "@/lib/github";
+import { getInstallationToken } from "@/lib/github";
 
 /**
  * POST /api/agent/compute-heavy-test
@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
 
         if (!resolvedToken && installationId) {
             console.log("[api/agent/compute-heavy-test] No access token; generating installation token for", installationId);
-            const { token } = await generateInstallationToken(String(installationId));
+            const { token } = await getInstallationToken(String(installationId));
             resolvedToken = token;
         }
 

@@ -2,7 +2,7 @@
 
 import { auth } from "@clerk/nextjs/server";
 import prisma from "@/lib/prisma";
-import { generateInstallationToken } from "@/lib/github";
+import { getInstallationToken } from "@/lib/github";
 
 export interface RepoSizeResult {
     sizeKB: number | null;
@@ -31,7 +31,7 @@ export async function fetchAndStoreRepoSize(
             return { sizeKB: null, error: "GitHub App not connected" };
         }
 
-        const { token } = await generateInstallationToken(user.githubInstallationId);
+        const { token } = await getInstallationToken(user.githubInstallationId);
 
         const response = await fetch(`https://api.github.com/repos/${repoFullName}`, {
             headers: {
