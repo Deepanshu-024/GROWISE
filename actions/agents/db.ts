@@ -29,7 +29,7 @@ export interface StreamEvent {
 
 export interface DbAgentInput {
     repositoryId: string;
-    accessToken: string;
+    installationId: string;
     archetypeScore: number;
     onEvent?: (event: StreamEvent) => void;
 }
@@ -380,7 +380,7 @@ const dbAgentTools = [
 export async function runDatabaseAgent(
     input: DbAgentInput
 ): Promise<DbAgentOutput> {
-    const { repositoryId, accessToken, archetypeScore, onEvent } = input;
+    const { repositoryId, installationId, archetypeScore, onEvent } = input;
     const startTime = Date.now();
 
     const agentLog: AgentLog = {
@@ -609,7 +609,7 @@ export async function runDatabaseAgent(
             middleware: [toolBudgetMiddleware],
         });
 
-        // NOTE: intermediateSteps and agentLog contain the raw accessToken
+        // NOTE: intermediateSteps and agentLog contain the installationId
         // passed via context. These logs are for local debugging only.
         // Never persist agentLog to a database or external service.
         // Delete log files after debugging is complete.
@@ -662,7 +662,7 @@ Return the compact findings digest required by the system prompt. Do not call an
                 ],
             },
             {
-                context: { owner, repo, branch, accessToken },
+                context: { owner, repo, branch, installationId },
                 recursionLimit: 50,
                 callbacks: [
                     {

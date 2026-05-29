@@ -1,24 +1,16 @@
 import { NextRequest } from "next/server";
 import { runAiPoweredAgent, StreamEvent } from "../../../../../actions/agents/ai-powered";
-import { getInstallationToken } from "@/lib/github";
 
 export async function POST(req: NextRequest) {
     try {
         const body = await req.json();
-        const { repositoryId, accessToken, installationId } = body;
+        const { repositoryId, installationId } = body;
 
         if (!repositoryId) {
             return new Response(JSON.stringify({ error: "repositoryId is required" }), { status: 400, headers: { "Content-Type": "application/json" } });
         }
-
-        let resolvedToken: string = accessToken ?? "";
-        if (!resolvedToken && installationId) {
-            console.log("[api/agent/ai-powered-test] No access token; generating installation token for", installationId);
-            const { token } = await getInstallationToken(String(installationId));
-            resolvedToken = token;
-        }
-        if (!resolvedToken) {
-            return new Response(JSON.stringify({ error: "No access token available." }), { status: 400, headers: { "Content-Type": "application/json" } });
+        if (!installationId) {
+            return new Response(JSON.stringify({ error: "installationId is required" }), { status: 400, headers: { "Content-Type": "application/json" } });
         }
 
         const encoder = new TextEncoder();
@@ -26,7 +18,7 @@ export async function POST(req: NextRequest) {
             async start(controller) {
                 const send = (event: StreamEvent) => { try { controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`)); } catch { /* closed */ } };
                 try {
-                    const output = await runAiPoweredAgent({ repositoryId: String(repositoryId), accessToken: resolvedToken, onEvent: send });
+                    const output = await runAiPoweredAgent({ repositoryId: String(repositoryId), installationId: String(installationId), onEvent: send });
                     try { controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "result", rawFindings: output.rawFindings ?? null, intermediateSteps: output.intermediateSteps, totalToolCalls: output.totalToolCalls, executionTimeMs: output.executionTimeMs, error: output.error })}\n\n`)); } catch { /* closed */ }
                 } catch (error) {
                     const message = error instanceof Error ? error.message : "Unknown error";

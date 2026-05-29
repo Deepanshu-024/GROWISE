@@ -39,7 +39,7 @@ export interface StreamEvent {
 
 export interface ContentHeavyAgentInput {
     repositoryId: string;
-    accessToken: string;
+    installationId: string;
     onEvent?: (event: StreamEvent) => void;
 }
 
@@ -291,7 +291,7 @@ const contentAgentTools = [
 export async function runContentHeavyAgent(
     input: ContentHeavyAgentInput
 ): Promise<ContentHeavyAgentOutput> {
-    const { repositoryId, accessToken, onEvent } = input;
+    const { repositoryId, installationId, onEvent } = input;
     const startTime = Date.now();
 
     const agentLog: AgentLog = {
@@ -414,7 +414,7 @@ Return the compact findings digest required by the system prompt. Do not call an
                 ],
             },
             {
-                context: { owner, repo, branch, accessToken },
+                context: { owner, repo, branch, installationId },
                 recursionLimit: 50,
                 callbacks: [
                     {

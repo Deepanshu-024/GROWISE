@@ -320,7 +320,7 @@ const authAgentTools = [
 
 export async function runAuthAgent(
   repositoryId: string,
-  accessToken: string
+  installationId: string
 ): Promise<AuthAgentOutput> {
   const startTime = Date.now();
 
@@ -418,14 +418,14 @@ Tool constraints:
 
 Return the compact findings digest required by the system prompt. Do not call any report tool. Do not include executive summary, stack recap, priority list, code snippets, or follow-up offers.`;
 
-    // NOTE: intermediateSteps and agentLog contain the raw accessToken
+    // NOTE: intermediateSteps and agentLog contain the installationId
     // passed via context. These logs are for local debugging only.
     // Never persist agentLog to a database or external service.
     // Delete log files after debugging is complete.
     const result = await agent.invoke(
       { messages: [{ role: "user", content: userMessage }] },
       {
-        context: { owner, repo: repoName, branch, accessToken },
+        context: { owner, repo: repoName, branch, installationId },
         recursionLimit: 50,
         callbacks: [
                     {

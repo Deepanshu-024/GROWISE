@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import prisma from "@/lib/prisma";
-import { getInstallationToken } from "@/lib/github";
+
 
 // ─── Agent Runners ────────────────────────────────────────────────────────────
 
@@ -62,7 +62,7 @@ interface Archetype {
 
 type AgentRunner = (input: {
     repositoryId: string;
-    accessToken: string;
+    installationId: string;
     onEvent?: (event: any) => void;
     archetypeScore?: number;
 }) => Promise<{
@@ -76,46 +76,46 @@ const ARCHETYPE_RUNNERS: Record<string, AgentRunner> = {
     "database-heavy": (input) =>
         runDatabaseAgent({
             repositoryId: input.repositoryId,
-            accessToken: input.accessToken,
+            installationId: input.installationId,
             archetypeScore: input.archetypeScore ?? 0.5,
             onEvent: input.onEvent,
         }),
     "compute-heavy": (input) =>
         runComputeHeavyAgent({
             repositoryId: input.repositoryId,
-            accessToken: input.accessToken,
+            installationId: input.installationId,
             onEvent: input.onEvent,
         }),
     "ai-powered": (input) =>
         runAiPoweredAgent({
             repositoryId: input.repositoryId,
-            accessToken: input.accessToken,
+            installationId: input.installationId,
             onEvent: input.onEvent,
         }),
     "realtime": (input) =>
         runRealtimeAgent({
             repositoryId: input.repositoryId,
-            accessToken: input.accessToken,
+            installationId: input.installationId,
             onEvent: input.onEvent,
         }),
     "event-driven": (input) =>
         runEventDrivenAgent({
             repositoryId: input.repositoryId,
-            accessToken: input.accessToken,
+            installationId: input.installationId,
             onEvent: input.onEvent,
         }),
     "financial-transactional": (input) =>
         runTransactionAgent({
             repositoryId: input.repositoryId,
-            accessToken: input.accessToken,
+            installationId: input.installationId,
             onEvent: input.onEvent,
         }),
     "auth-heavy": (input) =>
-        runAuthAgent(input.repositoryId, input.accessToken) as any,
+        runAuthAgent(input.repositoryId, input.installationId) as any,
     "content-heavy": (input) =>
         runContentHeavyAgent({
             repositoryId: input.repositoryId,
-            accessToken: input.accessToken,
+            installationId: input.installationId,
             onEvent: input.onEvent,
         }),
 };
@@ -169,24 +169,14 @@ export async function orchestrateAgents(
         return;
     }
 
-    // Resolve access token
-    let accessToken = repo.user?.githubAccessToken ?? "";
-    if (!accessToken && repo.user?.githubInstallationId) {
-        try {
-            const { token } = await getInstallationToken(
-                repo.user.githubInstallationId,
-            );
-            accessToken = token;
-        } catch (err) {
-            console.error("[orchestrator] Failed to generate installation token:", err);
-        }
-    }
+    // Resolve installationId
+    const installationId = repo.user?.githubInstallationId;
 
-    if (!accessToken) {
+    if (!installationId) {
         emit({
             type: "orchestration_complete",
             timestamp: new Date().toISOString(),
-            error: "No GitHub access token available for this repository.",
+            error: "No GitHub installation ID available for this repository.",
             totalAgents: 0,
             completedAgents: 0,
             failedAgents: 0,
@@ -306,7 +296,7 @@ export async function orchestrateAgents(
         try {
             const result = await runner({
                 repositoryId: repo.repositoryId,
-                accessToken,
+                installationId,
                 archetypeScore: arch.score,
             });
 

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { tool } from "langchain"
+import { getInstallationToken } from "@/lib/github";
 
 // Types for GitHub API responses
 interface GitHubTreeNode {
@@ -43,29 +44,37 @@ const MAX_FILE_SIZE = 500 * 1024;
 // ─── Context schema shared by all GitHub tools ─────────────────────────────────
 // Agents pass these values once at invocation time via `context`,
 // so the LLM never needs to guess or repeat them in every tool call.
+// installationId is used to lazily resolve a fresh token on each tool call.
 
 export const githubContextSchema = z.object({
   owner: z.string().describe("Repository owner/organization name"),
   repo: z.string().describe("Repository name"),
   branch: z.string().describe("Branch name (e.g. 'main')"),
-  accessToken: z.string().describe("GitHub access token"),
+  installationId: z.string().describe("GitHub App installation ID"),
 });
 
-export type GitHubContext = z.infer<typeof githubContextSchema>;
+export type GitHubContext = {
+  owner: string;
+  repo: string;
+  branch: string;
+  accessToken: string;
+};
 
-// Helper to extract GitHub context from tool config
-function getGitHubContext(config: any): GitHubContext {
+// Helper to extract GitHub context from tool config.
+// Resolves a fresh (or cached) token via getInstallationToken() on every call.
+async function getGitHubContext(config: any): Promise<GitHubContext> {
   const ctx = config?.context;
-  if (!ctx?.owner || !ctx?.repo || !ctx?.accessToken) {
+  if (!ctx?.owner || !ctx?.repo || !ctx?.installationId) {
     throw new Error(
-      "GitHub context missing. Agent must be invoked with context: { owner, repo, branch, accessToken }."
+      "GitHub context missing. Agent must be invoked with context: { owner, repo, branch, installationId }."
     );
   }
+  const { token } = await getInstallationToken(ctx.installationId);
   return {
     owner: ctx.owner,
     repo: ctx.repo,
     branch: ctx.branch ?? "main",
-    accessToken: ctx.accessToken,
+    accessToken: token,
   };
 }
 
@@ -74,7 +83,7 @@ function getGitHubContext(config: any): GitHubContext {
 
 export const getRepoTreeTool = tool(
   async (_input, config): Promise<string> => {
-    const { owner, repo, branch, accessToken } = getGitHubContext(config);
+    const { owner, repo, branch, accessToken } = await getGitHubContext(config);
     try {
       const url = `https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`;
 
@@ -174,7 +183,7 @@ ${data.truncated ? 'Note: Tree was truncated by GitHub API.' : ''}`;
 
 export const getFileContentTool = tool(
   async (input, config): Promise<string> => {
-    const { owner, repo, branch, accessToken } = getGitHubContext(config);
+    const { owner, repo, branch, accessToken } = await getGitHubContext(config);
     const { path } = input as { path: string };
     try {
       let url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}`;
@@ -236,7 +245,7 @@ const SEARCH_CODE_MIN_INTERVAL_MS = 6_000; // 6 seconds → max ~10 calls/min
 
 export const searchCodeTool = tool(
   async (input, config): Promise<string> => {
-    const { owner, repo, accessToken } = getGitHubContext(config);
+    const { owner, repo, accessToken } = await getGitHubContext(config);
     const { query, language, extension, path } = input as {
       query: string;
       language?: string | null;
@@ -380,7 +389,7 @@ export async function validateGitHubToken(accessToken: string): Promise<boolean>
  */
 export const getCodeBlockTool = tool(
   async (input, config): Promise<string> => {
-    const { owner, repo, branch, accessToken } = getGitHubContext(config);
+    const { owner, repo, branch, accessToken } = await getGitHubContext(config);
     const { filePath, lineStart, lineEnd } = input as {
       filePath: string;
       lineStart: number;

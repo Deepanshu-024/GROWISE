@@ -1,7 +1,5 @@
 import { NextRequest } from "next/server";
 import { runDatabaseAgent, StreamEvent } from "../../../../../actions/agents/db";
-// import { runDatabaseGraphAgent } from "../../../../../actions/agents/db-graph";
-import { getInstallationToken } from "@/lib/github";
 
 /**
  * POST /api/agent/db-test
@@ -10,16 +8,14 @@ import { getInstallationToken } from "@/lib/github";
  *
  * Body: {
  *   repositoryId: string,
- *   accessToken?: string,
- *   installationId?: string,
+ *   installationId: string,
  *   archetypeScore?: number,
- *   agentVariant?: "legacy" | "graph"
  * }
  */
 export async function POST(req: NextRequest) {
     try {
         const body = await req.json();
-        const { repositoryId, accessToken, installationId, archetypeScore, agentVariant } = body;
+        const { repositoryId, installationId, archetypeScore } = body;
 
         if (!repositoryId) {
             return new Response(
@@ -28,24 +24,12 @@ export async function POST(req: NextRequest) {
             );
         }
 
-        let resolvedToken: string = accessToken ?? "";
-
-        // Fall back to GitHub App installation token when OAuth token is absent
-        if (!resolvedToken && installationId) {
-            console.log("[api/agent/db-test] No access token – generating installation token for", installationId);
-            const { token } = await getInstallationToken(String(installationId));
-            resolvedToken = token;
-        }
-
-        if (!resolvedToken) {
+        if (!installationId) {
             return new Response(
-                JSON.stringify({ error: "No access token available. Provide accessToken or ensure this user's GitHub App is installed (installationId)." }),
+                JSON.stringify({ error: "installationId is required" }),
                 { status: 400, headers: { "Content-Type": "application/json" } }
             );
         }
-
-        const variant = agentVariant === "graph" ? "graph" : "legacy";
-        const runAgent = runDatabaseAgent;
 
         const encoder = new TextEncoder();
 
@@ -62,20 +46,17 @@ export async function POST(req: NextRequest) {
                 };
 
                 try {
-                    const output = await runAgent({
+                    const output = await runDatabaseAgent({
                         repositoryId: String(repositoryId),
-                        accessToken: resolvedToken,
+                        installationId: String(installationId),
                         archetypeScore: typeof archetypeScore === "number" ? archetypeScore : 0.5,
                         onEvent: send,
                     });
 
-                    // Send the final result as a special "result" event
-                    // This contains the full intermediateSteps and report
                     try {
                             controller.enqueue(
                                 encoder.encode(`data: ${JSON.stringify({
                                     type: "result",
-                                    variant,
                                     rawFindings: (output as any).rawFindings ?? null,
                                     intermediateSteps: output.intermediateSteps,
                                     totalToolCalls: output.totalToolCalls,
