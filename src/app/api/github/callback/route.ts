@@ -66,13 +66,23 @@ export async function GET(req: NextRequest) {
         const installationDetails = await getInstallationDetails(installationId);
         console.log("Step 6");
 
-        // Update user record with GitHub installation data
-        await prisma.user.update({
-            where: { clerkId: userId },
-            data: {
-                githubInstallationId: installationId,
-                githubUsername: installationDetails.account.login || null,
-            },
+        // Update user record with GitHub installation data.
+        // Use a transaction: first clear the installationId from any previous
+        // owner (handles re-installs / transfers), then assign to current user.
+        await prisma.$transaction(async (tx) => {
+            // Clear old owner of this installation (if any)
+            await tx.user.updateMany({
+                where: { githubInstallationId: installationId },
+                data: { githubInstallationId: null, githubUsername: null },
+            });
+            // Assign to current user
+            await tx.user.update({
+                where: { clerkId: userId },
+                data: {
+                    githubInstallationId: installationId,
+                    githubUsername: installationDetails.account.login || null,
+                },
+            });
         });
         console.log("Step 7");
 

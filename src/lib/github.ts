@@ -1,47 +1,45 @@
 import { Octokit } from "@octokit/rest";
 import { createAppAuth } from "@octokit/auth-app";
+import prisma from "@/lib/prisma";
 
 // ─── Token Cache ──────────────────────────────────────────────────────────────
-// Caches installation tokens in memory keyed by installationId.
-// Tokens are valid for 1 hour from GitHub, we cache for 50 minutes to have
-// a 10-minute safety buffer before expiry.
+// Caches installation tokens in the User table (githubAccessToken / githubAccessTokenExpiry).
+// Tokens are cached for 50 minutes (GitHub tokens last 1 hour).
 
 const TOKEN_CACHE_TTL_MS = 50 * 60 * 1000; // 50 minutes
 
-interface CachedToken {
-    token: string;
-    expiresAt: string;
-    cachedAt: number; // Date.now() when cached
-}
-
-const tokenCache = new Map<string, CachedToken>();
-
 /**
- * Get a valid installation token, using cache if available.
+ * Get a valid installation token, using database cache if available.
  * Only generates a new token if the cached one is expired or missing.
  */
 export async function getInstallationToken(installationId: string): Promise<{ token: string; expiresAt: string }> {
-    // Check cache first
-    const cached = tokenCache.get(installationId);
-    if (cached && (Date.now() - cached.cachedAt) < TOKEN_CACHE_TTL_MS) {
-        const ageMin = ((Date.now() - cached.cachedAt) / 60000).toFixed(1);
-        const remainMin = ((TOKEN_CACHE_TTL_MS - (Date.now() - cached.cachedAt)) / 60000).toFixed(1);
-        console.log(`[github] ♻️  REUSED cached token for installation ${installationId} (age: ${ageMin}min, expires in: ${remainMin}min)`);
-        return { token: cached.token, expiresAt: cached.expiresAt };
+    // Check database cache first
+    const user = await prisma.user.findFirst({
+        where: { githubInstallationId: installationId },
+        select: { githubAccessToken: true, githubAccessTokenExpiry: true },
+    });
+
+    if (user?.githubAccessToken && user?.githubAccessTokenExpiry && new Date() < new Date(user.githubAccessTokenExpiry)) {
+        console.log(`[github] ♻️  REUSED cached token for installation ${installationId}`);
+        return { token: user.githubAccessToken, expiresAt: new Date(user.githubAccessTokenExpiry).toISOString() };
     }
 
     // Cache miss or expired — generate fresh token
-    const { token, expiresAt } = await generateInstallationToken(installationId);
+    const { token } = await generateInstallationToken(installationId);
+    const expiresAt = new Date(Date.now() + TOKEN_CACHE_TTL_MS);
 
-    tokenCache.set(installationId, {
-        token,
-        expiresAt,
-        cachedAt: Date.now(),
+    // Save to database
+    await prisma.user.updateMany({
+        where: { githubInstallationId: installationId },
+        data: {
+            githubAccessToken: token,
+            githubAccessTokenExpiry: expiresAt,
+        },
     });
 
-    console.log(`[github] ✨ GENERATED new token for installation ${installationId} (cached for 50min)`);
+    console.log(`[github] ✨ GENERATED new token for installation ${installationId} (saved to db, expires in 50min)`);
 
-    return { token, expiresAt };
+    return { token, expiresAt: expiresAt.toISOString() };
 }
 
 // ─── Internal: Generate a fresh token (not exported, use getInstallationToken) ─
