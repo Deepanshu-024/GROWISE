@@ -16,6 +16,7 @@ import {
     getConversationMessages,
     sendChatMessage,
 } from "../../../../actions/chat";
+import { getRepositoryWithReport } from "../../../../actions/github/repository-queries";
 //import type { ConversationSummary } from "../../../../actions/chat";
 
 /* ─── Types ────────────────────────────────────────────────────────────────── */
@@ -903,13 +904,8 @@ export default function ProjectPage() {
     const fetchData = useCallback(async () => {
         try {
             setLoading(true);
-            const res = await fetch(`/api/reports/${id}`);
-            if (!res.ok) {
-                const data = await res.json().catch(() => ({}));
-                throw new Error(data.error || `HTTP ${res.status}`);
-            }
-            const data = await res.json();
-            setRepository(data.repository);
+            const repository = await getRepositoryWithReport(id);
+            setRepository(repository);
         } catch (err) {
             setError(err instanceof Error ? err.message : "Unknown error");
         } finally {
@@ -938,6 +934,27 @@ export default function ProjectPage() {
                 <div className="flex flex-col items-center gap-4">
                     <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
                     <p className="text-sm text-muted-foreground">Loading project...</p>
+                </div>
+            </div>
+        );
+    }
+
+    /* GitHub not connected */
+    if (error?.includes("GitHub not connected")) {
+        return (
+            <div className="min-h-screen bg-background flex items-center justify-center">
+                <div className="text-center space-y-4">
+                    <Github className="h-12 w-12 text-muted-foreground mx-auto" />
+                    <h2 className="text-xl font-semibold">GitHub Not Connected</h2>
+                    <p className="text-sm text-muted-foreground max-w-md">
+                        Please connect your GitHub account to view project reports and analysis.
+                    </p>
+                    <Link href="/dashboard">
+                        <Button variant="outline" className="gap-2">
+                            <Github className="h-4 w-4" />
+                            Go to Dashboard
+                        </Button>
+                    </Link>
                 </div>
             </div>
         );
