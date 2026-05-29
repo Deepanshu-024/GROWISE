@@ -1,94 +1,88 @@
 import { NextRequest } from "next/server";
-import {
-    orchestrateAgents,
-    OrchestratorStreamEvent,
-} from "../../../../../actions/agents/orchestrator";
+import { auth } from "@clerk/nextjs/server";
+import prisma from "@/lib/prisma";
+import { orchestrateAgents } from "../../../../../actions/agents/orchestrator";
 
 /**
  * POST /api/agent/orchestrate
- * Runs ALL archetype agents in parallel for a given repository.
- * Returns a Server-Sent Events stream with per-agent progress events.
+ *
+ * Runs ALL archetype agents sequentially for a given repository.
+ * Requires authenticated user who owns the repository.
  *
  * Body: { repositoryId: string }
  */
 export async function POST(req: NextRequest) {
     try {
+        // ── Authenticate user ───────────────────────────────────────────
+        const { userId: clerkId } = await auth();
+
+        if (!clerkId) {
+            return Response.json(
+                { error: "Unauthorized. Please sign in." },
+                { status: 401 },
+            );
+        }
+
+        const user = await prisma.user.findUnique({
+            where: { clerkId },
+            select: { id: true },
+        });
+
+        if (!user) {
+            return Response.json(
+                { error: "User not found." },
+                { status: 401 },
+            );
+        }
+
+        // ── Parse request body ──────────────────────────────────────────
         const body = await req.json();
         const { repositoryId } = body;
 
         if (!repositoryId) {
-            return new Response(
-                JSON.stringify({ error: "repositoryId is required" }),
-                { status: 400, headers: { "Content-Type": "application/json" } },
+            return Response.json(
+                { error: "repositoryId is required" },
+                { status: 400 },
             );
         }
 
-        const encoder = new TextEncoder();
-
-        const stream = new ReadableStream({
-            async start(controller) {
-                const send = (event: OrchestratorStreamEvent) => {
-                    try {
-                        controller.enqueue(
-                            encoder.encode(
-                                `data: ${JSON.stringify(event)}\n\n`,
-                            ),
-                        );
-                    } catch {
-                        // stream may be closed
-                    }
-                };
-
-                try {
-                    await orchestrateAgents(String(repositoryId), send);
-                } catch (error) {
-                    const message =
-                        error instanceof Error
-                            ? error.message
-                            : "Unknown error";
-                    console.error(
-                        "[api/agent/orchestrate] Stream error:",
-                        message,
-                    );
-                    try {
-                        controller.enqueue(
-                            encoder.encode(
-                                `data: ${JSON.stringify({
-                                    type: "orchestration_complete",
-                                    timestamp: new Date().toISOString(),
-                                    error: message,
-                                    totalAgents: 0,
-                                    completedAgents: 0,
-                                    failedAgents: 0,
-                                    totalExecutionTimeMs: 0,
-                                    summary: [],
-                                })}\n\n`,
-                            ),
-                        );
-                    } catch {
-                        // stream closed
-                    }
-                } finally {
-                    controller.close();
-                }
+        // ── Verify ownership ────────────────────────────────────────────
+        const repository = await prisma.repository.findFirst({
+            where: {
+                OR: [
+                    { id: String(repositoryId) },
+                    { repositoryId: String(repositoryId) },
+                ],
+                userId: user.id,
             },
+            select: { id: true },
         });
 
-        return new Response(stream, {
-            headers: {
-                "Content-Type": "text/event-stream",
-                "Cache-Control": "no-cache, no-transform",
-                Connection: "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
+        if (!repository) {
+            return Response.json(
+                { error: "Repository not found or you do not have access." },
+                { status: 404 },
+            );
+        }
+
+        // ── Run orchestration ───────────────────────────────────────────
+        const result = await orchestrateAgents(String(repositoryId));
+
+        return Response.json({
+            success: true,
+            totalAgents: result.totalAgents,
+            completedAgents: result.completedAgents,
+            failedAgents: result.failedAgents,
+            totalExecutionTimeMs: result.totalExecutionTimeMs,
+            hasCompiledReport: !!result.compiledReport,
         });
     } catch (error) {
         const message =
             error instanceof Error ? error.message : "Unknown error";
         console.error("[api/agent/orchestrate] Error:", message);
-        return new Response(JSON.stringify({ error: message }), {
-            status: 500,
-            headers: { "Content-Type": "application/json" },
-        });
+        return Response.json(
+            { error: message },
+            { status: 500 },
+        );
     }
 }
