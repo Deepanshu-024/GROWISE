@@ -592,6 +592,17 @@ function ChatPanel({ repositoryId, clusterTitles }: { repositoryId: string; clus
         // Ensure we have an active conversation
         let convId = activeConversationId;
         if (!convId) {
+            if (conversations.length >= 2) {
+                setMessages((prev) => [
+                    ...prev,
+                    {
+                        role: "assistant",
+                        content: "Sorry, you can only create up to 2 conversations for this project. Please select an existing conversation to continue.",
+                        timestamp: new Date().toISOString(),
+                    },
+                ]);
+                return;
+            }
             convId = await createNewConversation();
             if (!convId) return;
         }
@@ -645,7 +656,10 @@ function ChatPanel({ repositoryId, clusterTitles }: { repositoryId: string; clus
         } finally {
             setLoading(false);
         }
-    }, [input, loading, activeConversationId, selectedClusters, repositoryId, createNewConversation]);
+    }, [input, loading, activeConversationId, selectedClusters, repositoryId, createNewConversation, conversations]);
+
+    const userMessageCount = messages.filter((m) => m.role === "user").length;
+    const isMessageLimitReached = userMessageCount >= 3;
 
     return (
         <div className="flex flex-col h-full">
@@ -676,8 +690,13 @@ function ChatPanel({ repositoryId, clusterTitles }: { repositoryId: string; clus
                     )}
                     <button
                         onClick={createNewConversation}
-                        className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-                        title="New conversation"
+                        disabled={conversations.length >= 2}
+                        className={`p-1.5 rounded-lg transition-colors ${
+                            conversations.length >= 2
+                                ? "text-muted-foreground/30 cursor-not-allowed"
+                                : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                        }`}
+                        title={conversations.length >= 2 ? "Limit of 2 conversations reached" : "New conversation"}
                     >
                         <Plus className="h-4 w-4" />
                     </button>
@@ -865,20 +884,25 @@ function ChatPanel({ repositoryId, clusterTitles }: { repositoryId: string; clus
 
             {/* Input area */}
             <div className="shrink-0 border-t border-border/50 p-3">
+                {isMessageLimitReached && (
+                    <div className="text-[10px] text-amber-300 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1.5 rounded-lg mb-2 text-center font-medium animate-pulse">
+                        ⚠️ Maximum of 3 messages reached for this chat.
+                    </div>
+                )}
                 <div className="flex items-center gap-2">
                     <input
                         type="text"
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
-                        placeholder="Ask about the report..."
-                        disabled={loading}
-                        className="flex-1 bg-muted/40 border border-border/50 rounded-lg px-3 py-2 text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
+                        onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !isMessageLimitReached) { e.preventDefault(); sendMessage(); } }}
+                        placeholder={isMessageLimitReached ? "Message limit reached (max 3/chat)" : "Ask about the report..."}
+                        disabled={loading || isMessageLimitReached}
+                        className="flex-1 bg-muted/40 border border-border/50 rounded-lg px-3 py-2 text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-40 disabled:placeholder:text-muted-foreground/30"
                     />
                     <Button
                         size="sm"
                         onClick={() => sendMessage()}
-                        disabled={!input.trim() || loading}
+                        disabled={!input.trim() || loading || isMessageLimitReached}
                         className="h-9 w-9 p-0 shrink-0"
                     >
                         <Send className="h-4 w-4" />
