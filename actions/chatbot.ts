@@ -227,7 +227,7 @@ export async function runChatbotPipeline(input: {
     } = input;
 
     // Format history + build user input
-    const conversationHistoryStr = formatConversationHistory(existingMessages);
+    const conversationHistoryStr = await formatConversationHistory(existingMessages);
     const clustersNote =
         Array.isArray(referencedClusters) && referencedClusters.length > 0
             ? `\n\n**Referenced Clusters:** ${referencedClusters.join(", ")}`
@@ -251,7 +251,7 @@ export async function runChatbotPipeline(input: {
     }
 
     // Build messages
-    const userMsg = buildUserMessage(userMessage, referencedClusters);
+    const userMsg = await buildUserMessage(userMessage, referencedClusters);
     const { assistantMsg, response } =
         parsed.mode === "create_issue"
             ? await handleCreateIssueMode(parsed, githubInstallationId, repoOwner, repoName)
