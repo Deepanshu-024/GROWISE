@@ -1017,14 +1017,14 @@ export default function ProjectPage() {
                             </div>
                         </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    {/* <div className="flex items-center gap-2">
                         <Link href={`/reports/${id}`}>
                             <Button variant="outline" size="sm" className="text-xs gap-1.5">
                                 <FileText className="h-3.5 w-3.5" />
                                 Raw Reports
                             </Button>
                         </Link>
-                    </div>
+                    </div> */}
                 </div>
             </header>
 

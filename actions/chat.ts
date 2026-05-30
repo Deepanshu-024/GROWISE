@@ -211,6 +211,14 @@ export async function sendChatMessage(
     message: string,
     referencedClusters?: string[],
 ) {
+    console.log("------------------------------------------");
+    console.log("[chat] [sendChatMessage] Server Action invoked!");
+    console.log("  - repoId:", repoId);
+    console.log("  - conversationId:", conversationId);
+    console.log("  - message:", message);
+    console.log("  - referencedClusters:", referencedClusters);
+    console.log("------------------------------------------");
+
     const clerkId = await authenticateUser();
     const { user, repository } = await resolveUserAndRepo(clerkId, repoId);
 
@@ -230,6 +238,7 @@ export async function sendChatMessage(
     if (!conversation) throw new Error("Conversation not found");
 
     const existingMessages = (conversation.messages ?? []) as unknown as StoredMessage[];
+    console.log(`[chat] [sendChatMessage] Loaded conversation. Existing messages count: ${existingMessages.length}`);
 
     // Import and run the chatbot pipeline
     const { userMsg, assistantMsg, response } = await runChatbotPipeline({
@@ -241,6 +250,9 @@ export async function sendChatMessage(
         repoOwner: repository.owner,
         repoName: repository.name,
     });
+
+    console.log("[chat] [sendChatMessage] runChatbotPipeline returned userMsg:", JSON.stringify(userMsg));
+    console.log("[chat] [sendChatMessage] runChatbotPipeline returned assistantMsg:", JSON.stringify(assistantMsg));
 
     // Persist to DB
     await persistMessages(
