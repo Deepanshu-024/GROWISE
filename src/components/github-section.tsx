@@ -34,6 +34,7 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
   const [githubUsername, setGithubUsername] = useState<string | null>(null)
   const [repositories, setRepositories] = useState<Repository[]>([])
   const [loadingRepos, setLoadingRepos] = useState(false)
+  const [githubInstallationId, setGithubInstallationId] = useState<string | null>(null)
 
   // Modal & analysis state
   const [selectedRepo, setSelectedRepo] = useState<Repository | null>(null)
@@ -64,6 +65,7 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
         const data = await response.json()
         setGithubConnected(data.connected)
         setGithubUsername(data.username ?? null)
+        setGithubInstallationId(data.installationId ?? null)
         onStatusResolved?.(data.connected)
 
         if (data.connected) {
@@ -294,7 +296,13 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
                 {/* Footer */}
                 <div className="h-[42px] border-t border-white/[0.08] flex items-center shrink-0">
                   <button
-                    onClick={() => router.push("/dashboard")}
+                    onClick={() => {
+                      if (githubInstallationId) {
+                        window.open(`https://github.com/settings/installations/${githubInstallationId}`, "_blank")
+                      } else {
+                        window.location.href = "/api/github/install"
+                      }
+                    }}
                     className="w-full h-full flex items-center justify-center gap-1.5 text-[10px] text-white/35 hover:text-emerald-400 hover:bg-emerald-500/[0.04] transition-all duration-200"
                   >
                     <Plus className="w-3 h-3" />
