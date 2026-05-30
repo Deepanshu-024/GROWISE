@@ -5,6 +5,7 @@ import { Github, Lock, Globe, Plus, Loader2, ChevronRight, Zap, X, Sparkles, Ale
 import { useRouter } from "next/navigation"
 import { useUser, useClerk } from "@clerk/nextjs"
 import { toast } from "sonner"
+import { motion, AnimatePresence } from "motion/react"
 import { triggerWorkflow } from "../../actions/trigger-workflow"
 import { getAnalysisUsage, type AnalysisUsage } from "../../actions/get-analysis-usage"
 
@@ -194,214 +195,203 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
 
   // ── State 2: GitHub Connected ─────────────────────────────────────────────
   return (
-    <>
-      <div className="w-2/3 flex flex-col items-center">
-        {/* Connected indicator */}
-        <div className="flex items-center gap-1.5 mb-1.5">
-          <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-          <span className="text-[10px] text-white/40">
-            Connected as <span className="text-emerald-400/70 font-medium">@{githubUsername}</span>
-          </span>
-        </div>
-
-        {/* Repo card with glow border */}
-        <div className="w-full rounded-xl p-[1px] bg-gradient-to-b from-emerald-500/30 via-white/[0.12] to-white/[0.06] shadow-[0_0_20px_rgba(16,185,129,0.08)]">
-          <div className="w-full rounded-[11px] bg-slate-950/90 backdrop-blur-sm overflow-hidden">
-            {loadingRepos ? (
-              <div className="flex items-center justify-center py-4">
-                <Loader2 className="w-4 h-4 animate-spin text-emerald-400/60" />
-              </div>
-            ) : repositories.length === 0 ? (
-              <div className="px-3 py-3 text-center">
-                <p className="text-xs text-white/40">No repositories found</p>
-              </div>
-            ) : (
-              <div className="max-h-[120px] overflow-y-auto scrollbar-thin">
-                {repositories.map((repo, index) => (
-                  <button
-                    key={repo.id}
-                    onClick={() => handleRepoClick(repo)}
-                    className={`w-full px-3 py-1.5 flex items-center gap-2 hover:bg-emerald-500/[0.06] transition-all duration-200 group text-left ${index !== repositories.length - 1 ? "border-b border-white/[0.07]" : ""
-                      }`}
-                  >
-                    {/* Icon */}
-                    <div className="shrink-0 w-5 h-5 rounded bg-white/[0.05] border border-white/[0.1] flex items-center justify-center group-hover:border-emerald-500/30 group-hover:bg-emerald-500/[0.06] transition-all duration-200">
-                      {repo.private ? (
-                        <Lock className="w-2.5 h-2.5 text-white/30 group-hover:text-emerald-400/70 transition-colors" />
-                      ) : (
-                        <Globe className="w-2.5 h-2.5 text-white/30 group-hover:text-emerald-400/70 transition-colors" />
-                      )}
-                    </div>
-
-                    {/* Name */}
-                    <span className="flex-1 min-w-0 text-[11px] font-medium text-white/70 group-hover:text-emerald-300 transition-colors truncate">
-                      {repo.name}
-                    </span>
-
-                    {/* Report Generated badge */}
-                    {repo.hasReport ? (
-                      <span className="shrink-0 text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-violet-500/10 text-violet-300 border border-violet-500/20 flex items-center gap-1">
-                        <FileCheck className="w-2.5 h-2.5" />
-                        Report Generated
-                      </span>
-                    ) : (
-                      /* Private/Public badge */
-                      <span className={`shrink-0 text-[9px] font-medium px-1.5 py-0.5 rounded-full ${repo.private
-                        ? "bg-amber-500/10 text-amber-400/60 border border-amber-500/20"
-                        : "bg-emerald-500/10 text-emerald-400/60 border border-emerald-500/20"
-                        }`}>
-                        {repo.private ? "Private" : "Public"}
-                      </span>
-                    )}
-
-                    <ChevronRight className="w-3 h-3 text-white/20 group-hover:text-emerald-400/40 transition-all duration-200 group-hover:translate-x-0.5 shrink-0" />
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* Footer */}
-            <div className="border-t border-white/[0.08]">
-              <button
-                onClick={() => router.push("/dashboard")}
-                className="w-full px-3 py-1.5 flex items-center justify-center gap-1.5 text-[10px] text-white/35 hover:text-emerald-400 hover:bg-emerald-500/[0.04] transition-all duration-200"
-              >
-                <Plus className="w-3 h-3" />
-                Add New Repository
-              </button>
-            </div>
-          </div>
-        </div>
+    <div className="w-2/3 flex flex-col items-center">
+      {/* Connected indicator with dynamic color/text */}
+      <div className="flex items-center gap-1.5 mb-1.5 h-4 transition-all duration-350">
+        <div className={`w-1.5 h-1.5 rounded-full animate-pulse transition-colors duration-500 ${selectedRepo ? "bg-violet-400" : "bg-emerald-400"}`} />
+        <span className="text-[10px] text-white/40 select-none">
+          {selectedRepo ? (
+            <>
+              Confirming analysis for <span className="text-violet-400/80 font-medium">{selectedRepo.name}</span>
+            </>
+          ) : (
+            <>
+              Connected as <span className="text-emerald-400/70 font-medium">@{githubUsername}</span>
+            </>
+          )}
+        </span>
       </div>
 
-      {/* ── Analysis Confirmation Modal ──────────────────────────────────── */}
-      {selectedRepo && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
-          onClick={closeModal}
+      {/* Repo card with dynamic border gradient & shadow transformation */}
+      <motion.div
+        layout
+        transition={{ type: "spring", stiffness: 300, damping: 30 }}
+        className={`w-full rounded-xl p-[1px] transition-all duration-500 ${selectedRepo
+            ? "bg-gradient-to-b from-violet-500/40 via-emerald-500/20 to-white/[0.08] shadow-[0_0_30px_rgba(139,92,246,0.15)]"
+            : "bg-gradient-to-b from-emerald-500/30 via-white/[0.12] to-white/[0.06] shadow-[0_0_20px_rgba(16,185,129,0.08)]"
+          }`}
+      >
+        <motion.div
+          layout
+          transition={{ type: "spring", stiffness: 300, damping: 30 }}
+          className="w-full h-[162px] rounded-[11px] bg-slate-950/90 backdrop-blur-sm overflow-hidden"
         >
-          <div
-            className="relative w-full max-w-sm mx-4 rounded-2xl p-[1px] bg-gradient-to-b from-violet-500/40 via-emerald-500/20 to-white/[0.08] shadow-[0_0_40px_rgba(139,92,246,0.15)]"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="rounded-[15px] bg-slate-950/95 backdrop-blur-xl p-5">
-              {/* Close button */}
-              <button
-                onClick={closeModal}
-                disabled={analyzing}
-                className="absolute top-3 right-3 w-6 h-6 flex items-center justify-center rounded-full bg-white/[0.05] hover:bg-white/[0.1] transition-colors disabled:opacity-50"
+          <AnimatePresence mode="wait" initial={false}>
+            {!selectedRepo ? (
+              <motion.div
+                key="repo-list"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ duration: 0.2 }}
+                className="w-full h-full flex flex-col justify-between"
               >
-                <X className="w-3.5 h-3.5 text-white/40" />
-              </button>
-
-              {/* Header */}
-              <div className="flex items-center gap-2.5 mb-4">
-                <div className="w-8 h-8 rounded-lg bg-violet-500/15 border border-violet-500/25 flex items-center justify-center">
-                  <Zap className="w-4 h-4 text-violet-400" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-semibold text-white/90">Analyze Repository</h3>
-                  <p className="text-[10px] text-white/40">{selectedRepo.fullName}</p>
-                </div>
-              </div>
-
-              {/* Usage info */}
-              {loadingUsage ? (
-                <div className="flex items-center justify-center py-6">
-                  <Loader2 className="w-4 h-4 animate-spin text-violet-400/60" />
-                </div>
-              ) : usage && (
-                <>
-                  {/* Usage meter */}
-                  <div className="mb-4 p-3 rounded-xl bg-white/[0.03] border border-white/[0.07]">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-[10px] font-medium text-white/50 uppercase tracking-wider">Free Tier Usage</span>
-                      <span className="text-[11px] font-semibold text-white/70">
-                        {usage.used} / {usage.limit}
-                      </span>
-                    </div>
-                    {/* Progress bar */}
-                    <div className="w-full h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
-                      <div
-                        className={`h-full rounded-full transition-all duration-500 ${isAtLimit
-                          ? "bg-red-500/70"
-                          : usage.used >= 1
-                            ? "bg-amber-500/70"
-                            : "bg-emerald-500/70"
+                {loadingRepos ? (
+                  <div className="h-[120px] flex items-center justify-center">
+                    <Loader2 className="w-4 h-4 animate-spin text-emerald-400/60" />
+                  </div>
+                ) : repositories.length === 0 ? (
+                  <div className="h-[120px] flex items-center justify-center px-3 text-center">
+                    <p className="text-xs text-white/40">No repositories found</p>
+                  </div>
+                ) : (
+                  <div className="h-[120px] overflow-y-auto scrollbar-thin">
+                    {repositories.map((repo, index) => (
+                      <button
+                        key={repo.id}
+                        onClick={() => handleRepoClick(repo)}
+                        className={`w-full px-3 py-1.5 flex items-center gap-2 hover:bg-emerald-500/[0.06] transition-all duration-200 group text-left ${index !== repositories.length - 1 ? "border-b border-white/[0.07]" : ""
                           }`}
-                        style={{ width: `${(usage.used / usage.limit) * 100}%` }}
-                      />
+                      >
+                        {/* Icon */}
+                        <div className="shrink-0 w-5 h-5 rounded bg-white/[0.05] border border-white/[0.1] flex items-center justify-center group-hover:border-emerald-500/30 group-hover:bg-emerald-500/[0.06] transition-all duration-200">
+                          {repo.private ? (
+                            <Lock className="w-2.5 h-2.5 text-white/30 group-hover:text-emerald-400/70 transition-colors" />
+                          ) : (
+                            <Globe className="w-2.5 h-2.5 text-white/30 group-hover:text-emerald-400/70 transition-colors" />
+                          )}
+                        </div>
+
+                        {/* Name */}
+                        <span className="flex-1 min-w-0 text-[11px] font-medium text-white/70 group-hover:text-emerald-300 transition-colors truncate">
+                          {repo.name}
+                        </span>
+
+                        {/* Report Generated badge */}
+                        {repo.hasReport ? (
+                          <span className="shrink-0 text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-violet-500/10 text-violet-300 border border-violet-500/20 flex items-center gap-1">
+                            <FileCheck className="w-2.5 h-2.5" />
+                            Report Generated
+                          </span>
+                        ) : (
+                          /* Private/Public badge */
+                          <span
+                            className={`shrink-0 text-[9px] font-medium px-1.5 py-0.5 rounded-full ${repo.private
+                                ? "bg-amber-500/10 text-amber-400/60 border border-amber-500/20"
+                                : "bg-emerald-500/10 text-emerald-400/60 border border-emerald-500/20"
+                              }`}
+                          >
+                            {repo.private ? "Private" : "Public"}
+                          </span>
+                        )}
+
+                        <ChevronRight className="w-3 h-3 text-white/20 group-hover:text-emerald-400/40 transition-all duration-200 group-hover:translate-x-0.5 shrink-0" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Footer */}
+                <div className="h-[42px] border-t border-white/[0.08] flex items-center shrink-0">
+                  <button
+                    onClick={() => router.push("/dashboard")}
+                    className="w-full h-full flex items-center justify-center gap-1.5 text-[10px] text-white/35 hover:text-emerald-400 hover:bg-emerald-500/[0.04] transition-all duration-200"
+                  >
+                    <Plus className="w-3 h-3" />
+                    Add New Repository
+                  </button>
+                </div>
+              </motion.div>
+            ) : (
+              <motion.div
+                key="confirm-box"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ duration: 0.2 }}
+                className="w-full h-full p-3.5 flex flex-col justify-between relative"
+              >
+                {/* Close button */}
+                {/* <button
+                  onClick={closeModal}
+                  disabled={analyzing}
+                  className="absolute top-3 right-3 w-5 h-5 flex items-center justify-center rounded-full bg-white/[0.05] hover:bg-white/[0.1] transition-colors disabled:opacity-50"
+                >
+                  <X className="w-3 h-3 text-white/40" />
+                </button> */}
+
+                {/* Top Section: Header */}
+                <div className="flex flex-col gap-2.5">
+                  {/* Header */}
+                  <div className="flex items-center gap-2 select-none">
+                    <div className="w-6.5 h-6.5 rounded bg-violet-500/15 border border-violet-500/25 flex items-center justify-center shrink-0">
+                      <Zap className="w-3.5 h-3.5 text-violet-400" />
+                    </div>
+                    <div className="min-w-0">
+                      <h3 className="text-[11px] font-semibold text-white/90 leading-tight">Analyze Repository</h3>
+                      <p className="text-[9px] text-white/40 truncate max-w-[180px]">{selectedRepo.fullName}</p>
                     </div>
                   </div>
+                </div>
 
-                  {isAtLimit ? (
-                    /* ── At limit message ──────────────────────────────────── */
-                    <div className="mb-4 p-3 rounded-xl bg-red-500/[0.06] border border-red-500/20">
-                      <div className="flex items-start gap-2">
-                        <AlertTriangle className="w-3.5 h-3.5 text-red-400 mt-0.5 shrink-0" />
-                        <div>
-                          <p className="text-[11px] text-red-300/90 font-medium mb-1">
-                            Analysis limit reached
-                          </p>
-                          <p className="text-[10px] text-white/40 leading-relaxed">
-                            You&apos;ve used all {usage.limit} free analyses. We&apos;re bringing premium plans soon to unlock unlimited repository analysis.
-                          </p>
-                        </div>
-                      </div>
+                {/* Middle Section: Text Message / Loader */}
+                <div className="min-h-[36px] flex items-center select-none">
+                  {loadingUsage ? (
+                    <div className="flex items-center justify-center w-full py-1">
+                      <Loader2 className="w-4 h-4 animate-spin text-violet-400/60" />
                     </div>
                   ) : (
-                    /* ── Usage warning ─────────────────────────────────────── */
-                    <div className="mb-4 p-3 rounded-xl bg-violet-500/[0.06] border border-violet-500/20">
-                      <div className="flex items-start gap-2">
-                        <Sparkles className="w-3.5 h-3.5 text-violet-400 mt-0.5 shrink-0" />
-                        <div>
-                          <p className="text-[11px] text-violet-300/90 font-medium mb-1">
-                            This will use 1 of your {usage.limit} free analyses
-                          </p>
-                          <p className="text-[10px] text-white/40 leading-relaxed">
-                            After analysis, you&apos;ll have{" "}
-                            <span className="text-white/60 font-medium">{usage.limit - usedAfter}</span>{" "}
-                            {usage.limit - usedAfter === 1 ? "analysis" : "analyses"} remaining.
-                            We&apos;re bringing premium plans soon to unlock more.
-                          </p>
-                        </div>
+                    usage && (
+                      <div className="text-[11px] sm:text-[12px] text-white/60 leading-normal font-medium">
+                        {isAtLimit ? (
+                          <span className="text-red-400/95">
+                            Generation limit reached (2/2 used). Pro plans are coming soon to unlock unlimited analyses.
+                          </span>
+                        ) : (
+                          <span className="text-violet-300/90">
+                            Analyzing will use 1 of your 2 free generations ({usage.remaining} remaining). Pro plans are coming soon to unlock unlimited analyses.
+                          </span>
+                        )}
                       </div>
-                    </div>
+                    )
                   )}
+                </div>
 
-                  {/* Actions */}
-                  <div className="flex items-center gap-2.5">
+                {/* Bottom Section: Actions */}
+                <div className="flex flex-col gap-2">
+                  {/* Action buttons */}
+                  <div className="flex items-center gap-2">
                     <button
                       onClick={closeModal}
                       disabled={analyzing}
-                      className="flex-1 px-3 py-2 rounded-lg text-[11px] font-medium text-white/50 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] hover:border-white/[0.15] transition-all duration-200 disabled:opacity-50"
+                      className="flex-1 h-7 rounded-md text-[10px] font-medium text-white/50 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] hover:border-white/[0.15] transition-all duration-200 disabled:opacity-50"
                     >
                       Cancel
                     </button>
                     <button
                       onClick={handleAnalyze}
                       disabled={analyzing || isAtLimit}
-                      className="flex-1 px-3 py-2 rounded-lg text-[11px] font-semibold flex items-center justify-center gap-1.5 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed bg-gradient-to-r from-violet-600 to-emerald-600 text-white hover:from-violet-500 hover:to-emerald-500 hover:shadow-[0_0_15px_rgba(139,92,246,0.3)]"
+                      className="flex-1 h-7 rounded-md text-[10px] font-semibold flex items-center justify-center gap-1 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed bg-gradient-to-r from-violet-600 to-emerald-600 text-white hover:from-violet-500 hover:to-emerald-500 hover:shadow-[0_0_10px_rgba(139,92,246,0.2)] animate-pulse-subtle"
                     >
                       {analyzing ? (
                         <>
-                          <Loader2 className="w-3 h-3 animate-spin" />
+                          <Loader2 className="w-2.5 h-2.5 animate-spin" />
                           Analyzing…
                         </>
                       ) : (
                         <>
-                          <Zap className="w-3 h-3" />
-                          Analyze Repository
+                          <Zap className="w-2.5 h-2.5" />
+                          Analyze
                         </>
                       )}
                     </button>
                   </div>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-    </>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </motion.div>
+      </motion.div>
+    </div>
   )
 }
