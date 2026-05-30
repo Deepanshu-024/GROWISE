@@ -1,12 +1,50 @@
 import { Octokit } from "@octokit/rest";
 import { createAppAuth } from "@octokit/auth-app";
+import prisma from "@/lib/prisma";
+
+// ─── Token Cache ──────────────────────────────────────────────────────────────
+// Caches installation tokens in the User table (githubAccessToken / githubAccessTokenExpiry).
+// Tokens are cached for 50 minutes (GitHub tokens last 1 hour).
+
+const TOKEN_CACHE_TTL_MS = 50 * 60 * 1000; // 50 minutes
 
 /**
- * Generate an installation access token for a GitHub App installation
- * @param installationId - The GitHub App installation ID
- * @returns Access token with expiration time
+ * Get a valid installation token, using database cache if available.
+ * Only generates a new token if the cached one is expired or missing.
  */
-export async function generateInstallationToken(installationId: string) {
+export async function getInstallationToken(installationId: string): Promise<{ token: string; expiresAt: string }> {
+    // Check database cache first
+    const user = await prisma.user.findFirst({
+        where: { githubInstallationId: installationId },
+        select: { githubAccessToken: true, githubAccessTokenExpiry: true },
+    });
+
+    if (user?.githubAccessToken && user?.githubAccessTokenExpiry && new Date() < new Date(user.githubAccessTokenExpiry)) {
+        console.log(`[github] ♻️  REUSED cached token for installation ${installationId}`);
+        return { token: user.githubAccessToken, expiresAt: new Date(user.githubAccessTokenExpiry).toISOString() };
+    }
+
+    // Cache miss or expired — generate fresh token
+    const { token } = await generateInstallationToken(installationId);
+    const expiresAt = new Date(Date.now() + TOKEN_CACHE_TTL_MS);
+
+    // Save to database
+    await prisma.user.updateMany({
+        where: { githubInstallationId: installationId },
+        data: {
+            githubAccessToken: token,
+            githubAccessTokenExpiry: expiresAt,
+        },
+    });
+
+    console.log(`[github] ✨ GENERATED new token for installation ${installationId} (saved to db, expires in 50min)`);
+
+    return { token, expiresAt: expiresAt.toISOString() };
+}
+
+// ─── Internal: Generate a fresh token (not exported, use getInstallationToken) ─
+
+async function generateInstallationToken(installationId: string) {
     try {
         const appId = process.env.GITHUB_APP_ID;
         const privateKey = process.env.GITHUB_PRIVATE_KEY;
@@ -14,21 +52,19 @@ export async function generateInstallationToken(installationId: string) {
         if (!appId || !privateKey) {
             throw new Error("GitHub App credentials not configured");
         }
-        //console.log("App ID:", appId);
-        //console.log("Private Key:", privateKey);
+
         const decodedPrivateKey = privateKey.replace(/\\n/g, '\n');
-        //console.log("Decoded Private Key:", decodedPrivateKey);
 
         const auth = createAppAuth({
             appId,
             privateKey: decodedPrivateKey,
         });
-        console.log("Auth created111");
+
         const installationAuthentication = await auth({
             type: "installation",
             installationId: parseInt(installationId),
         });
-        console.log("Auth created222");
+
         return {
             token: installationAuthentication.token,
             expiresAt: installationAuthentication.expiresAt,
@@ -39,18 +75,16 @@ export async function generateInstallationToken(installationId: string) {
     }
 }
 
+// ─── Public API ───────────────────────────────────────────────────────────────
+
 /**
  * Get all repositories accessible by a GitHub App installation
- * @param installationId - The GitHub App installation ID
- * @returns List of repositories
  */
 export async function getInstallationRepositories(installationId: string) {
     try {
-        const { token } = await generateInstallationToken(installationId);
+        const { token } = await getInstallationToken(installationId);
 
-        const octokit = new Octokit({
-            auth: token,
-        });
+        const octokit = new Octokit({ auth: token });
 
         const { data } = await octokit.apps.listReposAccessibleToInstallation();
 
@@ -71,11 +105,6 @@ export async function getInstallationRepositories(installationId: string) {
 
 /**
  * Get repository content from a specific path
- * @param installationId - The GitHub App installation ID
- * @param owner - Repository owner
- * @param repo - Repository name
- * @param path - Path to the file or directory
- * @returns Repository content
  */
 export async function getRepositoryContent(
     installationId: string,
@@ -84,11 +113,9 @@ export async function getRepositoryContent(
     path: string = ""
 ) {
     try {
-        const { token } = await generateInstallationToken(installationId);
+        const { token } = await getInstallationToken(installationId);
 
-        const octokit = new Octokit({
-            auth: token,
-        });
+        const octokit = new Octokit({ auth: token });
 
         const { data } = await octokit.repos.getContent({
             owner,
@@ -105,8 +132,8 @@ export async function getRepositoryContent(
 
 /**
  * Get installation details from GitHub
- * @param installationId - The GitHub App installation ID
- * @returns Installation details including account information
+ * Note: This uses App-level auth (JWT), not an installation token,
+ * so it doesn't go through the token cache.
  */
 export async function getInstallationDetails(installationId: string) {
     try {

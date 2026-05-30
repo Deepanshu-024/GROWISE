@@ -9,7 +9,7 @@ import { Github, Loader2, HardDrive, CheckCircle2, XCircle, Clock, Zap, FileText
 import { toast } from "sonner";
 import { checkPackageAndFramework } from "../../actions/analysis/repository-analysis";
 import { classifyBusinessContext } from "../../actions/analysis/business-classification";
-import { getRepositoryById } from "../../actions/github/repository-queries";
+import { checkRepositoryReportStatus, getRepositoryById } from "../../actions/github/repository-queries";
 import { fetchAndStoreRepoSize } from "../../actions/analysis/repo-size";
 
 interface Repository {
@@ -161,19 +161,9 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
 
                 // Check if agent reports already exist for this repo
                 try {
-                    const res = await fetch(`/api/reports/${repository.id.toString()}`);
-                    if (res.ok) {
-                        const data = await res.json();
-                        const completedReports = (data.reports ?? []).filter(
-                            (r: any) => r.status === "completed" && r.rawFindings
-                        );
-                        if (completedReports.length > 0) {
-                            setHasExistingReports(true);
-                        }
-                        if (data.repository?.compiledReport) {
-                            setHasCompiledReport(true);
-                        }
-                    }
+                    const status = await checkRepositoryReportStatus(repository.id.toString());
+                    setHasExistingReports(status.hasReports);
+                    setHasCompiledReport(status.hasCompiledReport);
                 } catch {
                     // Non-critical — ignore
                 }

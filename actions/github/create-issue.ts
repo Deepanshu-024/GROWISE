@@ -1,7 +1,7 @@
 "use server";
 
 import { Octokit } from "@octokit/rest";
-import { generateInstallationToken } from "@/lib/github";
+import { getInstallationToken } from "@/lib/github";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -32,7 +32,7 @@ export async function createGitHubIssue(input: CreateIssueInput): Promise<Create
     try {
         console.log(`[createGitHubIssue] Creating issue on ${owner}/${repo}: "${title}"`);
 
-        const { token } = await generateInstallationToken(installationId);
+        const { token } = await getInstallationToken(installationId);
 
         const octokit = new Octokit({ auth: token });
 

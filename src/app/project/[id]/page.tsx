@@ -16,6 +16,7 @@ import {
     getConversationMessages,
     sendChatMessage,
 } from "../../../../actions/chat";
+import { getRepositoryWithReport } from "../../../../actions/github/repository-queries";
 //import type { ConversationSummary } from "../../../../actions/chat";
 
 /* ─── Types ────────────────────────────────────────────────────────────────── */
@@ -591,6 +592,17 @@ function ChatPanel({ repositoryId, clusterTitles }: { repositoryId: string; clus
         // Ensure we have an active conversation
         let convId = activeConversationId;
         if (!convId) {
+            if (conversations.length >= 2) {
+                setMessages((prev) => [
+                    ...prev,
+                    {
+                        role: "assistant",
+                        content: "Sorry, you can only create up to 2 conversations for this project. Please select an existing conversation to continue.",
+                        timestamp: new Date().toISOString(),
+                    },
+                ]);
+                return;
+            }
             convId = await createNewConversation();
             if (!convId) return;
         }
@@ -644,7 +656,10 @@ function ChatPanel({ repositoryId, clusterTitles }: { repositoryId: string; clus
         } finally {
             setLoading(false);
         }
-    }, [input, loading, activeConversationId, selectedClusters, repositoryId, createNewConversation]);
+    }, [input, loading, activeConversationId, selectedClusters, repositoryId, createNewConversation, conversations]);
+
+    const userMessageCount = messages.filter((m) => m.role === "user").length;
+    const isMessageLimitReached = userMessageCount >= 3;
 
     return (
         <div className="flex flex-col h-full">
@@ -675,8 +690,13 @@ function ChatPanel({ repositoryId, clusterTitles }: { repositoryId: string; clus
                     )}
                     <button
                         onClick={createNewConversation}
-                        className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-                        title="New conversation"
+                        disabled={conversations.length >= 2}
+                        className={`p-1.5 rounded-lg transition-colors ${
+                            conversations.length >= 2
+                                ? "text-muted-foreground/30 cursor-not-allowed"
+                                : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                        }`}
+                        title={conversations.length >= 2 ? "Limit of 2 conversations reached" : "New conversation"}
                     >
                         <Plus className="h-4 w-4" />
                     </button>
@@ -864,20 +884,25 @@ function ChatPanel({ repositoryId, clusterTitles }: { repositoryId: string; clus
 
             {/* Input area */}
             <div className="shrink-0 border-t border-border/50 p-3">
+                {isMessageLimitReached && (
+                    <div className="text-[10px] text-amber-300 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1.5 rounded-lg mb-2 text-center font-medium animate-pulse">
+                        ⚠️ Maximum of 3 messages reached for this chat.
+                    </div>
+                )}
                 <div className="flex items-center gap-2">
                     <input
                         type="text"
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
-                        placeholder="Ask about the report..."
-                        disabled={loading}
-                        className="flex-1 bg-muted/40 border border-border/50 rounded-lg px-3 py-2 text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
+                        onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !isMessageLimitReached) { e.preventDefault(); sendMessage(); } }}
+                        placeholder={isMessageLimitReached ? "Message limit reached (max 3/chat)" : "Ask about the report..."}
+                        disabled={loading || isMessageLimitReached}
+                        className="flex-1 bg-muted/40 border border-border/50 rounded-lg px-3 py-2 text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-40 disabled:placeholder:text-muted-foreground/30"
                     />
                     <Button
                         size="sm"
                         onClick={() => sendMessage()}
-                        disabled={!input.trim() || loading}
+                        disabled={!input.trim() || loading || isMessageLimitReached}
                         className="h-9 w-9 p-0 shrink-0"
                     >
                         <Send className="h-4 w-4" />
@@ -903,13 +928,8 @@ export default function ProjectPage() {
     const fetchData = useCallback(async () => {
         try {
             setLoading(true);
-            const res = await fetch(`/api/reports/${id}`);
-            if (!res.ok) {
-                const data = await res.json().catch(() => ({}));
-                throw new Error(data.error || `HTTP ${res.status}`);
-            }
-            const data = await res.json();
-            setRepository(data.repository);
+            const repository = await getRepositoryWithReport(id);
+            setRepository(repository);
         } catch (err) {
             setError(err instanceof Error ? err.message : "Unknown error");
         } finally {
@@ -938,6 +958,27 @@ export default function ProjectPage() {
                 <div className="flex flex-col items-center gap-4">
                     <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
                     <p className="text-sm text-muted-foreground">Loading project...</p>
+                </div>
+            </div>
+        );
+    }
+
+    /* GitHub not connected */
+    if (error?.includes("GitHub not connected")) {
+        return (
+            <div className="min-h-screen bg-background flex items-center justify-center">
+                <div className="text-center space-y-4">
+                    <Github className="h-12 w-12 text-muted-foreground mx-auto" />
+                    <h2 className="text-xl font-semibold">GitHub Not Connected</h2>
+                    <p className="text-sm text-muted-foreground max-w-md">
+                        Please connect your GitHub account to view project reports and analysis.
+                    </p>
+                    <Link href="/dashboard">
+                        <Button variant="outline" className="gap-2">
+                            <Github className="h-4 w-4" />
+                            Go to Dashboard
+                        </Button>
+                    </Link>
                 </div>
             </div>
         );
@@ -1000,14 +1041,14 @@ export default function ProjectPage() {
                             </div>
                         </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    {/* <div className="flex items-center gap-2">
                         <Link href={`/reports/${id}`}>
                             <Button variant="outline" size="sm" className="text-xs gap-1.5">
                                 <FileText className="h-3.5 w-3.5" />
                                 Raw Reports
                             </Button>
                         </Link>
-                    </div>
+                    </div> */}
                 </div>
             </header>
 
@@ -1031,29 +1072,18 @@ export default function ProjectPage() {
                                     onViewClusters={() => setView("clusters")}
                                 />
                             ) : view === "clusters" ? (
-                                <>
-                                    {/* Left arrow — fixed to left edge of report panel */}
+                                <div className="flex gap-6 items-stretch">
+                                    {/* Left arrow — next to report panel */}
                                     <button
                                         onClick={() => setView("overview")}
-                                        className="fixed left-[420px] top-1/2 -translate-y-1/2 z-40 cursor-pointer hover:scale-110 transition-transform"
+                                        className="sticky top-[50%] -translate-y-1/2 shrink-0 cursor-pointer hover:scale-110 transition-transform h-fit z-40"
                                         title="Back to Overview"
                                     >
                                         <span className="text-3xl font-light text-violet-400 animate-pulse-glow">&lt;</span>
                                     </button>
 
-                                    {/* Right arrow — fixed to right edge of report panel */}
-                                    {revenueRisk && (
-                                        <button
-                                            onClick={() => setView("risks")}
-                                            className="fixed right-10 top-1/2 -translate-y-1/2 z-40 cursor-pointer hover:scale-110 transition-transform"
-                                            title="Revenue Risk Assessment"
-                                        >
-                                            <span className="text-3xl font-light text-violet-400 animate-pulse-glow">&gt;</span>
-                                        </button>
-                                    )}
-
                                     {/* Content */}
-                                    <div className="space-y-6">
+                                    <div className="flex-1 min-w-0 space-y-6">
                                         {/* Header */}
                                         <div>
                                             <h2 className="text-2xl font-bold tracking-tight">Scale Issues</h2>
@@ -1084,27 +1114,43 @@ export default function ProjectPage() {
                                             );
                                         })()}
                                     </div>
-                                </>
+
+                                    {/* Right arrow — next to report panel */}
+                                    {revenueRisk ? (
+                                        <button
+                                            onClick={() => setView("risks")}
+                                            className="sticky top-[50%] -translate-y-1/2 shrink-0 cursor-pointer hover:scale-110 transition-transform h-fit z-40"
+                                            title="Revenue Risk Assessment"
+                                        >
+                                            <span className="text-3xl font-light text-violet-400 animate-pulse-glow">&gt;</span>
+                                        </button>
+                                    ) : (
+                                        <div className="w-8 shrink-0" />
+                                    )}
+                                </div>
                             ) : (
                                 /* Revenue Risk Assessment view */
-                                <>
-                                    {/* Left arrow — fixed, back to Scale Issues */}
+                                <div className="flex gap-6 items-stretch">
+                                    {/* Left arrow — next to report panel, back to Scale Issues */}
                                     <button
                                         onClick={() => setView("clusters")}
-                                        className="fixed left-[420px] top-1/2 -translate-y-1/2 z-40 cursor-pointer hover:scale-110 transition-transform"
+                                        className="sticky top-[50%] -translate-y-1/2 shrink-0 cursor-pointer hover:scale-110 transition-transform h-fit z-40"
                                         title="Back to Scale Issues"
                                     >
                                         <span className="text-3xl font-light text-violet-400 animate-pulse-glow">&lt;</span>
                                     </button>
 
-                                    <div className="space-y-5">
+                                    <div className="flex-1 min-w-0 space-y-5">
                                         <div>
                                             <h2 className="text-2xl font-bold tracking-tight">Revenue Risk Assessment</h2>
                                             <p className="text-sm text-muted-foreground mt-1">How scalability risks translate to business impact.</p>
                                         </div>
                                         {revenueRisk && <RevenueRiskView revenueRisk={revenueRisk} />}
                                     </div>
-                                </>
+
+                                    {/* Spacer to balance left arrow */}
+                                    <div className="w-8 shrink-0" />
+                                </div>
                             )}
                         </div>
                     ) : (

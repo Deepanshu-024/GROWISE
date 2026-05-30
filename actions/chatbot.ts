@@ -54,9 +54,32 @@ export interface ChatbotResult {
  * Format stored messages into a simple conversation history string.
  */
 export async function formatConversationHistory(messages: StoredMessage[]) {
-    return messages
-        .map((msg) => `${msg.role === "user" ? "User" : "Assistant"}: ${msg.content}`)
+    console.log(`[chatbot] [formatConversationHistory] Formatting ${messages.length} messages:`);
+    messages.forEach((msg, idx) => {
+        console.log(
+            `  - Message #${idx + 1} | Role: ${msg.role} | Has Referenced Clusters: ${
+                Array.isArray(msg.referencedClusters) && msg.referencedClusters.length > 0
+                    ? `Yes (${msg.referencedClusters.join(", ")})`
+                    : "No"
+            }`
+        );
+    });
+
+    const formatted = messages
+        .map((msg) => {
+            if (msg.role === "user") {
+                const hasClusters = Array.isArray(msg.referencedClusters) && msg.referencedClusters.length > 0;
+                return hasClusters
+                    ? `User: ${msg.content} Refrenced clusters: ${msg.referencedClusters!.join(", ")}`
+                    : `User: ${msg.content}`;
+            } else {
+                return `Assistant: ${msg.content}`;
+            }
+        })
         .join("\n");
+
+    console.log("[chatbot] [formatConversationHistory] Formatted chat history result:\n", formatted || "(Empty history)");
+    return formatted;
 }
 
 /**
@@ -226,13 +249,27 @@ export async function runChatbotPipeline(input: {
         repoName,
     } = input;
 
+    console.log("==========================================");
+    console.log("[chatbot] [runChatbotPipeline] Pipeline invoked!");
+    console.log("[chatbot] [runChatbotPipeline] Input Parameters:");
+    console.log("  - User Message:", userMessage);
+    console.log("  - Referenced Clusters (argument passed in):", referencedClusters);
+    console.log("  - Existing Messages Count:", existingMessages.length);
+    console.log("==========================================");
+
     // Format history + build user input
-    const conversationHistoryStr = formatConversationHistory(existingMessages);
+    const conversationHistoryStr = await formatConversationHistory(existingMessages);
+    
     const clustersNote =
         Array.isArray(referencedClusters) && referencedClusters.length > 0
-            ? `\n\n**Referenced Clusters:** ${referencedClusters.join(", ")}`
+            ? ` Refrenced clusters: ${referencedClusters.join(", ")}`
             : "";
+    
+    console.log("[chatbot] [runChatbotPipeline] Computed clustersNote:", JSON.stringify(clustersNote));
+    
     const userInput = userMessage + clustersNote;
+    console.log("[chatbot] [runChatbotPipeline] Final prompt userInput being passed to LLM:\n", userInput);
+    console.log("==========================================");
 
     // Invoke LLM
     const rawResult = await invokeScaleChatbot(
@@ -251,7 +288,7 @@ export async function runChatbotPipeline(input: {
     }
 
     // Build messages
-    const userMsg = buildUserMessage(userMessage, referencedClusters);
+    const userMsg = await buildUserMessage(userMessage, referencedClusters);
     const { assistantMsg, response } =
         parsed.mode === "create_issue"
             ? await handleCreateIssueMode(parsed, githubInstallationId, repoOwner, repoName)

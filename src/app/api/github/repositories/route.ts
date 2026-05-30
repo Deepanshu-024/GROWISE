@@ -18,6 +18,7 @@ export async function GET(req: NextRequest) {
         const user = await prisma.user.findUnique({
             where: { clerkId: userId },
             select: {
+                id: true,
                 githubInstallationId: true,
             },
         });
@@ -30,11 +31,35 @@ export async function GET(req: NextRequest) {
         }
 
         // Fetch repositories from GitHub
-        const repositories = await getInstallationRepositories(user.githubInstallationId);
+        const ghRepos = await getInstallationRepositories(user.githubInstallationId);
 
-        return NextResponse.json({
-            repositories,
+        // Cross-reference with DB to get UUIDs and report status
+        const dbRepos = await prisma.repository.findMany({
+            where: { userId: user.id },
+            select: {
+                id: true,
+                repositoryId: true,
+                compiledReport: true,
+            },
         });
+
+        const dbMap = new Map(
+            dbRepos.map((r) => [
+                r.repositoryId,
+                { dbId: r.id, hasReport: r.compiledReport !== null },
+            ])
+        );
+
+        const repositories = ghRepos.map((repo: any) => {
+            const dbInfo = dbMap.get(String(repo.id));
+            return {
+                ...repo,
+                dbId: dbInfo?.dbId ?? null,
+                hasReport: dbInfo?.hasReport ?? false,
+            };
+        });
+
+        return NextResponse.json({ repositories });
     } catch (error) {
         console.error("Error fetching repositories:", error);
         return NextResponse.json(

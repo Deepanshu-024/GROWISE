@@ -2,7 +2,7 @@
 
 import { auth } from "@clerk/nextjs/server";
 import prisma from "@/lib/prisma";
-import { generateInstallationToken } from "@/lib/github";
+import { getInstallationToken } from "@/lib/github";
 import { PromptTemplate } from "@langchain/core/prompts";
 import { StringOutputParser } from "@langchain/core/output_parsers";
 import { gpt4oMini } from "@/lib/llm";
@@ -254,7 +254,7 @@ export async function checkPackageAndFramework(
 
         // Generate token from GitHub App installation
         console.log("[SERVER] 🎫 Generating installation token...");
-        const { token } = await generateInstallationToken(effectiveInstallationId);
+        const { token } = await getInstallationToken(effectiveInstallationId);
         authToken = token;
         console.log("[SERVER] ✅ Token generated successfully");
 

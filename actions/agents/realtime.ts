@@ -37,7 +37,7 @@ export interface StreamEvent {
 
 export interface RealtimeAgentInput {
     repositoryId: string;
-    accessToken: string;
+    installationId: string;
     onEvent?: (event: StreamEvent) => void;
 }
 
@@ -270,7 +270,7 @@ const realtimeAgentTools = [
 export async function runRealtimeAgent(
     input: RealtimeAgentInput
 ): Promise<RealtimeAgentOutput> {
-    const { repositoryId, accessToken, onEvent } = input;
+    const { repositoryId, installationId, onEvent } = input;
     const startTime = Date.now();
 
     const agentLog: AgentLog = {
@@ -393,7 +393,7 @@ Return the compact findings digest required by the system prompt. Do not call an
                 ],
             },
             {
-                context: { owner, repo, branch, accessToken },
+                context: { owner, repo, branch, installationId },
                 recursionLimit: 50,
                 callbacks: [
                     {

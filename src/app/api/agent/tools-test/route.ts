@@ -16,7 +16,7 @@ import {
  *   repositoryId?: string,   // required for graph tools; not needed for github tools
  *   toolName: string,
  *   args: Record<string, unknown>,
- *   // GitHub tools need: owner, repo, branch, accessToken inside args
+ *   // GitHub tools need: owner, repo, branch, installationId inside context
  * }
  */
 

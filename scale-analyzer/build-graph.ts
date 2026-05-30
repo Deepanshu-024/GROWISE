@@ -219,8 +219,8 @@ async function fetchFilesFromGitHub(prisma: any, repositoryId: string): Promise<
 
   if (!accessToken && repo.user?.githubInstallationId) {
     console.log('[KnowledgeGraph] No OAuth token, generating installation token...');
-    const { generateInstallationToken } = await import('../src/lib/github');
-    const { token } = await generateInstallationToken(repo.user.githubInstallationId);
+    const { getInstallationToken } = await import('../src/lib/github');
+    const { token } = await getInstallationToken(repo.user.githubInstallationId);
     accessToken = token;
   }
 

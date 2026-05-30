@@ -39,7 +39,7 @@ export interface StreamEvent {
 
 export interface TransactionAgentInput {
     repositoryId: string;
-    accessToken: string;
+    installationId: string;
     onEvent?: (event: StreamEvent) => void;
 }
 
@@ -343,7 +343,7 @@ const payAgentTools = [
 export async function runTransactionAgent(
     input: TransactionAgentInput
 ): Promise<TransactionAgentOutput> {
-    const { repositoryId, accessToken, onEvent } = input;
+    const { repositoryId, installationId, onEvent } = input;
     const startTime = Date.now();
 
     const agentLog: AgentLog = {
@@ -431,7 +431,7 @@ export async function runTransactionAgent(
             middleware: [toolBudgetMiddleware],
         });
 
-        // NOTE: intermediateSteps and agentLog contain the raw accessToken
+        // NOTE: intermediateSteps and agentLog contain the installationId
         // passed via context. These logs are for local debugging only.
         // Never persist agentLog to a database or external service.
         // Delete log files after debugging is complete.
@@ -480,7 +480,7 @@ Return the compact findings digest required by the system prompt. Do not call an
                 ],
             },
             {
-                context: { owner, repo, branch, accessToken },
+                context: { owner, repo, branch, installationId },
                 recursionLimit: 50,
                 callbacks: [
                     {

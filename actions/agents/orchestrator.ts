@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import prisma from "@/lib/prisma";
-import { generateInstallationToken } from "@/lib/github";
+import { auth } from "@clerk/nextjs/server";
 
 // ─── Agent Runners ────────────────────────────────────────────────────────────
 
@@ -17,34 +17,6 @@ import { runReportCompiler } from "./report-compiler";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export interface OrchestratorStreamEvent {
-    type:
-        | "orchestration_start"
-        | "agent_queued"
-        | "agent_running"
-        | "agent_completed"
-        | "agent_failed"
-        | "report_compiling"
-        | "report_compiled"
-        | "report_failed"
-        | "orchestration_complete";
-    archetype?: string;
-    timestamp: string;
-    // agent_completed / agent_failed
-    totalToolCalls?: number;
-    executionTimeMs?: number;
-    error?: string;
-    // orchestration_complete
-    summary?: AgentSummary[];
-    totalAgents?: number;
-    completedAgents?: number;
-    failedAgents?: number;
-    totalExecutionTimeMs?: number;
-    // report compilation
-    compiledReport?: string;
-    reportCompileTimeMs?: number;
-}
-
 interface AgentSummary {
     archetype: string;
     status: "completed" | "failed";
@@ -58,12 +30,21 @@ interface Archetype {
     score: number;
 }
 
+export interface OrchestrationResult {
+    summaries: AgentSummary[];
+    totalAgents: number;
+    completedAgents: number;
+    failedAgents: number;
+    totalExecutionTimeMs: number;
+    compiledReport?: string;
+    reportCompileTimeMs?: number;
+}
+
 // ─── Runner Map ───────────────────────────────────────────────────────────────
 
 type AgentRunner = (input: {
     repositoryId: string;
-    accessToken: string;
-    onEvent?: (event: any) => void;
+    installationId: string;
     archetypeScore?: number;
 }) => Promise<{
     rawFindings?: string | null;
@@ -76,47 +57,40 @@ const ARCHETYPE_RUNNERS: Record<string, AgentRunner> = {
     "database-heavy": (input) =>
         runDatabaseAgent({
             repositoryId: input.repositoryId,
-            accessToken: input.accessToken,
+            installationId: input.installationId,
             archetypeScore: input.archetypeScore ?? 0.5,
-            onEvent: input.onEvent,
         }),
     "compute-heavy": (input) =>
         runComputeHeavyAgent({
             repositoryId: input.repositoryId,
-            accessToken: input.accessToken,
-            onEvent: input.onEvent,
+            installationId: input.installationId,
         }),
     "ai-powered": (input) =>
         runAiPoweredAgent({
             repositoryId: input.repositoryId,
-            accessToken: input.accessToken,
-            onEvent: input.onEvent,
+            installationId: input.installationId,
         }),
     "realtime": (input) =>
         runRealtimeAgent({
             repositoryId: input.repositoryId,
-            accessToken: input.accessToken,
-            onEvent: input.onEvent,
+            installationId: input.installationId,
         }),
     "event-driven": (input) =>
         runEventDrivenAgent({
             repositoryId: input.repositoryId,
-            accessToken: input.accessToken,
-            onEvent: input.onEvent,
+            installationId: input.installationId,
         }),
     "financial-transactional": (input) =>
         runTransactionAgent({
             repositoryId: input.repositoryId,
-            accessToken: input.accessToken,
-            onEvent: input.onEvent,
+            installationId: input.installationId,
         }),
     "auth-heavy": (input) =>
-        runAuthAgent(input.repositoryId, input.accessToken) as any,
+        runAuthAgent(input.repositoryId, input.installationId) as any,
     "content-heavy": (input) =>
         runContentHeavyAgent({
             repositoryId: input.repositoryId,
-            accessToken: input.accessToken,
-            onEvent: input.onEvent,
+            installationId: input.installationId,
         }),
 };
 
@@ -124,23 +98,32 @@ const ARCHETYPE_RUNNERS: Record<string, AgentRunner> = {
 
 export async function orchestrateAgents(
     repositoryId: string,
-    onEvent: (event: OrchestratorStreamEvent) => void,
-): Promise<void> {
+): Promise<OrchestrationResult> {
     const orchestrationStart = Date.now();
 
-    const emit = (event: OrchestratorStreamEvent) => {
-        try {
-            onEvent(event);
-        } catch {
-            /* ignore stream errors */
-        }
-    };
+    // ── Authenticate user ───────────────────────────────────────────────
 
-    // ── Resolve repository + access token ──────────────────────────────
+    const { userId: clerkId } = await auth();
+
+    if (!clerkId) {
+        throw new Error("Unauthorized. Please sign in.");
+    }
+
+    const user = await prisma.user.findUnique({
+        where: { clerkId },
+        select: { id: true },
+    });
+
+    if (!user) {
+        throw new Error("User not found.");
+    }
+
+    // ── Resolve repository + verify ownership ───────────────────────────
 
     const repo = await prisma.repository.findFirst({
         where: {
             OR: [{ id: repositoryId }, { repositoryId }],
+            userId: user.id,
         },
         select: {
             id: true,
@@ -156,44 +139,14 @@ export async function orchestrateAgents(
     });
 
     if (!repo) {
-        emit({
-            type: "orchestration_complete",
-            timestamp: new Date().toISOString(),
-            error: `Repository "${repositoryId}" not found.`,
-            totalAgents: 0,
-            completedAgents: 0,
-            failedAgents: 0,
-            totalExecutionTimeMs: Date.now() - orchestrationStart,
-            summary: [],
-        });
-        return;
+        throw new Error(`Repository "${repositoryId}" not found or you do not have access.`);
     }
 
-    // Resolve access token
-    let accessToken = repo.user?.githubAccessToken ?? "";
-    if (!accessToken && repo.user?.githubInstallationId) {
-        try {
-            const { token } = await generateInstallationToken(
-                repo.user.githubInstallationId,
-            );
-            accessToken = token;
-        } catch (err) {
-            console.error("[orchestrator] Failed to generate installation token:", err);
-        }
-    }
+    // Resolve installationId
+    const installationId = repo.user?.githubInstallationId;
 
-    if (!accessToken) {
-        emit({
-            type: "orchestration_complete",
-            timestamp: new Date().toISOString(),
-            error: "No GitHub access token available for this repository.",
-            totalAgents: 0,
-            completedAgents: 0,
-            failedAgents: 0,
-            totalExecutionTimeMs: Date.now() - orchestrationStart,
-            summary: [],
-        });
-        return;
+    if (!installationId) {
+        throw new Error("No GitHub installation ID available for this repository.");
     }
 
     // ── Parse archetypes ────────────────────────────────────────────────
@@ -203,28 +156,10 @@ export async function orchestrateAgents(
         : [];
 
     if (archetypes.length === 0) {
-        emit({
-            type: "orchestration_complete",
-            timestamp: new Date().toISOString(),
-            error: "No archetypes found. Run business classification first.",
-            totalAgents: 0,
-            completedAgents: 0,
-            failedAgents: 0,
-            totalExecutionTimeMs: Date.now() - orchestrationStart,
-            summary: [],
-        });
-        return;
+        throw new Error("No archetypes found. Run business classification first.");
     }
 
-    // ── Emit start ──────────────────────────────────────────────────────
-
-    emit({
-        type: "orchestration_start",
-        timestamp: new Date().toISOString(),
-        totalAgents: archetypes.length,
-    });
-
-    // ── Upsert pending rows + emit queued ───────────────────────────────
+    // ── Upsert pending rows ─────────────────────────────────────────────
 
     for (const arch of archetypes) {
         await prisma.agentReport.upsert({
@@ -247,16 +182,13 @@ export async function orchestrateAgents(
                 error: null,
             },
         });
-        emit({
-            type: "agent_queued",
-            archetype: arch.name,
-            timestamp: new Date().toISOString(),
-        });
     }
 
-    // ── Dispatch all agents in parallel ─────────────────────────────────
+    // ── Dispatch all agents sequentially ────────────────────────────────
 
-    const agentPromises = archetypes.map(async (arch): Promise<AgentSummary> => {
+    const summaries: AgentSummary[] = [];
+
+    for (const arch of archetypes) {
         const runner = ARCHETYPE_RUNNERS[arch.name];
         if (!runner) {
             const errorMsg = `No runner found for archetype "${arch.name}"`;
@@ -270,21 +202,14 @@ export async function orchestrateAgents(
                 },
                 data: { status: "failed", error: errorMsg },
             });
-            emit({
-                type: "agent_failed",
-                archetype: arch.name,
-                timestamp: new Date().toISOString(),
-                error: errorMsg,
-                totalToolCalls: 0,
-                executionTimeMs: 0,
-            });
-            return {
+            summaries.push({
                 archetype: arch.name,
                 status: "failed",
                 totalToolCalls: 0,
                 executionTimeMs: 0,
                 error: errorMsg,
-            };
+            });
+            continue;
         }
 
         // Mark running
@@ -297,20 +222,15 @@ export async function orchestrateAgents(
             },
             data: { status: "running" },
         });
-        emit({
-            type: "agent_running",
-            archetype: arch.name,
-            timestamp: new Date().toISOString(),
-        });
 
         try {
             const result = await runner({
                 repositoryId: repo.repositoryId,
-                accessToken,
+                installationId,
                 archetypeScore: arch.score,
             });
 
-            // Upsert completed
+            // Update database with result
             await prisma.agentReport.update({
                 where: {
                     repositoryId_archetype: {
@@ -328,36 +248,22 @@ export async function orchestrateAgents(
             });
 
             if (result.error) {
-                emit({
-                    type: "agent_failed",
-                    archetype: arch.name,
-                    timestamp: new Date().toISOString(),
-                    totalToolCalls: result.totalToolCalls,
-                    executionTimeMs: result.executionTimeMs,
-                    error: result.error,
-                });
-                return {
+                summaries.push({
                     archetype: arch.name,
                     status: "failed",
                     totalToolCalls: result.totalToolCalls,
                     executionTimeMs: result.executionTimeMs,
                     error: result.error,
-                };
+                });
+                continue;
             }
 
-            emit({
-                type: "agent_completed",
-                archetype: arch.name,
-                timestamp: new Date().toISOString(),
-                totalToolCalls: result.totalToolCalls,
-                executionTimeMs: result.executionTimeMs,
-            });
-            return {
+            summaries.push({
                 archetype: arch.name,
                 status: "completed",
                 totalToolCalls: result.totalToolCalls,
                 executionTimeMs: result.executionTimeMs,
-            };
+            });
         } catch (err) {
             const errorMsg = err instanceof Error ? err.message : "Unknown error";
             console.error(`[orchestrator] Agent "${arch.name}" threw:`, errorMsg);
@@ -375,37 +281,15 @@ export async function orchestrateAgents(
                 },
             });
 
-            emit({
-                type: "agent_failed",
-                archetype: arch.name,
-                timestamp: new Date().toISOString(),
-                error: errorMsg,
-                totalToolCalls: 0,
-                executionTimeMs: 0,
-            });
-
-            return {
+            summaries.push({
                 archetype: arch.name,
                 status: "failed",
                 totalToolCalls: 0,
                 executionTimeMs: 0,
                 error: errorMsg,
-            };
+            });
         }
-    });
-
-    const results = await Promise.allSettled(agentPromises);
-    const summaries: AgentSummary[] = results.map((r) =>
-        r.status === "fulfilled"
-            ? r.value
-            : {
-                archetype: "unknown",
-                status: "failed" as const,
-                totalToolCalls: 0,
-                executionTimeMs: 0,
-                error: r.reason?.message ?? "Promise rejected",
-            },
-    );
+    }
 
     const completed = summaries.filter((s) => s.status === "completed").length;
     const failed = summaries.filter((s) => s.status === "failed").length;
@@ -416,67 +300,39 @@ export async function orchestrateAgents(
     let reportCompileTimeMs: number | undefined;
 
     if (completed > 0) {
-        emit({
-            type: "report_compiling",
-            timestamp: new Date().toISOString(),
-        });
-
         try {
             const compilerResult = await runReportCompiler({
                 repositoryId: repo.id,
-                onEvent: (event) => {
-                    // Forward compiler reasoning as SSE
-                    if (event.type === "compiler_thinking") {
-                        emit({
-                            type: "report_compiling",
-                            timestamp: event.timestamp,
-                        });
-                    }
-                },
             });
 
             if (compilerResult.compiledReport) {
                 compiledReport = compilerResult.compiledReport;
                 reportCompileTimeMs = compilerResult.executionTimeMs;
-                emit({
-                    type: "report_compiled",
-                    timestamp: new Date().toISOString(),
-                    compiledReport,
-                    reportCompileTimeMs,
-                });
                 console.log(
                     `[orchestrator] Report compiled in ${reportCompileTimeMs}ms ` +
                     `(${compiledReport.length} chars)`,
                 );
             } else {
-                emit({
-                    type: "report_failed",
-                    timestamp: new Date().toISOString(),
-                    error: compilerResult.error ?? "Report compiler returned empty result.",
-                });
+                console.error(
+                    `[orchestrator] Report compiler returned empty result:`,
+                    compilerResult.error,
+                );
             }
         } catch (err) {
             const errorMsg = err instanceof Error ? err.message : "Unknown compiler error";
             console.error(`[orchestrator] Report compiler threw:`, errorMsg);
-            emit({
-                type: "report_failed",
-                timestamp: new Date().toISOString(),
-                error: errorMsg,
-            });
         }
     }
 
-    // ── Final orchestration complete ─────────────────────────────────────
+    // ── Return final result ──────────────────────────────────────────────
 
-    emit({
-        type: "orchestration_complete",
-        timestamp: new Date().toISOString(),
-        summary: summaries,
+    return {
+        summaries,
         totalAgents: archetypes.length,
         completedAgents: completed,
         failedAgents: failed,
         totalExecutionTimeMs: Date.now() - orchestrationStart,
         compiledReport,
         reportCompileTimeMs,
-    });
+    };
 }

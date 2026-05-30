@@ -22,6 +22,7 @@ import {
     Github,
 } from "lucide-react";
 import { parseFindings, getArchetypeMeta, type ParsedFinding, type FindingSeverity } from "@/lib/findings-parser";
+import { getRepositoryWithAgentReports } from "../../../../actions/github/repository-queries";
 
 /* ─── Types ────────────────────────────────────────────────────────────────── */
 
@@ -294,12 +295,7 @@ export default function ReportsPage() {
         try {
             setLoading(true);
             setError(null);
-            const res = await fetch(`/api/reports/${repositoryId}`);
-            if (!res.ok) {
-                const data = await res.json().catch(() => ({}));
-                throw new Error(data.error || `HTTP ${res.status}`);
-            }
-            const data = await res.json();
+            const data = await getRepositoryWithAgentReports(repositoryId);
             setRepository(data.repository);
             setReports(data.reports);
         } catch (err) {
