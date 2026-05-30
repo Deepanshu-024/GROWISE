@@ -1,5 +1,6 @@
 "use server";
 
+import prisma from "@/lib/prisma";
 import { checkPackageAndFramework } from "./analysis/repository-analysis";
 import { classifyBusinessContext } from "./analysis/business-classification";
 import { orchestrateAgents } from "./agents/orchestrator";
@@ -7,6 +8,7 @@ import { orchestrateAgents } from "./agents/orchestrator";
 export interface TriggerWorkflowResult {
     success: boolean;
     error?: string;
+    dbId?: string;
     framework?: string;
     totalAgents?: number;
     completedAgents?: number;
@@ -19,6 +21,8 @@ export interface TriggerWorkflowResult {
  * 1. Framework detection
  * 2. Business classification
  * 3. Agent orchestration + report compilation
+ *
+ * Returns the database UUID (`dbId`) so the client can navigate to /project/{dbId}.
  */
 export async function triggerWorkflow(
     repositoryId: string,
@@ -38,12 +42,26 @@ export async function triggerWorkflow(
             };
         }
 
+        // Resolve the database UUID for this repository
+        const dbRepo = await prisma.repository.findUnique({
+            where: { repositoryId },
+            select: { id: true },
+        });
+
+        if (!dbRepo) {
+            return {
+                success: false,
+                error: "Repository record not found after framework analysis.",
+            };
+        }
+
         // Step 2: Business classification
         const classResult = await classifyBusinessContext(repositoryId);
 
         if (!classResult.classification) {
             return {
                 success: false,
+                dbId: dbRepo.id,
                 error: classResult.error || "Classification failed",
             };
         }
@@ -53,6 +71,7 @@ export async function triggerWorkflow(
 
         return {
             success: true,
+            dbId: dbRepo.id,
             framework: frameworkResult.framework || undefined,
             totalAgents: orchestrationResult.totalAgents,
             completedAgents: orchestrationResult.completedAgents,
