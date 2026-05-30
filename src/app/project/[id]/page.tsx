@@ -1048,29 +1048,18 @@ export default function ProjectPage() {
                                     onViewClusters={() => setView("clusters")}
                                 />
                             ) : view === "clusters" ? (
-                                <>
-                                    {/* Left arrow — fixed to left edge of report panel */}
+                                <div className="flex gap-6 items-stretch">
+                                    {/* Left arrow — next to report panel */}
                                     <button
                                         onClick={() => setView("overview")}
-                                        className="fixed left-[420px] top-1/2 -translate-y-1/2 z-40 cursor-pointer hover:scale-110 transition-transform"
+                                        className="sticky top-[50%] -translate-y-1/2 shrink-0 cursor-pointer hover:scale-110 transition-transform h-fit z-40"
                                         title="Back to Overview"
                                     >
                                         <span className="text-3xl font-light text-violet-400 animate-pulse-glow">&lt;</span>
                                     </button>
 
-                                    {/* Right arrow — fixed to right edge of report panel */}
-                                    {revenueRisk && (
-                                        <button
-                                            onClick={() => setView("risks")}
-                                            className="fixed right-10 top-1/2 -translate-y-1/2 z-40 cursor-pointer hover:scale-110 transition-transform"
-                                            title="Revenue Risk Assessment"
-                                        >
-                                            <span className="text-3xl font-light text-violet-400 animate-pulse-glow">&gt;</span>
-                                        </button>
-                                    )}
-
                                     {/* Content */}
-                                    <div className="space-y-6">
+                                    <div className="flex-1 min-w-0 space-y-6">
                                         {/* Header */}
                                         <div>
                                             <h2 className="text-2xl font-bold tracking-tight">Scale Issues</h2>
@@ -1101,27 +1090,43 @@ export default function ProjectPage() {
                                             );
                                         })()}
                                     </div>
-                                </>
+
+                                    {/* Right arrow — next to report panel */}
+                                    {revenueRisk ? (
+                                        <button
+                                            onClick={() => setView("risks")}
+                                            className="sticky top-[50%] -translate-y-1/2 shrink-0 cursor-pointer hover:scale-110 transition-transform h-fit z-40"
+                                            title="Revenue Risk Assessment"
+                                        >
+                                            <span className="text-3xl font-light text-violet-400 animate-pulse-glow">&gt;</span>
+                                        </button>
+                                    ) : (
+                                        <div className="w-8 shrink-0" />
+                                    )}
+                                </div>
                             ) : (
                                 /* Revenue Risk Assessment view */
-                                <>
-                                    {/* Left arrow — fixed, back to Scale Issues */}
+                                <div className="flex gap-6 items-stretch">
+                                    {/* Left arrow — next to report panel, back to Scale Issues */}
                                     <button
                                         onClick={() => setView("clusters")}
-                                        className="fixed left-[420px] top-1/2 -translate-y-1/2 z-40 cursor-pointer hover:scale-110 transition-transform"
+                                        className="sticky top-[50%] -translate-y-1/2 shrink-0 cursor-pointer hover:scale-110 transition-transform h-fit z-40"
                                         title="Back to Scale Issues"
                                     >
                                         <span className="text-3xl font-light text-violet-400 animate-pulse-glow">&lt;</span>
                                     </button>
 
-                                    <div className="space-y-5">
+                                    <div className="flex-1 min-w-0 space-y-5">
                                         <div>
                                             <h2 className="text-2xl font-bold tracking-tight">Revenue Risk Assessment</h2>
                                             <p className="text-sm text-muted-foreground mt-1">How scalability risks translate to business impact.</p>
                                         </div>
                                         {revenueRisk && <RevenueRiskView revenueRisk={revenueRisk} />}
                                     </div>
-                                </>
+
+                                    {/* Spacer to balance left arrow */}
+                                    <div className="w-8 shrink-0" />
+                                </div>
                             )}
                         </div>
                     ) : (
