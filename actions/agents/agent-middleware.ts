@@ -34,25 +34,7 @@ export interface StreamEvent {
     error?: string;
 }
 
-export interface AgentLogStep {
-    stepNumber: number;
-    type: "decision" | "tool_call" | "tool_response" | "agent_thought" | "error";
-    timestamp: string;
-    toolName?: string;
-    toolInput?: unknown;
-    toolOutput?: string;
-    reasoning?: string;
-}
 
-export interface AgentLog {
-    repositoryId: string;
-    startTime: string;
-    endTime?: string;
-    totalSteps: number;
-    steps: AgentLogStep[];
-    finalReport?: unknown;
-    error?: string;
-}
 
 // --- Tool name resolution helpers ---
 
@@ -92,7 +74,6 @@ export interface ToolBudgetMiddlewareOptions {
         cumulativeOutputTokens: number;
         lastToolName: string;
         startTime: number;
-        agentLog: AgentLog;
         emit: (event: StreamEvent) => void;
     };
 }
@@ -157,12 +138,6 @@ export function createToolBudgetMiddleware(opts: ToolBudgetMiddlewareOptions) {
             // --- Log reasoning ---
             if (reasoning) {
                 console.log(`\n💭 [${opts.agentLabel}] Reasoning: ${reasoning.slice(0, 500)}${reasoning.length > 500 ? "..." : ""}`);
-                s.agentLog.steps.push({
-                    stepNumber: s.toolCallCount,
-                    type: "agent_thought",
-                    timestamp: new Date().toISOString(),
-                    reasoning: reasoning.slice(0, 2000),
-                });
                 s.emit({
                     type: "agent_thought",
                     stepNumber: s.toolCallCount,
