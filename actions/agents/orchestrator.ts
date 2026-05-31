@@ -16,7 +16,7 @@ import { runReportCompiler } from "./report-compiler";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface AgentSummary {
+export interface AgentSummary {
     archetype: string;
     status: "completed" | "failed";
     totalToolCalls: number;
@@ -24,7 +24,7 @@ interface AgentSummary {
     error?: string;
 }
 
-interface Archetype {
+export interface Archetype {
     name: string;
     score: number;
 }
@@ -101,16 +101,20 @@ const ARCHETYPE_RUNNERS: Record<string, AgentRunner> = {
         }),
 };
 
-// ─── Orchestrator ─────────────────────────────────────────────────────────────
+// ─── Orchestrator Helper Functions ──────────────────────────────────────────
 
-export async function orchestrateAgents(
+export interface OrchestrationContext {
+    repoDbId: string;
+    repoGithubId: string;
+    userId: string;
+    installationId: string;
+    archetypes: Archetype[];
+}
+
+export async function resolveOrchestrationContext(
     repositoryId: string,
     clerkId: string,
-): Promise<OrchestrationResult> {
-    const orchestrationStart = Date.now();
-
-    // ── Authenticate user ───────────────────────────────────────────────
-
+): Promise<OrchestrationContext> {
     if (!clerkId) {
         throw new Error("Unauthorized. Please sign in.");
     }
@@ -123,8 +127,6 @@ export async function orchestrateAgents(
     if (!user) {
         throw new Error("User not found.");
     }
-
-    // ── Resolve repository + verify ownership ───────────────────────────
 
     const repo = await prisma.repository.findFirst({
         where: {
@@ -149,14 +151,11 @@ export async function orchestrateAgents(
         throw new Error(`Repository "${repositoryId}" not found or you do not have access.`);
     }
 
-    // Resolve installationId
     const installationId = repo.user?.githubInstallationId;
 
     if (!installationId) {
         throw new Error("No GitHub installation ID available for this repository.");
     }
-
-    // ── Parse archetypes ────────────────────────────────────────────────
 
     const archetypes: Archetype[] = Array.isArray(repo.archetypes)
         ? (repo.archetypes as unknown as Archetype[])
@@ -166,18 +165,145 @@ export async function orchestrateAgents(
         throw new Error("No archetypes found. Run business classification first.");
     }
 
+    return {
+        repoDbId: repo.id,
+        repoGithubId: repo.repositoryId,
+        userId: repo.userId,
+        installationId,
+        archetypes,
+    };
+}
+
+export async function runSingleAgent(
+    repoDbId: string,
+    repoUserId: string,
+    installationId: string,
+    archName: string,
+    archScore: number,
+): Promise<AgentSummary> {
+    const runner = ARCHETYPE_RUNNERS[archName];
+    if (!runner) {
+        const errorMsg = `No runner found for archetype "${archName}"`;
+        console.warn(`[orchestrator] ${errorMsg}`);
+        await prisma.agentReport.update({
+            where: {
+                repositoryId_archetype: {
+                    repositoryId: repoDbId,
+                    archetype: archName,
+                },
+            },
+            data: { status: "failed", error: errorMsg },
+        });
+        return {
+            archetype: archName,
+            status: "failed",
+            totalToolCalls: 0,
+            executionTimeMs: 0,
+            error: errorMsg,
+        };
+    }
+
+    // Mark running
+    await prisma.agentReport.update({
+        where: {
+            repositoryId_archetype: {
+                repositoryId: repoDbId,
+                archetype: archName,
+            },
+        },
+        data: { status: "running" },
+    });
+
+    try {
+        const result = await runner({
+            repositoryId: repoDbId,
+            installationId,
+            archetypeScore: archScore,
+            userId: repoUserId,
+        });
+
+        // Update database with result
+        await prisma.agentReport.update({
+            where: {
+                repositoryId_archetype: {
+                    repositoryId: repoDbId,
+                    archetype: archName,
+                },
+            },
+            data: {
+                status: result.error ? "failed" : "completed",
+                rawFindings: result.rawFindings ?? null,
+                totalToolCalls: result.totalToolCalls,
+                executionTimeMs: result.executionTimeMs,
+                error: result.error ?? null,
+            },
+        });
+
+        if (result.error) {
+            return {
+                archetype: archName,
+                status: "failed",
+                totalToolCalls: result.totalToolCalls,
+                executionTimeMs: result.executionTimeMs,
+                error: result.error,
+            };
+        }
+
+        return {
+            archetype: archName,
+            status: "completed",
+            totalToolCalls: result.totalToolCalls,
+            executionTimeMs: result.executionTimeMs,
+        };
+    } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : "Unknown error";
+        console.error(`[orchestrator] Agent "${archName}" threw:`, errorMsg);
+
+        await prisma.agentReport.update({
+            where: {
+                repositoryId_archetype: {
+                    repositoryId: repoDbId,
+                    archetype: archName,
+                },
+            },
+            data: {
+                status: "failed",
+                error: errorMsg,
+            },
+        });
+
+        return {
+            archetype: archName,
+            status: "failed",
+            totalToolCalls: 0,
+            executionTimeMs: 0,
+            error: errorMsg,
+        };
+    }
+}
+
+// ─── Orchestrator ─────────────────────────────────────────────────────────────
+
+export async function orchestrateAgents(
+    repositoryId: string,
+    clerkId: string,
+): Promise<OrchestrationResult> {
+    const orchestrationStart = Date.now();
+
+    const context = await resolveOrchestrationContext(repositoryId, clerkId);
+
     // ── Upsert pending rows ─────────────────────────────────────────────
 
-    for (const arch of archetypes) {
+    for (const arch of context.archetypes) {
         await prisma.agentReport.upsert({
             where: {
                 repositoryId_archetype: {
-                    repositoryId: repo.id,
+                    repositoryId: context.repoDbId,
                     archetype: arch.name,
                 },
             },
             create: {
-                repositoryId: repo.id,
+                repositoryId: context.repoDbId,
                 archetype: arch.name,
                 status: "pending",
             },
@@ -195,108 +321,15 @@ export async function orchestrateAgents(
 
     const summaries: AgentSummary[] = [];
 
-    for (const arch of archetypes) {
-        const runner = ARCHETYPE_RUNNERS[arch.name];
-        if (!runner) {
-            const errorMsg = `No runner found for archetype "${arch.name}"`;
-            console.warn(`[orchestrator] ${errorMsg}`);
-            await prisma.agentReport.update({
-                where: {
-                    repositoryId_archetype: {
-                        repositoryId: repo.id,
-                        archetype: arch.name,
-                    },
-                },
-                data: { status: "failed", error: errorMsg },
-            });
-            summaries.push({
-                archetype: arch.name,
-                status: "failed",
-                totalToolCalls: 0,
-                executionTimeMs: 0,
-                error: errorMsg,
-            });
-            continue;
-        }
-
-        // Mark running
-        await prisma.agentReport.update({
-            where: {
-                repositoryId_archetype: {
-                    repositoryId: repo.id,
-                    archetype: arch.name,
-                },
-            },
-            data: { status: "running" },
-        });
-
-        try {
-            const result = await runner({
-                repositoryId: repo.id,
-                installationId,
-                archetypeScore: arch.score,
-                userId: repo.userId,
-            });
-
-            // Update database with result
-            await prisma.agentReport.update({
-                where: {
-                    repositoryId_archetype: {
-                        repositoryId: repo.id,
-                        archetype: arch.name,
-                    },
-                },
-                data: {
-                    status: result.error ? "failed" : "completed",
-                    rawFindings: result.rawFindings ?? null,
-                    totalToolCalls: result.totalToolCalls,
-                    executionTimeMs: result.executionTimeMs,
-                    error: result.error ?? null,
-                },
-            });
-
-            if (result.error) {
-                summaries.push({
-                    archetype: arch.name,
-                    status: "failed",
-                    totalToolCalls: result.totalToolCalls,
-                    executionTimeMs: result.executionTimeMs,
-                    error: result.error,
-                });
-                continue;
-            }
-
-            summaries.push({
-                archetype: arch.name,
-                status: "completed",
-                totalToolCalls: result.totalToolCalls,
-                executionTimeMs: result.executionTimeMs,
-            });
-        } catch (err) {
-            const errorMsg = err instanceof Error ? err.message : "Unknown error";
-            console.error(`[orchestrator] Agent "${arch.name}" threw:`, errorMsg);
-
-            await prisma.agentReport.update({
-                where: {
-                    repositoryId_archetype: {
-                        repositoryId: repo.id,
-                        archetype: arch.name,
-                    },
-                },
-                data: {
-                    status: "failed",
-                    error: errorMsg,
-                },
-            });
-
-            summaries.push({
-                archetype: arch.name,
-                status: "failed",
-                totalToolCalls: 0,
-                executionTimeMs: 0,
-                error: errorMsg,
-            });
-        }
+    for (const arch of context.archetypes) {
+        const summary = await runSingleAgent(
+            context.repoDbId,
+            context.userId,
+            context.installationId,
+            arch.name,
+            arch.score,
+        );
+        summaries.push(summary);
     }
 
     const completed = summaries.filter((s) => s.status === "completed").length;
@@ -310,8 +343,8 @@ export async function orchestrateAgents(
     if (completed > 0) {
         try {
             const compilerResult = await runReportCompiler({
-                repositoryId: repo.id,
-                userId: repo.userId,
+                repositoryId: context.repoDbId,
+                userId: context.userId,
             });
 
             if (compilerResult.compiledReport) {
@@ -337,7 +370,7 @@ export async function orchestrateAgents(
 
     return {
         summaries,
-        totalAgents: archetypes.length,
+        totalAgents: context.archetypes.length,
         completedAgents: completed,
         failedAgents: failed,
         totalExecutionTimeMs: Date.now() - orchestrationStart,

@@ -1,6 +1,11 @@
 import { inngest } from "./client";
 import { classifyBusinessContext } from "../../actions/analysis/business-classification";
-import { orchestrateAgents } from "../../actions/agents/orchestrator";
+import {
+  resolveOrchestrationContext,
+  runSingleAgent,
+  AgentSummary,
+} from "../../actions/agents/orchestrator";
+import { runReportCompiler } from "../../actions/agents/report-compiler";
 import prisma from "@/lib/prisma";
 
 export const analyzeRepositoryWorkflow = inngest.createFunction(
@@ -54,13 +59,70 @@ export const analyzeRepositoryWorkflow = inngest.createFunction(
       return classificationResult;
     });
 
-    // Step 2: Run agent orchestration + compilation
-    await step.run("orchestrate-agents", async () => {
-      console.log(`[Inngest Background Job] 🤖 Running agent orchestration...`);
-      const orchestrationResult = await orchestrateAgents(repositoryId, clerkId);
-      console.log(`[Inngest Background Job] ✅ Agent orchestration complete`);
-      return orchestrationResult;
+    // Step 2: Resolve context & prep Database pending rows
+    const context = await step.run("resolve-orchestration-context", async () => {
+      console.log(`[Inngest Background Job] 🔍 Resolving orchestration context...`);
+      const ctx = await resolveOrchestrationContext(repositoryId, clerkId);
+
+      // Reset/upsert pending rows so UI updates instantly to show pending status
+      for (const arch of ctx.archetypes) {
+        await prisma.agentReport.upsert({
+          where: {
+            repositoryId_archetype: {
+              repositoryId: ctx.repoDbId,
+              archetype: arch.name,
+            },
+          },
+          create: {
+            repositoryId: ctx.repoDbId,
+            archetype: arch.name,
+            status: "pending",
+          },
+          update: {
+            status: "pending",
+            rawFindings: null,
+            totalToolCalls: 0,
+            executionTimeMs: 0,
+            error: null,
+          },
+        });
+      }
+
+      return ctx;
     });
+
+    const summaries: AgentSummary[] = [];
+
+    // Step 3: Run each specialized agent in its own step
+    for (const arch of context.archetypes) {
+      const summary = await step.run(`agent-${arch.name}`, async () => {
+        console.log(`[Inngest Background Job] 🤖 Running agent for archetype "${arch.name}"...`);
+        return await runSingleAgent(
+          context.repoDbId,
+          context.userId,
+          context.installationId,
+          arch.name,
+          arch.score,
+        );
+      });
+      summaries.push(summary);
+    }
+
+    // Step 4: Compile report if there is at least one completed agent
+    const completed = summaries.filter((s) => s.status === "completed").length;
+    if (completed > 0) {
+      await step.run("compile-report", async () => {
+        console.log(`[Inngest Background Job] 📝 Compiling report...`);
+        const compilerResult = await runReportCompiler({
+          repositoryId: context.repoDbId,
+          userId: context.userId,
+        });
+        if (compilerResult.error) {
+          throw new Error(compilerResult.error);
+        }
+        return compilerResult;
+      });
+    }
 
     console.log(`[Inngest Background Job] 🎉 Background analysis successfully completed for ${repositoryId}`);
   }
