@@ -1,12 +1,7 @@
-import fs from "fs";
-import path from "path";
 import { createAgent } from "langchain";
 import {
     createToolBudgetMiddleware,
-    resolveCallbackToolName as _resolveToolName,
-    type StreamEvent as _StreamEvent,
-    type AgentLog as _AgentLog,
-    type AgentLogStep as _AgentLogStep,
+    resolveCallbackToolName,
 } from "./agent-middleware";
 import { gpt5Mini } from "@/lib/llm";
 import prisma from "@/lib/prisma";
@@ -51,55 +46,7 @@ export interface TransactionAgentOutput {
     error?: string;
 }
 
-// --- Logging Types ------------------------------------------------------------
 
-interface AgentLogStep {
-    stepNumber: number;
-    type: "decision" | "tool_call" | "tool_response" | "agent_thought" | "error";
-    timestamp: string;
-    toolName?: string;
-    toolInput?: unknown;
-    toolOutput?: string;
-    reasoning?: string;
-}
-
-interface AgentLog {
-    repositoryId: string;
-    startTime: string;
-    endTime?: string;
-    totalSteps: number;
-    steps: AgentLogStep[];
-    finalReport?: unknown;
-    error?: string;
-}
-
-function normalizeToolName(name: unknown): string | null {
-    if (typeof name !== "string") return null;
-
-    const trimmed = name.trim();
-    if (!trimmed) return null;
-
-    const lower = trimmed.toLowerCase();
-    if (lower === "dynamicstructuredtool" || lower === "structuredtool") {
-        return null;
-    }
-
-    return trimmed;
-}
-
-function resolveCallbackToolName(tool: any, fallback?: string): string {
-    const idCandidate = Array.isArray(tool?.id)
-        ? tool.id[tool.id.length - 1]
-        : tool?.id;
-
-    return (
-        normalizeToolName(tool?.name) ??
-        normalizeToolName(tool?.lc_kwargs?.name) ??
-        normalizeToolName(idCandidate) ??
-        normalizeToolName(fallback) ??
-        "unknown"
-    );
-}
 
 // ------------------------------------System Prompt -------------------------------------------------------------
 
@@ -346,12 +293,6 @@ export async function runTransactionAgent(
     const { repositoryId, installationId, onEvent } = input;
     const startTime = Date.now();
 
-    const agentLog: AgentLog = {
-        repositoryId,
-        startTime: new Date().toISOString(),
-        totalSteps: 0,
-        steps: [],
-    };
     const emit = (event: StreamEvent) => {
         try { onEvent?.(event); } catch { /* ignore stream errors */ }
     };
@@ -362,7 +303,6 @@ export async function runTransactionAgent(
         cumulativeOutputTokens: 0,
         lastToolName: "unknown",
         startTime,
-        agentLog,
         emit,
     };
 
@@ -495,7 +435,6 @@ Return the compact findings digest required by the system prompt. Do not call an
                                 : String(parsedInput).slice(0, 200);
                             console.log(`\n🔧 [Step ${shared.toolCallCount}/15] TOOL CALL: ${toolName}`);
                             console.log(`   Input: ${inputPreview}`);
-                            agentLog.steps.push({ stepNumber: shared.toolCallCount, type: "tool_call", timestamp: new Date().toISOString(), toolName, toolInput: parsedInput });
                             emit({ type: "tool_start", stepNumber: shared.toolCallCount, timestamp: new Date().toISOString(), elapsedMs: Date.now() - startTime, toolName, toolInput: parsedInput, cumulativeTokens: { inputTokens: shared.cumulativeInputTokens, outputTokens: shared.cumulativeOutputTokens, totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens } });
                         },
                         handleToolEnd(output: any) {
@@ -506,8 +445,6 @@ Return the compact findings digest required by the system prompt. Do not call an
                             emit({ type: "tool_end", stepNumber: shared.toolCallCount, timestamp: new Date().toISOString(), elapsedMs: Date.now() - startTime, toolName: shared.lastToolName, toolOutput: outputStr.slice(0, 5000), toolOutputLength: outputStr.length, cumulativeTokens: { inputTokens: shared.cumulativeInputTokens, outputTokens: shared.cumulativeOutputTokens, totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens } });
                         },
                         handleChainError(error: Error) {
-                            agentLog.steps.push({ stepNumber: shared.toolCallCount, type: "error", timestamp: new Date().toISOString(), reasoning: error.message });
-                            agentLog.error = error.message;
                             console.log(`\n[payAgent] CHAIN ERROR: ${error.message}`);
                             emit({ type: "error", stepNumber: shared.toolCallCount, timestamp: new Date().toISOString(), elapsedMs: Date.now() - startTime, error: error.message, cumulativeTokens: { inputTokens: shared.cumulativeInputTokens, outputTokens: shared.cumulativeOutputTokens, totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens } });
                         },
@@ -555,27 +492,6 @@ Return the compact findings digest required by the system prompt. Do not call an
         );
         console.log(`[payAgent] Execution time: ${executionTimeMs}ms`);
 
-        // Finalize log
-        agentLog.endTime = new Date().toISOString();
-        agentLog.totalSteps = shared.toolCallCount;
-        agentLog.finalReport = { rawFindings };
-
-        // Write to JSON file
-        const logDir = path.join(process.cwd(), "agent-logs");
-        if (!fs.existsSync(logDir)) {
-            fs.mkdirSync(logDir, { recursive: true });
-        }
-
-        const logFileName = `pay-agent-${repositoryId}-${Date.now()}.json`;
-        const logPath = path.join(logDir, logFileName);
-        fs.writeFileSync(logPath, JSON.stringify(agentLog, null, 2));
-
-        console.log(`\n[payAgent] ──────────────────────────────────`);
-        console.log(`[payAgent] Full log written to:`);
-        console.log(`[payAgent] ${logPath}`);
-        console.log(`[payAgent] Total steps: ${shared.toolCallCount}`);
-        console.log(`[payAgent] ──────────────────────────────────`);
-
         // Emit done event with final totals
         emit({
             type: "done",
@@ -604,21 +520,6 @@ Return the compact findings digest required by the system prompt. Do not call an
             error instanceof Error ? error.message : "Unknown error occurred";
 
         console.error(`[payAgent] Error: ${message}`);
-
-        // Write partial error log so you can see what happened before the crash
-        agentLog.endTime = new Date().toISOString();
-        agentLog.totalSteps = shared.toolCallCount;
-        agentLog.error = message;
-
-        const logDir = path.join(process.cwd(), "agent-logs");
-        if (!fs.existsSync(logDir)) {
-            fs.mkdirSync(logDir, { recursive: true });
-        }
-
-        const logFileName = `pay-agent-ERROR-${repositoryId}-${Date.now()}.json`;
-        const logPath = path.join(logDir, logFileName);
-        fs.writeFileSync(logPath, JSON.stringify(agentLog, null, 2));
-        console.error(`[payAgent] Error log written to: ${logPath}`);
 
         emit({
             type: "done",

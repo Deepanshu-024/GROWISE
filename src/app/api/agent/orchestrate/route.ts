@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
         }
 
         // ── Run orchestration ───────────────────────────────────────────
-        const result = await orchestrateAgents(String(repositoryId));
+        const result = await orchestrateAgents(String(repositoryId), clerkId);
 
         return Response.json({
             success: true,

@@ -1,7 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import prisma from "@/lib/prisma";
-import { auth } from "@clerk/nextjs/server";
 
 // ─── Agent Runners ────────────────────────────────────────────────────────────
 
@@ -98,12 +97,11 @@ const ARCHETYPE_RUNNERS: Record<string, AgentRunner> = {
 
 export async function orchestrateAgents(
     repositoryId: string,
+    clerkId: string,
 ): Promise<OrchestrationResult> {
     const orchestrationStart = Date.now();
 
     // ── Authenticate user ───────────────────────────────────────────────
-
-    const { userId: clerkId } = await auth();
 
     if (!clerkId) {
         throw new Error("Unauthorized. Please sign in.");

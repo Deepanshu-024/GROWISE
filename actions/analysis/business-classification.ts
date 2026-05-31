@@ -1,6 +1,5 @@
 "use server";
 
-import { auth } from "@clerk/nextjs/server";
 import prisma from "@/lib/prisma";
 import { getInstallationToken } from "@/lib/github";
 import { gpt5Mini } from "@/lib/llm";
@@ -43,19 +42,19 @@ interface ClassificationResponse {
  */
 export async function classifyBusinessContext(
     repositoryId: string,
-    installationId?: string
+    installationId: string | undefined,
+    clerkId: string
 ): Promise<ClassificationResponse> {
     console.log("\n[SERVER] 🏢 Starting business classification analysis...");
     console.log(`[SERVER] Repository ID: ${repositoryId}`);
     console.log(`[SERVER] Installation ID provided: ${installationId || "No"}`);
+    console.log(`[SERVER] Clerk ID provided: ${clerkId}`);
 
     try {
-        const { userId: clerkId } = await auth();
-        console.log(`[SERVER] ✅ User authenticated: ${clerkId}`);
-
         if (!clerkId) {
             return { error: "Unauthorized" };
         }
+        console.log(`[SERVER] ✅ User authenticated: ${clerkId}`);
 
         // Fetch repository data from database
         console.log("[SERVER] 📊 Fetching repository data from database...");

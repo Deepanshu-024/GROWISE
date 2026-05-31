@@ -1,13 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import fs from "fs";
-import path from "path";
 import { createAgent } from "langchain";
 import {
     createToolBudgetMiddleware,
-    resolveCallbackToolName as _resolveToolName,
-    type StreamEvent as _StreamEvent,
-    type AgentLog as _AgentLog,
-    type AgentLogStep as _AgentLogStep,
+    resolveCallbackToolName,
 } from "./agent-middleware";
 import { gpt5Mini } from "@/lib/llm";
 import prisma from "@/lib/prisma";
@@ -51,45 +46,7 @@ export interface AiPoweredAgentOutput {
     error?: string;
 }
 
-interface AgentLogStep {
-    stepNumber: number;
-    type: "decision" | "tool_call" | "tool_response" | "agent_thought" | "error";
-    timestamp: string;
-    toolName?: string;
-    toolInput?: unknown;
-    toolOutput?: string;
-    reasoning?: string;
-}
 
-interface AgentLog {
-    repositoryId: string;
-    startTime: string;
-    endTime?: string;
-    totalSteps: number;
-    steps: AgentLogStep[];
-    finalReport?: unknown;
-    error?: string;
-}
-
-function normalizeToolName(name: unknown): string | null {
-    if (typeof name !== "string") return null;
-    const trimmed = name.trim();
-    if (!trimmed) return null;
-    const lower = trimmed.toLowerCase();
-    if (lower === "dynamicstructuredtool" || lower === "structuredtool") return null;
-    return trimmed;
-}
-
-function resolveCallbackToolName(tool: any, fallback?: string): string {
-    const idCandidate = Array.isArray(tool?.id) ? tool.id[tool.id.length - 1] : tool?.id;
-    return (
-        normalizeToolName(tool?.name) ??
-        normalizeToolName(tool?.lc_kwargs?.name) ??
-        normalizeToolName(idCandidate) ??
-        normalizeToolName(fallback) ??
-        "unknown"
-    );
-}
 
 // ------------------------------------System Prompt -------------------------------------------------------------
 
@@ -294,12 +251,6 @@ export async function runAiPoweredAgent(
     const { repositoryId, installationId, onEvent } = input;
     const startTime = Date.now();
 
-    const agentLog: AgentLog = {
-        repositoryId,
-        startTime: new Date().toISOString(),
-        totalSteps: 0,
-        steps: [],
-    };
     const emit = (event: StreamEvent) => {
         try { onEvent?.(event); } catch { /* ignore stream errors */ }
     };
@@ -310,7 +261,6 @@ export async function runAiPoweredAgent(
         cumulativeOutputTokens: 0,
         lastToolName: "unknown",
         startTime,
-        agentLog,
         emit,
     };
 
@@ -420,7 +370,6 @@ Return the compact findings digest required by the system prompt. Do not call an
                                 : String(parsedInput).slice(0, 200);
                             console.log(`\n🔧 [Step ${shared.toolCallCount}/15] TOOL CALL: ${toolName}`);
                             console.log(`   Input: ${inputPreview}`);
-                            agentLog.steps.push({ stepNumber: shared.toolCallCount, type: "tool_call", timestamp: new Date().toISOString(), toolName, toolInput: parsedInput });
                             emit({ type: "tool_start", stepNumber: shared.toolCallCount, timestamp: new Date().toISOString(), elapsedMs: Date.now() - startTime, toolName, toolInput: parsedInput, cumulativeTokens: { inputTokens: shared.cumulativeInputTokens, outputTokens: shared.cumulativeOutputTokens, totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens } });
                         },
                         handleToolEnd(output: any) {
@@ -431,8 +380,6 @@ Return the compact findings digest required by the system prompt. Do not call an
                             emit({ type: "tool_end", stepNumber: shared.toolCallCount, timestamp: new Date().toISOString(), elapsedMs: Date.now() - startTime, toolName: shared.lastToolName, toolOutput: outputStr.slice(0, 5000), toolOutputLength: outputStr.length, cumulativeTokens: { inputTokens: shared.cumulativeInputTokens, outputTokens: shared.cumulativeOutputTokens, totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens } });
                         },
                         handleChainError(error: Error) {
-                            agentLog.steps.push({ stepNumber: shared.toolCallCount, type: "error", timestamp: new Date().toISOString(), reasoning: error.message });
-                            agentLog.error = error.message;
                             console.log(`\n[aiAgent] CHAIN ERROR: ${error.message}`);
                             emit({ type: "error", stepNumber: shared.toolCallCount, timestamp: new Date().toISOString(), elapsedMs: Date.now() - startTime, error: error.message, cumulativeTokens: { inputTokens: shared.cumulativeInputTokens, outputTokens: shared.cumulativeOutputTokens, totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens } });
                         },
@@ -453,31 +400,15 @@ Return the compact findings digest required by the system prompt. Do not call an
             return { rawFindings: null, intermediateSteps: messages, totalToolCalls, executionTimeMs, error: "Agent completed without returning findings. Check intermediate steps for partial investigation." };
         }
 
-        agentLog.endTime = new Date().toISOString(); agentLog.totalSteps = shared.toolCallCount; agentLog.finalReport = { rawFindings };
         console.log(`[aiAgent] Complete. Findings length: ${rawFindings.length} chars, ${totalToolCalls} tool calls`);
         console.log(`[aiAgent] Execution time: ${executionTimeMs}ms`);
-
-        const logDir = path.join(process.cwd(), "agent-logs");
-        if (!fs.existsSync(logDir)) { fs.mkdirSync(logDir, { recursive: true }); }
-        const logFileName = `ai-agent-${repositoryId}-${Date.now()}.json`;
-        const logPath = path.join(logDir, logFileName);
-        fs.writeFileSync(logPath, JSON.stringify(agentLog, null, 2));
-        console.log("\n[aiAgent] ----------------------------------");
-        console.log("[aiAgent] Full log written to:"); console.log(`[aiAgent] ${logPath}`);
-        console.log(`[aiAgent] Total steps: ${shared.toolCallCount}`); console.log("[aiAgent] ----------------------------------");
 
         emit({ type: "done", stepNumber: shared.toolCallCount, timestamp: new Date().toISOString(), elapsedMs: executionTimeMs, rawFindings, totalToolCalls, executionTimeMs, cumulativeTokens: { inputTokens: shared.cumulativeInputTokens, outputTokens: shared.cumulativeOutputTokens, totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens } });
         return { rawFindings, intermediateSteps: messages, totalToolCalls, executionTimeMs };
     } catch (error) {
         const executionTimeMs = Date.now() - startTime;
         const message = error instanceof Error ? error.message : "Unknown error occurred";
-        agentLog.endTime = new Date().toISOString(); agentLog.totalSteps = shared.toolCallCount; agentLog.error = message;
-        const logDir = path.join(process.cwd(), "agent-logs");
-        if (!fs.existsSync(logDir)) { fs.mkdirSync(logDir, { recursive: true }); }
-        const logFileName = `ai-agent-ERROR-${repositoryId}-${Date.now()}.json`;
-        const logPath = path.join(logDir, logFileName);
-        fs.writeFileSync(logPath, JSON.stringify(agentLog, null, 2));
-        console.error(`[aiAgent] Error log written to: ${logPath}`);
+        console.error(`[aiAgent] Chain Error: ${message}`);
         emit({ type: "done", stepNumber: shared.toolCallCount, timestamp: new Date().toISOString(), elapsedMs: executionTimeMs, rawFindings: null, totalToolCalls: 0, executionTimeMs, error: message, cumulativeTokens: { inputTokens: shared.cumulativeInputTokens, outputTokens: shared.cumulativeOutputTokens, totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens } });
         return { rawFindings: null, intermediateSteps: [], totalToolCalls: 0, executionTimeMs, error: message };
     }

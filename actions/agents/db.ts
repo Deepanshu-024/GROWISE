@@ -1,5 +1,3 @@
-import fs from "fs";
-import path from "path";
 import { createAgent, createMiddleware } from "langchain";
 import { ToolMessage } from "@langchain/core/messages";
 import { gpt5Mini } from "@/lib/llm";
@@ -42,56 +40,7 @@ export interface DbAgentOutput {
     error?: string;
 }
 
-// --- Logging Types ------------------------------------------------------------
 
-interface AgentLogStep {
-    stepNumber: number;
-    type: "decision" | "tool_call" | "tool_response" | "agent_thought" | "error";
-    timestamp: string;
-    toolName?: string;
-    toolInput?: unknown;
-    toolOutput?: string;
-    reasoning?: string;
-}
-
-interface AgentLog {
-    repositoryId: string;
-    archetypeScore: number;
-    startTime: string;
-    endTime?: string;
-    totalSteps: number;
-    steps: AgentLogStep[];
-    finalReport?: unknown;
-    error?: string;
-}
-
-function normalizeToolName(name: unknown): string | null {
-    if (typeof name !== "string") return null;
-
-    const trimmed = name.trim();
-    if (!trimmed) return null;
-
-    const lower = trimmed.toLowerCase();
-    if (lower === "dynamicstructuredtool" || lower === "structuredtool") {
-        return null;
-    }
-
-    return trimmed;
-}
-
-function resolveCallbackToolName(tool: any, fallback?: string): string {
-    const idCandidate = Array.isArray(tool?.id)
-        ? tool.id[tool.id.length - 1]
-        : tool?.id;
-
-    return (
-        normalizeToolName(tool?.name) ??
-        normalizeToolName(tool?.lc_kwargs?.name) ??
-        normalizeToolName(idCandidate) ??
-        normalizeToolName(fallback) ??
-        "unknown"
-    );
-}
 
 // --- System Prompt -------------------------------------------------------------
 
@@ -383,13 +332,7 @@ export async function runDatabaseAgent(
     const { repositoryId, installationId, archetypeScore, onEvent } = input;
     const startTime = Date.now();
 
-    const agentLog: AgentLog = {
-        repositoryId,
-        archetypeScore,
-        startTime: new Date().toISOString(),
-        totalSteps: 0,
-        steps: [],
-    };
+
     let toolCallCount = 0;
     let cumulativeInputTokens = 0;
     let cumulativeOutputTokens = 0;
@@ -517,12 +460,6 @@ export async function runDatabaseAgent(
                 // --- Log reasoning ---
                 if (reasoning) {
                     console.log(`\n💭 [Agent] Reasoning: ${reasoning.slice(0, 500)}${reasoning.length > 500 ? "..." : ""}`);
-                    agentLog.steps.push({
-                        stepNumber: toolCallCount,
-                        type: "agent_thought",
-                        timestamp: new Date().toISOString(),
-                        reasoning: reasoning.slice(0, 2000),
-                    });
                     emit({
                         type: "agent_thought",
                         stepNumber: toolCallCount,
@@ -671,26 +608,10 @@ Return the compact findings digest required by the system prompt. Do not call an
                             toolCallCount++;
 
                             // Resolve tool name — try multiple paths since LangChain serializes differently
-                            const toolName = resolveCallbackToolName(tool, lastToolName);
+                            const toolName = tool.name ?? tool.constructor.name;
                             lastToolName = toolName;
 
-                            let parsedInput: unknown = input;
-                            try { parsedInput = JSON.parse(input); } catch { /* keep raw */ }
-
-                            const inputPreview = typeof parsedInput === "object"
-                                ? JSON.stringify(parsedInput).slice(0, 200)
-                                : String(parsedInput).slice(0, 200);
-
                             console.log(`\n🔧 [Step ${toolCallCount}/15] TOOL CALL: ${toolName}`);
-                            console.log(`   Input: ${inputPreview}`);
-
-                            agentLog.steps.push({
-                                stepNumber: toolCallCount,
-                                type: "tool_call",
-                                timestamp: new Date().toISOString(),
-                                toolName,
-                                toolInput: parsedInput,
-                            });
 
                             emit({
                                 type: "tool_start",
@@ -698,7 +619,7 @@ Return the compact findings digest required by the system prompt. Do not call an
                                 timestamp: new Date().toISOString(),
                                 elapsedMs: Date.now() - startTime,
                                 toolName,
-                                toolInput: parsedInput,
+                                toolInput: input,
                                 cumulativeTokens: {
                                     inputTokens: cumulativeInputTokens,
                                     outputTokens: cumulativeOutputTokens,
@@ -731,20 +652,8 @@ Return the compact findings digest required by the system prompt. Do not call an
                                 || cleanOutput.includes("ToolCallLimitExceeded")
                                 || cleanOutput.includes("tool call limit reached");
 
-                            // Log to agent step history
-                            const lastDecisionStep = [...agentLog.steps]
-                                .reverse()
-                                .find((s) => s.type === "decision");
-                            if (lastDecisionStep) {
-                                lastDecisionStep.toolOutput =
-                                    cleanOutput.length > 3000
-                                        ? cleanOutput.slice(0, 3000) + "\n... [truncated]"
-                                        : cleanOutput;
-                            }
-
                             if (isMiddlewareBlock) {
                                 console.log(`🚫 [Step ${toolCallCount}/15] MIDDLEWARE BLOCKED: ${lastToolName}`);
-                                console.log(`   Reason: ${cleanOutput.slice(0, 300)}`);
                             } else {
                                 console.log(`📄 [Step ${toolCallCount}/15] TOOL RESPONSE: ${lastToolName} (${cleanOutput.length} chars)`);
                                 console.log(`   Preview: ${cleanOutput.slice(0, 200)}${cleanOutput.length > 200 ? "..." : ""}`);
@@ -784,14 +693,6 @@ Return the compact findings digest required by the system prompt. Do not call an
                         },
 
                         handleChainError(error: Error) {
-                            agentLog.steps.push({
-                                stepNumber: toolCallCount,
-                                type: "error",
-                                timestamp: new Date().toISOString(),
-                                reasoning: error.message,
-                            });
-                            agentLog.error = error.message;
-
                             console.log(`\n❌ [dbAgent] CHAIN ERROR: ${error.message}`);
 
                             emit({
@@ -848,22 +749,7 @@ Return the compact findings digest required by the system prompt. Do not call an
         console.log(`\n✅ [dbAgent] Complete. ${totalToolCalls} tool calls, ${rawFindings.length} chars findings, ${executionTimeMs}ms`);
         console.log(`📊 [dbAgent] Final tokens: ${cumulativeInputTokens}in / ${cumulativeOutputTokens}out`);
 
-        // Finalize log
-        agentLog.endTime = new Date().toISOString();
-        agentLog.totalSteps = toolCallCount;
-        agentLog.finalReport = { rawFindings };
 
-        // Write to JSON file
-        const logDir = path.join(process.cwd(), "agent-logs");
-        if (!fs.existsSync(logDir)) {
-            fs.mkdirSync(logDir, { recursive: true });
-        }
-
-        const logFileName = `db-agent-${repositoryId}-${Date.now()}.json`;
-        const logPath = path.join(logDir, logFileName);
-        fs.writeFileSync(logPath, JSON.stringify(agentLog, null, 2));
-
-        console.log(`📁 [dbAgent] Log: ${logPath}`);
 
         // Emit done event with final totals
         emit({
@@ -894,20 +780,7 @@ Return the compact findings digest required by the system prompt. Do not call an
 
         console.error(`[dbAgent] Error: ${message}`);
 
-        // Write partial error log so you can see what happened before the crash
-        agentLog.endTime = new Date().toISOString();
-        agentLog.totalSteps = toolCallCount;
-        agentLog.error = message;
 
-        const logDir = path.join(process.cwd(), "agent-logs");
-        if (!fs.existsSync(logDir)) {
-            fs.mkdirSync(logDir, { recursive: true });
-        }
-
-        const logFileName = `db-agent-ERROR-${repositoryId}-${Date.now()}.json`;
-        const logPath = path.join(logDir, logFileName);
-        fs.writeFileSync(logPath, JSON.stringify(agentLog, null, 2));
-        console.error(`[dbAgent] Error log written to: ${logPath}`);
 
         emit({
             type: "done",

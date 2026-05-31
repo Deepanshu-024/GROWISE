@@ -73,7 +73,12 @@ export async function GET(req: NextRequest) {
             // Clear old owner of this installation (if any)
             await tx.user.updateMany({
                 where: { githubInstallationId: installationId },
-                data: { githubInstallationId: null, githubUsername: null },
+                data: {
+                    githubInstallationId: null,
+                    githubUsername: null,
+                    githubAccessToken: null,
+                    githubAccessTokenExpiry: null,
+                },
             });
             // Assign to current user
             await tx.user.update({
@@ -81,6 +86,8 @@ export async function GET(req: NextRequest) {
                 data: {
                     githubInstallationId: installationId,
                     githubUsername: installationDetails.account.login || null,
+                    githubAccessToken: null,
+                    githubAccessTokenExpiry: null,
                 },
             });
         });

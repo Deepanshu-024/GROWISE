@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Github, Loader2, HardDrive, CheckCircle2, XCircle, Clock, Zap, FileText } from "lucide-react";
 import { toast } from "sonner";
+import { useUser } from "@clerk/nextjs";
 import { checkPackageAndFramework } from "../../actions/analysis/repository-analysis";
 import { classifyBusinessContext } from "../../actions/analysis/business-classification";
 import { checkRepositoryReportStatus, getRepositoryById } from "../../actions/github/repository-queries";
@@ -82,6 +83,7 @@ function AgentChip({ agent }: { agent: AgentState }) {
 
 export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepository }: GitHubRepositorySelectorProps) {
     const router = useRouter();
+    const { user } = useUser();
     const [repositories, setRepositories] = useState<Repository[]>([]);
     const [loading, setLoading] = useState(false);
     const [selectedRepo, setSelectedRepo] = useState<string>("");
@@ -219,12 +221,12 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
 
     // ─── Stage 3: Business Classification ─────────────────────────────
 
-    const runClassification = useCallback(async (repoId: string) => {
+    const runClassification = useCallback(async (repoId: string, clerkId: string) => {
         setStage("classification");
         toast.info("Classifying business context...");
 
         try {
-            const result = await classifyBusinessContext(repoId);
+            const result = await classifyBusinessContext(repoId, undefined, clerkId);
 
             if (result.classification) {
                 const top = result.classification.archetypes[0];
@@ -399,6 +401,13 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
         const repository = repositories.find((repo) => repo.fullName === selectedRepo);
         if (!repository) return;
 
+        if (!user?.id) {
+            toast.error("Authentication required", {
+                description: "Please sign in to analyze repositories.",
+            });
+            return;
+        }
+
         onSelectRepository(repository);
 
         // Step 1: Framework analysis (skip if already analyzed)
@@ -411,7 +420,7 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
         }
 
         // Step 2: Business classification
-        const classified = await runClassification(repoId);
+        const classified = await runClassification(repoId, user.id);
         if (!classified) return;
 
         // Step 3: Agent orchestration (includes report compilation)

@@ -2,16 +2,11 @@
 
 import { createAgent } from "langchain";
 import {
-    createToolBudgetMiddleware,
-    resolveCallbackToolName as _resolveToolName,
-    type StreamEvent as _StreamEvent,
-    type AgentLog as _AgentLog,
-    type AgentLogStep as _AgentLogStep,
+  createToolBudgetMiddleware,
+  resolveCallbackToolName,
 } from "./agent-middleware";
 import { gpt5Mini } from "@/lib/llm";
 import prisma from "@/lib/prisma";
-import * as fs from "fs";
-import * as path from "path";
 
 import {
   getFileContentTool,
@@ -86,49 +81,7 @@ interface AgentMessageLike {
   _getType?: () => string;
 }
 
-// --- Logging Types ------------------------------------------------------------
 
-interface AgentLogStep {
-  stepNumber: number;
-  type: "decision" | "tool_call" | "tool_response" | "agent_thought" | "error";
-  timestamp: string;
-  toolName?: string;
-  toolInput?: unknown;
-  toolOutput?: string;
-  reasoning?: string;
-}
-
-interface AgentLog {
-  repositoryId: string;
-  startTime: string;
-  endTime?: string;
-  totalSteps: number;
-  steps: AgentLogStep[];
-  finalReport?: unknown;
-  error?: string;
-}
-
-function normalizeToolName(name: unknown): string | null {
-  if (typeof name !== "string") return null;
-  const trimmed = name.trim();
-  if (!trimmed) return null;
-  const lower = trimmed.toLowerCase();
-  if (lower === "dynamicstructuredtool" || lower === "structuredtool") return null;
-  return trimmed;
-}
-
-function resolveCallbackToolName(tool: any, fallback?: string): string {
-  const idCandidate = Array.isArray(tool?.id)
-    ? tool.id[tool.id.length - 1]
-    : tool?.id;
-  return (
-    normalizeToolName(tool?.name) ??
-    normalizeToolName(tool?.lc_kwargs?.name) ??
-    normalizeToolName(idCandidate) ??
-    normalizeToolName(fallback) ??
-    "unknown"
-  );
-}
 
 // --- System Prompt ------------------------------------------------------------
 
@@ -324,23 +277,16 @@ export async function runAuthAgent(
 ): Promise<AuthAgentOutput> {
   const startTime = Date.now();
 
-  const agentLog: AgentLog = {
-    repositoryId,
-    startTime: new Date().toISOString(),
-    totalSteps: 0,
-    steps: [],
-  };
   // Auth agent doesn't stream — emit is a no-op
-  const emit = (_event: _StreamEvent) => { /* no streaming for auth agent */ };
+  const emit = (_event: any) => { /* no streaming for auth agent */ };
 
   const shared = {
-      toolCallCount: 0,
-      cumulativeInputTokens: 0,
-      cumulativeOutputTokens: 0,
-      lastToolName: "unknown",
-      startTime,
-      agentLog,
-      emit,
+    toolCallCount: 0,
+    cumulativeInputTokens: 0,
+    cumulativeOutputTokens: 0,
+    lastToolName: "unknown",
+    startTime,
+    emit,
   };
   console.log(`[authAgent] Starting investigation for: ${repositoryId}`);
 
@@ -369,18 +315,18 @@ export async function runAuthAgent(
     console.log(`[authAgent] Repo: ${repo.fullName} (${branch})`);
 
     const { middleware: toolBudgetMiddleware } = createToolBudgetMiddleware({
-        agentLabel: "authAgent",
-        toolBudget: 15,
-        searchBudget: 3,
-        shared,
+      agentLabel: "authAgent",
+      toolBudget: 15,
+      searchBudget: 3,
+      shared,
     });
 
     const agent = createAgent({
-        model: gpt5Mini,
-        tools: authAgentTools,
-        systemPrompt: SYSTEM_PROMPT,
-        contextSchema: githubContextSchema,
-        middleware: [toolBudgetMiddleware],
+      model: gpt5Mini,
+      tools: authAgentTools,
+      systemPrompt: SYSTEM_PROMPT,
+      contextSchema: githubContextSchema,
+      middleware: [toolBudgetMiddleware],
     });
 
     const userMessage = `Analyze the repository ${repo.fullName} for authentication scalability risks.
@@ -428,36 +374,33 @@ Return the compact findings digest required by the system prompt. Do not call an
         context: { owner, repo: repoName, branch, installationId },
         recursionLimit: 50,
         callbacks: [
-                    {
-                        handleToolStart(tool: any, input: string) {
-                            shared.toolCallCount++;
-                            const toolName = resolveCallbackToolName(tool, shared.lastToolName);
-                            shared.lastToolName = toolName;
-                            let parsedInput: unknown = input;
-                            try { parsedInput = JSON.parse(input); } catch { /* keep raw */ }
-                            const inputPreview = typeof parsedInput === "object"
-                                ? JSON.stringify(parsedInput).slice(0, 200)
-                                : String(parsedInput).slice(0, 200);
-                            console.log(`\n🔧 [Step ${shared.toolCallCount}/15] TOOL CALL: ${toolName}`);
-                            console.log(`   Input: ${inputPreview}`);
-                            agentLog.steps.push({ stepNumber: shared.toolCallCount, type: "tool_call", timestamp: new Date().toISOString(), toolName, toolInput: parsedInput });
-                            emit({ type: "tool_start", stepNumber: shared.toolCallCount, timestamp: new Date().toISOString(), elapsedMs: Date.now() - startTime, toolName, toolInput: parsedInput, cumulativeTokens: { inputTokens: shared.cumulativeInputTokens, outputTokens: shared.cumulativeOutputTokens, totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens } });
-                        },
-                        handleToolEnd(output: any) {
-                            const outputStr = typeof output?.content === "string" ? output.content : typeof output === "string" ? output : JSON.stringify(output) ?? "";
-                            const preview = outputStr.slice(0, 300);
-                            console.log(`📄 [Step ${shared.toolCallCount}/15] TOOL RESPONSE: ${shared.lastToolName} (${outputStr.length} chars)`);
-                            console.log(`   Preview: ${preview}${outputStr.length > 300 ? "..." : ""}`);
-                            emit({ type: "tool_end", stepNumber: shared.toolCallCount, timestamp: new Date().toISOString(), elapsedMs: Date.now() - startTime, toolName: shared.lastToolName, toolOutput: outputStr.slice(0, 5000), toolOutputLength: outputStr.length, cumulativeTokens: { inputTokens: shared.cumulativeInputTokens, outputTokens: shared.cumulativeOutputTokens, totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens } });
-                        },
-                        handleChainError(error: Error) {
-                            agentLog.steps.push({ stepNumber: shared.toolCallCount, type: "error", timestamp: new Date().toISOString(), reasoning: error.message });
-                            agentLog.error = error.message;
-                            console.log(`\n[authAgent] CHAIN ERROR: ${error.message}`);
-                            emit({ type: "error", stepNumber: shared.toolCallCount, timestamp: new Date().toISOString(), elapsedMs: Date.now() - startTime, error: error.message, cumulativeTokens: { inputTokens: shared.cumulativeInputTokens, outputTokens: shared.cumulativeOutputTokens, totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens } });
-                        },
-                    },
-                ],
+          {
+            handleToolStart(tool: any, input: string) {
+              shared.toolCallCount++;
+              const toolName = resolveCallbackToolName(tool, shared.lastToolName);
+              shared.lastToolName = toolName;
+              let parsedInput: unknown = input;
+              try { parsedInput = JSON.parse(input); } catch { /* keep raw */ }
+              const inputPreview = typeof parsedInput === "object"
+                ? JSON.stringify(parsedInput).slice(0, 200)
+                : String(parsedInput).slice(0, 200);
+              console.log(`\n🔧 [Step ${shared.toolCallCount}/15] TOOL CALL: ${toolName}`);
+              console.log(`   Input: ${inputPreview}`);
+              emit({ type: "tool_start", stepNumber: shared.toolCallCount, timestamp: new Date().toISOString(), elapsedMs: Date.now() - startTime, toolName, toolInput: parsedInput, cumulativeTokens: { inputTokens: shared.cumulativeInputTokens, outputTokens: shared.cumulativeOutputTokens, totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens } });
+            },
+            handleToolEnd(output: any) {
+              const outputStr = typeof output?.content === "string" ? output.content : typeof output === "string" ? output : JSON.stringify(output) ?? "";
+              const preview = outputStr.slice(0, 300);
+              console.log(`📄 [Step ${shared.toolCallCount}/15] TOOL RESPONSE: ${shared.lastToolName} (${outputStr.length} chars)`);
+              console.log(`   Preview: ${preview}${outputStr.length > 300 ? "..." : ""}`);
+              emit({ type: "tool_end", stepNumber: shared.toolCallCount, timestamp: new Date().toISOString(), elapsedMs: Date.now() - startTime, toolName: shared.lastToolName, toolOutput: outputStr.slice(0, 5000), toolOutputLength: outputStr.length, cumulativeTokens: { inputTokens: shared.cumulativeInputTokens, outputTokens: shared.cumulativeOutputTokens, totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens } });
+            },
+            handleChainError(error: Error) {
+              console.log(`\n[authAgent] CHAIN ERROR: ${error.message}`);
+              emit({ type: "error", stepNumber: shared.toolCallCount, timestamp: new Date().toISOString(), elapsedMs: Date.now() - startTime, error: error.message, cumulativeTokens: { inputTokens: shared.cumulativeInputTokens, outputTokens: shared.cumulativeOutputTokens, totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens } });
+            },
+          },
+        ],
       }
     );
 
@@ -493,27 +436,6 @@ Return the compact findings digest required by the system prompt. Do not call an
     console.log(`[authAgent] Complete. Findings length: ${rawFindings.length} chars, ${totalToolCalls} tool calls`);
     console.log(`[authAgent] Execution time: ${executionTimeMs}ms`);
 
-    // Finalize log
-    agentLog.endTime = new Date().toISOString();
-    agentLog.totalSteps = shared.toolCallCount;
-    agentLog.finalReport = { rawFindings };
-
-    // Write to JSON file
-    const logDir = path.join(process.cwd(), "agent-logs");
-    if (!fs.existsSync(logDir)) {
-      fs.mkdirSync(logDir, { recursive: true });
-    }
-
-    const logFileName = `auth-agent-${repositoryId}-${Date.now()}.json`;
-    const logPath = path.join(logDir, logFileName);
-    fs.writeFileSync(logPath, JSON.stringify(agentLog, null, 2));
-
-    console.log(`\n[authAgent] ──────────────────────────────────`);
-    console.log(`[authAgent] Full log written to:`);
-    console.log(`[authAgent] ${logPath}`);
-    console.log(`[authAgent] Total steps: ${shared.toolCallCount}`);
-    console.log(`[authAgent] ──────────────────────────────────`);
-
     return {
       rawFindings,
       intermediateSteps: messages,
@@ -526,21 +448,6 @@ Return the compact findings digest required by the system prompt. Do not call an
       error instanceof Error ? error.message : "Unknown error occurred";
 
     console.error(`[authAgent] Error: ${message}`);
-
-    // Write partial error log so you can see what happened before the crash
-    agentLog.endTime = new Date().toISOString();
-    agentLog.totalSteps = shared.toolCallCount;
-    agentLog.error = message;
-
-    const logDir = path.join(process.cwd(), "agent-logs");
-    if (!fs.existsSync(logDir)) {
-      fs.mkdirSync(logDir, { recursive: true });
-    }
-
-    const logFileName = `auth-agent-ERROR-${repositoryId}-${Date.now()}.json`;
-    const logPath = path.join(logDir, logFileName);
-    fs.writeFileSync(logPath, JSON.stringify(agentLog, null, 2));
-    console.error(`[authAgent] Error log written to: ${logPath}`);
 
     return {
       rawFindings: null,
