@@ -7,7 +7,7 @@ import {
     ArrowLeft, ArrowRight, Loader2, Github, Send, Bot, User, FileText,
     MessageSquare, XCircle, Zap, Database, Globe, Cpu, Shield,
     TrendingDown, Users, Scale, AlertTriangle, ChevronRight,
-    Plus, ChevronDown, Check, ExternalLink, History,
+    Plus, ChevronDown, Check, ExternalLink, History, RotateCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -921,19 +921,22 @@ export default function ProjectPage() {
     const id = params.id as string;
 
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [repository, setRepository] = useState<Repository | null>(null);
     const [view, setView] = useState<"overview" | "clusters" | "risks">("overview");
 
-    const fetchData = useCallback(async () => {
+    const fetchData = useCallback(async (isRefresh = false) => {
         try {
-            setLoading(true);
+            if (!isRefresh) setLoading(true);
+            else setRefreshing(true);
             const repository = await getRepositoryWithReport(id);
             setRepository(repository);
         } catch (err) {
             setError(err instanceof Error ? err.message : "Unknown error");
         } finally {
             setLoading(false);
+            setRefreshing(false);
         }
     }, [id]);
 
@@ -1154,17 +1157,86 @@ export default function ProjectPage() {
                             )}
                         </div>
                     ) : (
-                        <div className="flex flex-col items-center justify-center h-full gap-4 text-center px-8">
-                            <FileText className="h-16 w-16 text-muted-foreground/30" />
-                            <div>
-                                <h2 className="text-lg font-semibold">No Compiled Report Yet</h2>
-                                <p className="text-sm text-muted-foreground mt-1 max-w-md">
-                                    Run the analysis pipeline or compile the report from the dashboard to generate the founder-optimized scalability report.
-                                </p>
+                        <div className="flex items-center justify-center min-h-[calc(100vh-3.5rem)] px-4 py-8 w-full">
+                            <div className="relative w-full max-w-xl rounded-2xl border border-white/10 bg-white/3 backdrop-blur-xl p-8 shadow-[0_0_50px_rgba(139,92,246,0.06)] overflow-hidden flex flex-col items-center text-center space-y-6">
+                                {/* Ambient decorative backdrop blur */}
+                                <div className="absolute -top-24 left-1/2 -translate-x-1/2 w-72 h-72 bg-gradient-to-br from-violet-500/20 to-emerald-400/20 rounded-full blur-3xl opacity-60 pointer-events-none" />
+
+                                {/* Glowing Animated Futuristic Loader */}
+                                <div className="relative flex items-center justify-center w-20 h-20">
+                                    <div className="absolute inset-0 rounded-full border border-violet-500/30 animate-ping opacity-25" />
+                                    <div className="absolute inset-1 rounded-full border-2 border-t-emerald-400 border-r-transparent border-b-violet-500 border-l-transparent animate-spin duration-1500" />
+                                    <Bot className="h-9 w-9 text-violet-400 animate-pulse" />
+                                </div>
+
+                                <div className="space-y-2">
+                                    <h2 className="text-xl font-bold tracking-tight text-white bg-clip-text text-transparent bg-gradient-to-r from-white via-neutral-200 to-neutral-400">
+                                        Founder-Optimized Report Compiling...
+                                    </h2>
+                                    <p className="text-sm text-neutral-300 leading-relaxed max-w-md mx-auto">
+                                        Our specialized AI agents are currently executing deep codebase analysis, evaluating database schemas, and mapping architectural bottlenecks.
+                                    </p>
+                                </div>
+
+                                {/* Reassurance block */}
+                                <div className="w-full rounded-xl border border-white/6 bg-white/2 p-4 text-xs text-neutral-400 leading-relaxed text-left space-y-2.5">
+                                    <p className="flex items-start gap-2">
+                                        <span className="shrink-0 text-violet-400 font-semibold">⚡ Time To Complete:</span>
+                                        <span>This dedicated analysis runs on our secure background worker and takes about <strong>10 to 15 minutes</strong> to build the full founder dashboard.</span>
+                                    </p>
+                                    <p className="flex items-start gap-2">
+                                        <span className="shrink-0 text-emerald-400 font-semibold">✓ Background Safe:</span>
+                                        <span>You can safely close this page, navigate away, or shut down your PC. The background analysis runs uninterrupted and the completed report will be waiting here when you return!</span>
+                                    </p>
+                                </div>
+
+                                {/* Pipeline indicators */}
+                                <div className="w-full space-y-3 pt-4 border-t border-white/6">
+                                    <p className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400 text-left">Pipeline Progress</p>
+                                    <div className="space-y-2">
+                                        <div className="flex items-center justify-between text-xs p-2.5 rounded-lg bg-emerald-500/5 border border-emerald-500/10 text-emerald-300">
+                                            <span className="font-medium flex items-center gap-2">
+                                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                                                1. Framework Detection & Verification
+                                            </span>
+                                            <span className="text-[10px] uppercase font-bold">Completed</span>
+                                        </div>
+                                        <div className="flex items-center justify-between text-xs p-2.5 rounded-lg bg-violet-500/5 border border-violet-500/10 text-violet-300 animate-pulse">
+                                            <span className="font-medium flex items-center gap-2">
+                                                <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-ping" />
+                                                2. Background Agent Compilation
+                                            </span>
+                                            <span className="text-[10px] uppercase font-bold flex items-center gap-1.5">
+                                                <Loader2 className="h-3 w-3 animate-spin" /> Running
+                                            </span>
+                                        </div>
+                                        <div className="flex items-center justify-between text-xs p-2.5 rounded-lg bg-white/2 border border-white/6 text-neutral-500">
+                                            <span className="font-medium flex items-center gap-2">
+                                                <span className="w-1.5 h-1.5 rounded-full bg-neutral-600" />
+                                                3. Report Synthesis & Visualization
+                                            </span>
+                                            <span className="text-[10px] uppercase font-bold">Pending</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Actions */}
+                                <div className="flex items-center gap-3 pt-4 w-full">
+                                    <Button
+                                        onClick={() => fetchData(true)}
+                                        disabled={refreshing}
+                                        className="flex-1 gap-2 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 text-white cursor-pointer"
+                                    >
+                                        <RotateCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+                                        {refreshing ? "Checking..." : "Refresh Status"}
+                                    </Button>
+                                    <Link href="/" className="flex-1">
+                                        <Button variant="outline" className="w-full text-neutral-300 hover:text-white cursor-pointer">
+                                            Back to Dashboard
+                                        </Button>
+                                    </Link>
+                                </div>
                             </div>
-                            <Link href="/">
-                                <Button variant="outline">Go to Dashboard</Button>
-                            </Link>
                         </div>
                     )}
                 </div>

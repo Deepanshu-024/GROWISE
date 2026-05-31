@@ -1,9 +1,9 @@
 "use server";
 
 import prisma from "@/lib/prisma";
+import { auth } from "@clerk/nextjs/server";
 import { checkPackageAndFramework } from "./analysis/repository-analysis";
-import { classifyBusinessContext } from "./analysis/business-classification";
-import { orchestrateAgents } from "./agents/orchestrator";
+import { inngest } from "@/inngest/client";
 
 export interface TriggerWorkflowResult {
     success: boolean;
@@ -17,19 +17,25 @@ export interface TriggerWorkflowResult {
 }
 
 /**
- * Server action that runs the full analysis pipeline:
- * 1. Framework detection
- * 2. Business classification
- * 3. Agent orchestration + report compilation
+ * Server action that runs the framework detection and delegates
+ * the heavy analysis phases to an Inngest background worker.
  *
- * Returns the database UUID (`dbId`) so the client can navigate to /project/{dbId}.
+ * Returns the database UUID (`dbId`) so the client can navigate to /project/{dbId} instantly.
  */
 export async function triggerWorkflow(
     repositoryId: string,
     repoFullName: string,
 ): Promise<TriggerWorkflowResult> {
     try {
-        // Step 1: Framework analysis
+        const { userId: clerkId } = await auth();
+        if (!clerkId) {
+            return {
+                success: false,
+                error: "Unauthorized",
+            };
+        }
+
+        // Step 1: Framework analysis (Synchronous)
         const frameworkResult = await checkPackageAndFramework(
             repositoryId,
             repoFullName,
@@ -55,28 +61,20 @@ export async function triggerWorkflow(
             };
         }
 
-        // Step 2: Business classification
-        const classResult = await classifyBusinessContext(repositoryId);
-
-        if (!classResult.classification) {
-            return {
-                success: false,
-                dbId: dbRepo.id,
-                error: classResult.error || "Classification failed",
-            };
-        }
-
-        // Step 3: Agent orchestration + report compilation
-        const orchestrationResult = await orchestrateAgents(repositoryId);
+        // Trigger the Inngest background job for the remaining heavy analysis steps
+        console.log(`[triggerWorkflow] 📡 Dispatching workflow/trigger background job to Inngest for repo ${repositoryId}`);
+        await inngest.send({
+            name: "workflow/trigger",
+            data: {
+                repositoryId,
+                clerkId,
+            },
+        });
 
         return {
             success: true,
             dbId: dbRepo.id,
             framework: frameworkResult.framework || undefined,
-            totalAgents: orchestrationResult.totalAgents,
-            completedAgents: orchestrationResult.completedAgents,
-            failedAgents: orchestrationResult.failedAgents,
-            hasCompiledReport: !!orchestrationResult.compiledReport,
         };
     } catch (error) {
         console.error("[triggerWorkflow] Pipeline error:", error);

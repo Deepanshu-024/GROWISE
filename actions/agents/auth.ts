@@ -2,11 +2,11 @@
 
 import { createAgent } from "langchain";
 import {
-    createToolBudgetMiddleware,
-    resolveCallbackToolName as _resolveToolName,
-    type StreamEvent as _StreamEvent,
-    type AgentLog as _AgentLog,
-    type AgentLogStep as _AgentLogStep,
+  createToolBudgetMiddleware,
+  resolveCallbackToolName as _resolveToolName,
+  type StreamEvent as _StreamEvent,
+  type AgentLog as _AgentLog,
+  type AgentLogStep as _AgentLogStep,
 } from "./agent-middleware";
 import { gpt5Mini } from "@/lib/llm";
 import prisma from "@/lib/prisma";
@@ -334,13 +334,13 @@ export async function runAuthAgent(
   const emit = (_event: _StreamEvent) => { /* no streaming for auth agent */ };
 
   const shared = {
-      toolCallCount: 0,
-      cumulativeInputTokens: 0,
-      cumulativeOutputTokens: 0,
-      lastToolName: "unknown",
-      startTime,
-      agentLog,
-      emit,
+    toolCallCount: 0,
+    cumulativeInputTokens: 0,
+    cumulativeOutputTokens: 0,
+    lastToolName: "unknown",
+    startTime,
+    agentLog,
+    emit,
   };
   console.log(`[authAgent] Starting investigation for: ${repositoryId}`);
 
@@ -369,18 +369,18 @@ export async function runAuthAgent(
     console.log(`[authAgent] Repo: ${repo.fullName} (${branch})`);
 
     const { middleware: toolBudgetMiddleware } = createToolBudgetMiddleware({
-        agentLabel: "authAgent",
-        toolBudget: 15,
-        searchBudget: 3,
-        shared,
+      agentLabel: "authAgent",
+      toolBudget: 15,
+      searchBudget: 3,
+      shared,
     });
 
     const agent = createAgent({
-        model: gpt5Mini,
-        tools: authAgentTools,
-        systemPrompt: SYSTEM_PROMPT,
-        contextSchema: githubContextSchema,
-        middleware: [toolBudgetMiddleware],
+      model: gpt5Mini,
+      tools: authAgentTools,
+      systemPrompt: SYSTEM_PROMPT,
+      contextSchema: githubContextSchema,
+      middleware: [toolBudgetMiddleware],
     });
 
     const userMessage = `Analyze the repository ${repo.fullName} for authentication scalability risks.
@@ -428,36 +428,36 @@ Return the compact findings digest required by the system prompt. Do not call an
         context: { owner, repo: repoName, branch, installationId },
         recursionLimit: 50,
         callbacks: [
-                    {
-                        handleToolStart(tool: any, input: string) {
-                            shared.toolCallCount++;
-                            const toolName = resolveCallbackToolName(tool, shared.lastToolName);
-                            shared.lastToolName = toolName;
-                            let parsedInput: unknown = input;
-                            try { parsedInput = JSON.parse(input); } catch { /* keep raw */ }
-                            const inputPreview = typeof parsedInput === "object"
-                                ? JSON.stringify(parsedInput).slice(0, 200)
-                                : String(parsedInput).slice(0, 200);
-                            console.log(`\n🔧 [Step ${shared.toolCallCount}/15] TOOL CALL: ${toolName}`);
-                            console.log(`   Input: ${inputPreview}`);
-                            agentLog.steps.push({ stepNumber: shared.toolCallCount, type: "tool_call", timestamp: new Date().toISOString(), toolName, toolInput: parsedInput });
-                            emit({ type: "tool_start", stepNumber: shared.toolCallCount, timestamp: new Date().toISOString(), elapsedMs: Date.now() - startTime, toolName, toolInput: parsedInput, cumulativeTokens: { inputTokens: shared.cumulativeInputTokens, outputTokens: shared.cumulativeOutputTokens, totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens } });
-                        },
-                        handleToolEnd(output: any) {
-                            const outputStr = typeof output?.content === "string" ? output.content : typeof output === "string" ? output : JSON.stringify(output) ?? "";
-                            const preview = outputStr.slice(0, 300);
-                            console.log(`📄 [Step ${shared.toolCallCount}/15] TOOL RESPONSE: ${shared.lastToolName} (${outputStr.length} chars)`);
-                            console.log(`   Preview: ${preview}${outputStr.length > 300 ? "..." : ""}`);
-                            emit({ type: "tool_end", stepNumber: shared.toolCallCount, timestamp: new Date().toISOString(), elapsedMs: Date.now() - startTime, toolName: shared.lastToolName, toolOutput: outputStr.slice(0, 5000), toolOutputLength: outputStr.length, cumulativeTokens: { inputTokens: shared.cumulativeInputTokens, outputTokens: shared.cumulativeOutputTokens, totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens } });
-                        },
-                        handleChainError(error: Error) {
-                            agentLog.steps.push({ stepNumber: shared.toolCallCount, type: "error", timestamp: new Date().toISOString(), reasoning: error.message });
-                            agentLog.error = error.message;
-                            console.log(`\n[authAgent] CHAIN ERROR: ${error.message}`);
-                            emit({ type: "error", stepNumber: shared.toolCallCount, timestamp: new Date().toISOString(), elapsedMs: Date.now() - startTime, error: error.message, cumulativeTokens: { inputTokens: shared.cumulativeInputTokens, outputTokens: shared.cumulativeOutputTokens, totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens } });
-                        },
-                    },
-                ],
+          {
+            handleToolStart(tool: any, input: string) {
+              shared.toolCallCount++;
+              const toolName = resolveCallbackToolName(tool, shared.lastToolName);
+              shared.lastToolName = toolName;
+              let parsedInput: unknown = input;
+              try { parsedInput = JSON.parse(input); } catch { /* keep raw */ }
+              const inputPreview = typeof parsedInput === "object"
+                ? JSON.stringify(parsedInput).slice(0, 200)
+                : String(parsedInput).slice(0, 200);
+              console.log(`\n🔧 [Step ${shared.toolCallCount}/15] TOOL CALL: ${toolName}`);
+              console.log(`   Input: ${inputPreview}`);
+              agentLog.steps.push({ stepNumber: shared.toolCallCount, type: "tool_call", timestamp: new Date().toISOString(), toolName, toolInput: parsedInput });
+              emit({ type: "tool_start", stepNumber: shared.toolCallCount, timestamp: new Date().toISOString(), elapsedMs: Date.now() - startTime, toolName, toolInput: parsedInput, cumulativeTokens: { inputTokens: shared.cumulativeInputTokens, outputTokens: shared.cumulativeOutputTokens, totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens } });
+            },
+            handleToolEnd(output: any) {
+              const outputStr = typeof output?.content === "string" ? output.content : typeof output === "string" ? output : JSON.stringify(output) ?? "";
+              const preview = outputStr.slice(0, 300);
+              console.log(`📄 [Step ${shared.toolCallCount}/15] TOOL RESPONSE: ${shared.lastToolName} (${outputStr.length} chars)`);
+              console.log(`   Preview: ${preview}${outputStr.length > 300 ? "..." : ""}`);
+              emit({ type: "tool_end", stepNumber: shared.toolCallCount, timestamp: new Date().toISOString(), elapsedMs: Date.now() - startTime, toolName: shared.lastToolName, toolOutput: outputStr.slice(0, 5000), toolOutputLength: outputStr.length, cumulativeTokens: { inputTokens: shared.cumulativeInputTokens, outputTokens: shared.cumulativeOutputTokens, totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens } });
+            },
+            handleChainError(error: Error) {
+              agentLog.steps.push({ stepNumber: shared.toolCallCount, type: "error", timestamp: new Date().toISOString(), reasoning: error.message });
+              agentLog.error = error.message;
+              console.log(`\n[authAgent] CHAIN ERROR: ${error.message}`);
+              emit({ type: "error", stepNumber: shared.toolCallCount, timestamp: new Date().toISOString(), elapsedMs: Date.now() - startTime, error: error.message, cumulativeTokens: { inputTokens: shared.cumulativeInputTokens, outputTokens: shared.cumulativeOutputTokens, totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens } });
+            },
+          },
+        ],
       }
     );
 
