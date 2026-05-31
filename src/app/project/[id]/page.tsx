@@ -945,12 +945,12 @@ export default function ProjectPage() {
     }, [id, fetchData]);
 
     const birdsEye = useMemo(
-        () => (repository?.compiledReport ? parseBirdsEye(repository.compiledReport) : null),
+        () => (repository?.compiledReport && repository.compiledReport !== "COMPILING" ? parseBirdsEye(repository.compiledReport) : null),
         [repository?.compiledReport],
     );
 
     const revenueRisk = useMemo(
-        () => (repository?.compiledReport ? parseRevenueRisk(repository.compiledReport) : null),
+        () => (repository?.compiledReport && repository.compiledReport !== "COMPILING" ? parseRevenueRisk(repository.compiledReport) : null),
         [repository?.compiledReport],
     );
 
@@ -1003,7 +1003,7 @@ export default function ProjectPage() {
         );
     }
 
-    const hasReport = !!repository.compiledReport;
+    const hasReport = !!repository.compiledReport && repository.compiledReport !== "COMPILING";
 
     return (
         <div className="h-screen flex flex-col bg-background overflow-hidden">

@@ -24,7 +24,7 @@ model User {
 
 model Repository {
   id                           String    @id @default(uuid())
-  repositoryId                 String    @unique // GitHub repository ID
+  repositoryId                 String    // GitHub repository ID
   name                         String
   fullName                     String
   owner                        String
@@ -54,6 +54,7 @@ model Repository {
 
   @@index([userId])
   @@index([repositoryId])
+  @@unique([userId, repositoryId])
 }
 
 model AgentReport {

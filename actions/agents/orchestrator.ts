@@ -45,6 +45,7 @@ type AgentRunner = (input: {
     repositoryId: string;
     installationId: string;
     archetypeScore?: number;
+    userId?: string;
 }) => Promise<{
     rawFindings?: string | null;
     totalToolCalls: number;
@@ -58,38 +59,45 @@ const ARCHETYPE_RUNNERS: Record<string, AgentRunner> = {
             repositoryId: input.repositoryId,
             installationId: input.installationId,
             archetypeScore: input.archetypeScore ?? 0.5,
+            userId: input.userId,
         }),
     "compute-heavy": (input) =>
         runComputeHeavyAgent({
             repositoryId: input.repositoryId,
             installationId: input.installationId,
+            userId: input.userId,
         }),
     "ai-powered": (input) =>
         runAiPoweredAgent({
             repositoryId: input.repositoryId,
             installationId: input.installationId,
+            userId: input.userId,
         }),
     "realtime": (input) =>
         runRealtimeAgent({
             repositoryId: input.repositoryId,
             installationId: input.installationId,
+            userId: input.userId,
         }),
     "event-driven": (input) =>
         runEventDrivenAgent({
             repositoryId: input.repositoryId,
             installationId: input.installationId,
+            userId: input.userId,
         }),
     "financial-transactional": (input) =>
         runTransactionAgent({
             repositoryId: input.repositoryId,
             installationId: input.installationId,
+            userId: input.userId,
         }),
     "auth-heavy": (input) =>
-        runAuthAgent(input.repositoryId, input.installationId) as any,
+        runAuthAgent(input.repositoryId, input.installationId, input.userId) as any,
     "content-heavy": (input) =>
         runContentHeavyAgent({
             repositoryId: input.repositoryId,
             installationId: input.installationId,
+            userId: input.userId,
         }),
 };
 
@@ -126,6 +134,7 @@ export async function orchestrateAgents(
         select: {
             id: true,
             repositoryId: true,
+            userId: true,
             archetypes: true,
             user: {
                 select: {
@@ -223,9 +232,10 @@ export async function orchestrateAgents(
 
         try {
             const result = await runner({
-                repositoryId: repo.repositoryId,
+                repositoryId: repo.id,
                 installationId,
                 archetypeScore: arch.score,
+                userId: repo.userId,
             });
 
             // Update database with result
@@ -301,6 +311,7 @@ export async function orchestrateAgents(
         try {
             const compilerResult = await runReportCompiler({
                 repositoryId: repo.id,
+                userId: repo.userId,
             });
 
             if (compilerResult.compiledReport) {

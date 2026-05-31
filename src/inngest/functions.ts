@@ -1,9 +1,41 @@
 import { inngest } from "./client";
 import { classifyBusinessContext } from "../../actions/analysis/business-classification";
 import { orchestrateAgents } from "../../actions/agents/orchestrator";
+import prisma from "@/lib/prisma";
 
 export const analyzeRepositoryWorkflow = inngest.createFunction(
-  { id: "analyze-repository-workflow", name: "Analyze Repository Workflow" },
+  {
+    id: "analyze-repository-workflow",
+    name: "Analyze Repository Workflow",
+    onFailure: async ({ event, error, step }) => {
+      const originalEvent = event.data.event;
+      const { repositoryId, clerkId } = originalEvent.data;
+
+      console.error(`[Inngest Background Job] ❌ Background analysis failed for repository ${repositoryId}:`, error);
+
+      await step.run("revert-compiling-state-on-failure", async () => {
+        const user = await prisma.user.findUnique({
+          where: { clerkId },
+          select: { id: true },
+        });
+
+        if (user) {
+          await prisma.repository.update({
+            where: {
+              userId_repositoryId: {
+                userId: user.id,
+                repositoryId: repositoryId,
+              }
+            },
+            data: {
+              compiledReport: null,
+              compiledReportAt: null,
+            },
+          });
+        }
+      });
+    },
+  },
   { event: "workflow/trigger" },
   async ({ event, step }) => {
     const { repositoryId, clerkId } = event.data;

@@ -4,6 +4,7 @@ import prisma from "@/lib/prisma";
 import { auth } from "@clerk/nextjs/server";
 import { checkPackageAndFramework } from "./analysis/repository-analysis";
 import { inngest } from "@/inngest/client";
+import { getAnalysisUsage } from "./get-analysis-usage";
 
 export interface TriggerWorkflowResult {
     success: boolean;
@@ -35,6 +36,51 @@ export async function triggerWorkflow(
             };
         }
 
+        // Get the internal user ID from database using Clerk ID
+        const user = await prisma.user.findUnique({
+            where: { clerkId },
+            select: { id: true },
+        });
+
+        if (!user) {
+            return {
+                success: false,
+                error: "User not found in database.",
+            };
+        }
+
+        const dbUserId = user.id;
+
+        // Check if repository already exists for this user and what its compilation status is
+        const existingRepo = await prisma.repository.findUnique({
+            where: {
+                userId_repositoryId: {
+                    userId: dbUserId,
+                    repositoryId: repositoryId,
+                }
+            },
+            select: { id: true, compiledReport: true },
+        });
+
+        if (existingRepo && existingRepo.compiledReport === "COMPILING") {
+            return {
+                success: false,
+                error: "Analysis is already in progress for this repository.",
+            };
+        }
+
+        // If repository is new or has a null report (i.e. not yet counted as used),
+        // check user limits before proceeding.
+        if (!existingRepo || !existingRepo.compiledReport) {
+            const usage = await getAnalysisUsage();
+            if (usage.remaining <= 0) {
+                return {
+                    success: false,
+                    error: "Generation limit reached (2/2 used). Pro plans are coming soon.",
+                };
+            }
+        }
+
         // Step 1: Framework analysis (Synchronous)
         const frameworkResult = await checkPackageAndFramework(
             repositoryId,
@@ -50,7 +96,12 @@ export async function triggerWorkflow(
 
         // Resolve the database UUID for this repository
         const dbRepo = await prisma.repository.findUnique({
-            where: { repositoryId },
+            where: {
+                userId_repositoryId: {
+                    userId: dbUserId,
+                    repositoryId: repositoryId,
+                }
+            },
             select: { id: true },
         });
 
@@ -60,6 +111,20 @@ export async function triggerWorkflow(
                 error: "Repository record not found after framework analysis.",
             };
         }
+
+        // Set the status to COMPILING immediately to reserve the slot
+        await prisma.repository.update({
+            where: {
+                userId_repositoryId: {
+                    userId: dbUserId,
+                    repositoryId: repositoryId,
+                }
+            },
+            data: {
+                compiledReport: "COMPILING",
+                compiledReportAt: null,
+            },
+        });
 
         // Trigger the Inngest background job for the remaining heavy analysis steps
         console.log(`[triggerWorkflow] 📡 Dispatching workflow/trigger background job to Inngest for repo ${repositoryId}`);
