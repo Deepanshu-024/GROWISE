@@ -71,29 +71,29 @@ export const LampContainer = ({
         </motion.div>
         <div className="absolute top-1/2 h-48 w-full translate-y-12 scale-x-150 bg-slate-950 blur-2xl"></div>
         <div className="absolute top-1/2 z-50 h-48 w-full bg-transparent opacity-10 backdrop-blur-md"></div>
-        <div className="absolute inset-auto z-50 h-48 w-[35rem] -translate-y-1/2 rounded-full bg-emerald-500 opacity-50 blur-3xl"></div>
+        <div className="absolute inset-auto z-50 h-48 w-[35rem] max-xl:w-[24rem] -translate-y-1/2 max-xl:-translate-y-[18.5rem] rounded-full bg-emerald-500 opacity-50 blur-3xl"></div>
         <motion.div
-          initial={{ width: "12rem" }}
-          whileInView={{ width: "20rem" }}
+          initial={{ width: "var(--glow-initial)" }}
+          whileInView={{ width: "var(--glow-active)" }}
           transition={{
             delay: 0.3,
             duration: 0.8,
             ease: "easeInOut",
           }}
-          className="absolute inset-auto z-30 h-48 w-96 -translate-y-[6rem] rounded-full bg-emerald-400 blur-2xl"
+          className="absolute inset-auto z-30 h-48 w-96 -translate-y-[6rem] max-xl:-translate-y-[18rem] rounded-full bg-emerald-400 blur-2xl [--glow-initial:12rem] [--glow-active:20rem] max-xl:[--glow-initial:12rem] max-xl:[--glow-active:18rem]"
         ></motion.div>
         <motion.div
-          initial={{ width: "20rem" }}
-          whileInView={{ width: "30rem" }}
+          initial={{ width: "var(--line-initial)" }}
+          whileInView={{ width: "var(--line-active)" }}
           transition={{
             delay: 0.3,
             duration: 0.8,
             ease: "easeInOut",
           }}
-          className="absolute inset-auto z-50 h-0.5 w-[35rem] -translate-y-[7rem] bg-emerald-400 "
+          className="absolute inset-auto z-50 h-0.5 w-[35rem] -translate-y-[7rem] max-xl:-translate-y-[19rem] bg-emerald-400 [--line-initial:20rem] [--line-active:30rem] max-xl:[--line-initial:16rem] max-xl:[--line-active:24rem]"
         ></motion.div>
 
-        <div className="absolute inset-auto z-40 h-44 w-full -translate-y-[12.5rem] bg-slate-950 "></div>
+        <div className="absolute inset-auto z-40 h-44 w-full -translate-y-[12.5rem] max-xl:-translate-y-[24.5rem] bg-slate-950 "></div>
       </div>
 
       <div className="relative z-50 flex -translate-y-52 flex-col items-center px-5">
