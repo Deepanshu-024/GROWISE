@@ -63,8 +63,8 @@ export default function Navigation() {
     <nav className="fixed top-0 w-full z-50 bg-background/80 backdrop-blur-md border-b border-border/50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center">
         {/* Logo — fixed width so center stays centered */}
-        <div className="flex items-center gap-2.5 w-48">
-          <span className="font-semibold text-lg hidden sm:inline bg-gradient-to-r from-emerald-400 to-white bg-clip-text text-transparent">Gro(W)ise</span>
+        <div className="flex items-center gap-2.5 flex-1 md:flex-none md:w-48">
+          <span className="font-semibold text-base sm:text-lg bg-gradient-to-r from-emerald-400 to-white bg-clip-text text-transparent">Gro(W)ise</span>
         </div>
 
         {/* Center Navigation — true center */}
@@ -130,7 +130,7 @@ export default function Navigation() {
         </div>
 
         {/* Auth Buttons — same fixed width as logo */}
-        <div className="flex items-center justify-end gap-3 w-48">
+        <div className="flex items-center justify-end gap-3 flex-1 md:flex-none md:w-48">
           <SignedOut>
             <SignInButton>
               <button className="px-4 py-2 text-sm font-medium border border-border hover:border-muted-foreground hover:text-foreground text-muted-foreground transition-colors rounded-full">
