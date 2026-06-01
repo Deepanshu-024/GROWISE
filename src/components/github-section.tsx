@@ -183,7 +183,7 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
     return (
       <button
         onClick={handleConnect}
-        className="w-2/3 mt-4 px-6 py-3 border border-[#22c55e]/40 hover:border-[#22c55e]/70 hover:shadow-[0_0_15px_rgba(34,197,94,0.3)] text-muted-foreground hover:text-[#22c55e] transition-all duration-200 rounded-xl font-medium text-sm bg-transparent hover:bg-[#22c55e]/5 flex items-center justify-center gap-2"
+        className="w-full max-w-md mt-4 px-6 py-3 border border-[#22c55e]/40 hover:border-[#22c55e]/70 hover:shadow-[0_0_15px_rgba(34,197,94,0.3)] text-muted-foreground hover:text-[#22c55e] transition-all duration-200 rounded-xl font-medium text-sm bg-transparent hover:bg-[#22c55e]/5 flex items-center justify-center gap-2"
       >
         <Github className="w-4 h-4" />
         Connect GitHub & Import Repository
@@ -197,7 +197,7 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
 
   // ── State 2: GitHub Connected ─────────────────────────────────────────────
   return (
-    <div className="w-2/3 flex flex-col items-center">
+    <div className="w-full max-w-md flex flex-col items-center">
       {/* Connected indicator with dynamic color/text */}
       <div className="flex items-center gap-1.5 mb-1.5 h-4 transition-all duration-350">
         <div className={`w-1.5 h-1.5 rounded-full animate-pulse transition-colors duration-500 ${selectedRepo ? "bg-violet-400" : "bg-emerald-400"}`} />
