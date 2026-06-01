@@ -183,9 +183,9 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
     return (
       <button
         onClick={handleConnect}
-        className="w-full max-w-md mt-4 px-6 py-3 border border-[#22c55e]/40 hover:border-[#22c55e]/70 hover:shadow-[0_0_15px_rgba(34,197,94,0.3)] text-muted-foreground hover:text-[#22c55e] transition-all duration-200 rounded-xl font-medium text-sm bg-transparent hover:bg-[#22c55e]/5 flex items-center justify-center gap-2"
+        className="w-full max-w-md mt-4 px-4 sm:px-6 py-3 border border-[#22c55e]/40 hover:border-[#22c55e]/70 hover:shadow-[0_0_15px_rgba(34,197,94,0.3)] text-muted-foreground hover:text-[#22c55e] transition-all duration-200 rounded-xl font-medium text-xs sm:text-sm whitespace-nowrap bg-transparent hover:bg-[#22c55e]/5 flex items-center justify-center gap-2"
       >
-        <Github className="w-4 h-4" />
+        <Github className="w-4 h-4 shrink-0" />
         Connect GitHub & Import Repository
       </button>
     )
@@ -219,8 +219,8 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
         layout
         transition={{ type: "spring", stiffness: 300, damping: 30 }}
         className={`w-full rounded-xl p-[1px] transition-all duration-500 ${selectedRepo
-            ? "bg-gradient-to-b from-violet-500/40 via-emerald-500/20 to-white/[0.08] shadow-[0_0_30px_rgba(139,92,246,0.15)]"
-            : "bg-gradient-to-b from-emerald-500/30 via-white/[0.12] to-white/[0.06] shadow-[0_0_20px_rgba(16,185,129,0.08)]"
+          ? "bg-gradient-to-b from-violet-500/40 via-emerald-500/20 to-white/[0.08] shadow-[0_0_30px_rgba(139,92,246,0.15)]"
+          : "bg-gradient-to-b from-emerald-500/30 via-white/[0.12] to-white/[0.06] shadow-[0_0_20px_rgba(16,185,129,0.08)]"
           }`}
       >
         <motion.div
@@ -279,8 +279,8 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
                           /* Private/Public badge */
                           <span
                             className={`shrink-0 text-[9px] font-medium px-1.5 py-0.5 rounded-full ${repo.private
-                                ? "bg-amber-500/10 text-amber-400/60 border border-amber-500/20"
-                                : "bg-emerald-500/10 text-emerald-400/60 border border-emerald-500/20"
+                              ? "bg-amber-500/10 text-amber-400/60 border border-amber-500/20"
+                              : "bg-emerald-500/10 text-emerald-400/60 border border-emerald-500/20"
                               }`}
                           >
                             {repo.private ? "Private" : "Public"}
