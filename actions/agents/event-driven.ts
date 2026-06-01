@@ -35,6 +35,7 @@ export interface StreamEvent {
 export interface EventDrivenAgentInput {
     repositoryId: string;
     installationId: string;
+    userId?: string;
     onEvent?: (event: StreamEvent) => void;
 }
 
@@ -288,7 +289,7 @@ const eventAgentTools = [
 export async function runEventDrivenAgent(
     input: EventDrivenAgentInput
 ): Promise<EventDrivenAgentOutput> {
-    const { repositoryId, installationId, onEvent } = input;
+    const { repositoryId, installationId, userId, onEvent } = input;
     const startTime = Date.now();
 
     const emit = (event: StreamEvent) => {
@@ -316,11 +317,19 @@ export async function runEventDrivenAgent(
 
     try {
         const repository = await prisma.repository.findFirst({
-            where: {
+            where: userId ? {
                 OR: [
                     { id: repositoryId },
-                    { repositoryId },
-                ],
+                    {
+                        userId,
+                        repositoryId,
+                    }
+                ]
+            } : {
+                OR: [
+                    { id: repositoryId },
+                    { repositoryId }
+                ]
             },
             select: {
                 fullName: true,

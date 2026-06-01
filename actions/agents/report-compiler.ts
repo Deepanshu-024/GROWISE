@@ -25,6 +25,7 @@ export interface ReportCompilerStreamEvent {
 
 export interface ReportCompilerInput {
     repositoryId: string; // Internal DB id (Repository.id)
+    userId?: string;
     onEvent?: (event: ReportCompilerStreamEvent) => void;
 }
 
@@ -189,7 +190,7 @@ SYNTHESIS RULES
 export async function runReportCompiler(
     input: ReportCompilerInput,
 ): Promise<ReportCompilerOutput> {
-    const { repositoryId, onEvent } = input;
+    const { repositoryId, userId, onEvent } = input;
     const startTime = Date.now();
 
     const emit = (event: ReportCompilerStreamEvent) => {
@@ -213,8 +214,19 @@ export async function runReportCompiler(
         // ── 1. Fetch repository metadata ───────────────────────────────────
 
         const repository = await prisma.repository.findFirst({
-            where: {
-                OR: [{ id: repositoryId }, { repositoryId }],
+            where: userId ? {
+                OR: [
+                    { id: repositoryId },
+                    {
+                        userId,
+                        repositoryId,
+                    }
+                ]
+            } : {
+                OR: [
+                    { id: repositoryId },
+                    { repositoryId }
+                ]
             },
             select: {
                 id: true,

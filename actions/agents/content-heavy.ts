@@ -34,6 +34,7 @@ export interface StreamEvent {
 export interface ContentHeavyAgentInput {
     repositoryId: string;
     installationId: string;
+    userId?: string;
     onEvent?: (event: StreamEvent) => void;
 }
 
@@ -244,8 +245,8 @@ const contentAgentTools = [
 
 export async function runContentHeavyAgent(
     input: ContentHeavyAgentInput
-){
-    const { repositoryId, installationId, onEvent } = input;
+): Promise<ContentHeavyAgentOutput> {
+    const { repositoryId, installationId, userId, onEvent } = input;
     const startTime = Date.now();
 
     const emit = (event: StreamEvent) => {
@@ -273,11 +274,19 @@ export async function runContentHeavyAgent(
 
     try {
         const repository = await prisma.repository.findFirst({
-            where: {
+            where: userId ? {
                 OR: [
                     { id: repositoryId },
-                    { repositoryId },
-                ],
+                    {
+                        userId,
+                        repositoryId,
+                    }
+                ]
+            } : {
+                OR: [
+                    { id: repositoryId },
+                    { repositoryId }
+                ]
             },
             select: {
                 fullName: true,

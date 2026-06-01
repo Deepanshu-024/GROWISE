@@ -182,41 +182,6 @@ export async function checkPackageAndFramework(
             };
         }
 
-        // Check if we already have analysis results in the database
-        console.log("[SERVER] 🔍 Checking for existing analysis in database...");
-        const existingRepo = await prisma.repository.findUnique({
-            where: { repositoryId: repositoryId },
-            select: {
-                framework: true,
-                isSupported: true,
-                packageJson: true,
-                defaultBranch: true,
-                baseDirectory: true,
-                repoContent: true,
-            },
-        });
-
-        if (existingRepo && existingRepo.framework) {
-            console.log(`[SERVER] ✅ Found existing analysis with framework: ${existingRepo.framework}`);
-            console.log("[SERVER] 🎯 Returning cached results from database");
-            return {
-                isSupported: existingRepo.isSupported,
-                framework: existingRepo.framework as "next" | "react" | "",
-                packageJson: existingRepo.packageJson,
-                defaultBranch: existingRepo.defaultBranch || undefined,
-                baseDirectory: existingRepo.baseDirectory || undefined,
-                repoContent: existingRepo.repoContent as string[] | undefined,
-                repoSizeKB: (existingRepo as any).repoSizeKB ?? undefined,
-            };
-        }
-
-        console.log("[SERVER] ℹ️ No existing analysis found or framework not determined, proceeding with fresh analysis...");
-
-        // Get authentication token
-        console.log("[SERVER] 🔑 Fetching GitHub authentication token...");
-        let authToken: string;
-        let effectiveInstallationId = installationId;
-
         // Look up the internal user ID from the Clerk ID
         const user = await prisma.user.findUnique({
             where: { clerkId },
@@ -236,6 +201,47 @@ export async function checkPackageAndFramework(
         }
 
         const dbUserId = user.id;
+
+        // Check if we already have analysis results in the database
+        console.log("[SERVER] 🔍 Checking for existing analysis in database...");
+        const existingRepo = await prisma.repository.findUnique({
+            where: {
+                userId_repositoryId: {
+                    userId: dbUserId,
+                    repositoryId: repositoryId,
+                }
+            },
+            select: {
+                framework: true,
+                isSupported: true,
+                packageJson: true,
+                defaultBranch: true,
+                baseDirectory: true,
+                repoContent: true,
+                repoSizeKB: true,
+            },
+        });
+
+        if (existingRepo && existingRepo.framework) {
+            console.log(`[SERVER] ✅ Found existing analysis with framework: ${existingRepo.framework}`);
+            console.log("[SERVER] 🎯 Returning cached results from database");
+            return {
+                isSupported: existingRepo.isSupported,
+                framework: existingRepo.framework as "next" | "react" | "",
+                packageJson: existingRepo.packageJson,
+                defaultBranch: existingRepo.defaultBranch || undefined,
+                baseDirectory: existingRepo.baseDirectory || undefined,
+                repoContent: existingRepo.repoContent as string[] | undefined,
+                repoSizeKB: existingRepo.repoSizeKB ?? undefined,
+            };
+        }
+
+        console.log("[SERVER] ℹ️ No existing analysis found or framework not determined, proceeding with fresh analysis...");
+
+        // Get authentication token
+        console.log("[SERVER] 🔑 Fetching GitHub authentication token...");
+        let authToken: string;
+        let effectiveInstallationId = installationId;
 
         // If installation ID not provided, fetch from database
         if (!effectiveInstallationId) {
@@ -300,7 +306,12 @@ export async function checkPackageAndFramework(
             console.log(`[SERVER] 💾 Storing repo size (${repoSizeKB} KB) to database...`);
             const [earlyOwner, earlyRepoName] = repoFullName.split("/");
             await prisma.repository.upsert({
-                where: { repositoryId: repositoryId },
+                where: {
+                    userId_repositoryId: {
+                        userId: dbUserId,
+                        repositoryId: repositoryId,
+                    }
+                },
                 update: { repoSizeKB },
                 create: {
                     repositoryId,
@@ -377,7 +388,10 @@ export async function checkPackageAndFramework(
 
             const savedRepository = await prisma.repository.upsert({
                 where: {
-                    repositoryId: repositoryId,
+                    userId_repositoryId: {
+                        userId: dbUserId,
+                        repositoryId: repositoryId,
+                    }
                 },
                 update: {
                     name: repoName,

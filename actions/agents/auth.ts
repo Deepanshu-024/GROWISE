@@ -273,7 +273,8 @@ const authAgentTools = [
 
 export async function runAuthAgent(
   repositoryId: string,
-  installationId: string
+  installationId: string,
+  userId?: string
 ): Promise<AuthAgentOutput> {
   const startTime = Date.now();
 
@@ -291,8 +292,21 @@ export async function runAuthAgent(
   console.log(`[authAgent] Starting investigation for: ${repositoryId}`);
 
   try {
-    const repo = await prisma.repository.findUniqueOrThrow({
-      where: { repositoryId },
+    const repo = await prisma.repository.findFirst({
+      where: userId ? {
+        OR: [
+          { id: repositoryId },
+          {
+            userId,
+            repositoryId,
+          }
+        ]
+      } : {
+        OR: [
+          { id: repositoryId },
+          { repositoryId }
+        ]
+      },
       select: {
         fullName: true,
         defaultBranch: true,
@@ -301,6 +315,10 @@ export async function runAuthAgent(
         framework: true,
       },
     });
+
+    if (!repo) {
+      throw new Error(`Repository not found: ${repositoryId}`);
+    }
 
     const [owner, repoName] = repo.fullName.split("/");
     const branch = repo.defaultBranch ?? "main";

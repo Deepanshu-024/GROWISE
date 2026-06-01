@@ -190,8 +190,10 @@ export async function deleteRepository(repositoryId: string) {
 
     await prisma.repository.delete({
         where: {
-            repositoryId: repositoryId,
-            userId: user.id,
+            userId_repositoryId: {
+                userId: user.id,
+                repositoryId: repositoryId,
+            }
         },
     });
 

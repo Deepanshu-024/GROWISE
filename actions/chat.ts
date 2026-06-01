@@ -233,7 +233,7 @@ export async function sendChatMessage(
     const clerkId = await authenticateUser();
     const { user, repository } = await resolveUserAndRepo(clerkId, repoId);
 
-    if (!repository.compiledReport) {
+    if (!repository.compiledReport || repository.compiledReport === "COMPILING") {
         throw new Error("No compiled report available. Run the analysis first.");
     }
 

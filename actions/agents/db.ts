@@ -29,6 +29,7 @@ export interface DbAgentInput {
     repositoryId: string;
     installationId: string;
     archetypeScore: number;
+    userId?: string;
     onEvent?: (event: StreamEvent) => void;
 }
 
@@ -329,7 +330,7 @@ const dbAgentTools = [
 export async function runDatabaseAgent(
     input: DbAgentInput
 ): Promise<DbAgentOutput> {
-    const { repositoryId, installationId, archetypeScore, onEvent } = input;
+    const { repositoryId, installationId, archetypeScore, userId, onEvent } = input;
     const startTime = Date.now();
 
 
@@ -356,11 +357,19 @@ export async function runDatabaseAgent(
     try {
         // -- Resolve repository metadata from DB --------------------------
         const repository = await prisma.repository.findFirst({
-            where: {
+            where: userId ? {
                 OR: [
                     { id: repositoryId },
-                    { repositoryId: repositoryId },
-                ],
+                    {
+                        userId,
+                        repositoryId,
+                    }
+                ]
+            } : {
+                OR: [
+                    { id: repositoryId },
+                    { repositoryId }
+                ]
             },
             select: {
                 fullName: true,

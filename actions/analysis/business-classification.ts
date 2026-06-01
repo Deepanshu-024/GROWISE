@@ -56,10 +56,31 @@ export async function classifyBusinessContext(
         }
         console.log(`[SERVER] ✅ User authenticated: ${clerkId}`);
 
+        // Look up the internal user ID from the Clerk ID
+        const user = await prisma.user.findUnique({
+            where: { clerkId },
+            select: {
+                id: true,
+                githubInstallationId: true,
+            },
+        });
+
+        if (!user) {
+            console.log("[SERVER] ❌ User not found in database");
+            return { error: "User not found." };
+        }
+
+        const dbUserId = user.id;
+
         // Fetch repository data from database
         console.log("[SERVER] 📊 Fetching repository data from database...");
         const repository = await prisma.repository.findUnique({
-            where: { repositoryId: repositoryId },
+            where: {
+                userId_repositoryId: {
+                    userId: dbUserId,
+                    repositoryId: repositoryId,
+                }
+            },
             select: {
                 fullName: true,
                 framework: true,
@@ -106,12 +127,6 @@ export async function classifyBusinessContext(
         // If installation ID not provided, fetch from database
         if (!effectiveInstallationId) {
             console.log("[SERVER] 📊 Fetching installation ID from database...");
-            const user = await prisma.user.findUnique({
-                where: { clerkId },
-                select: {
-                    githubInstallationId: true,
-                },
-            });
 
             if (!user?.githubInstallationId) {
                 console.log("[SERVER] ❌ No GitHub installation ID found in database");
@@ -206,7 +221,12 @@ export async function classifyBusinessContext(
         // Persist classification results to the repository record
         console.log("[SERVER] 💾 Saving classification results to database...");
         await prisma.repository.update({
-            where: { repositoryId: repositoryId },
+            where: {
+                userId_repositoryId: {
+                    userId: dbUserId,
+                    repositoryId: repositoryId,
+                }
+            },
             data: {
                 archetypes: classificationData.archetypes,
                 archClassificationConfidence: classificationData.confidence,

@@ -51,7 +51,12 @@ export async function fetchAndStoreRepoSize(
         // Upsert — works for both existing and new repository rows
         const [owner, name] = repoFullName.split("/");
         await prisma.repository.upsert({
-            where: { repositoryId },
+            where: {
+                userId_repositoryId: {
+                    userId: user.id,
+                    repositoryId: repositoryId,
+                }
+            },
             update: { repoSizeKB: sizeKB },
             create: {
                 repositoryId,

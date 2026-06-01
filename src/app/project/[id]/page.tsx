@@ -944,13 +944,26 @@ export default function ProjectPage() {
         if (id) fetchData();
     }, [id, fetchData]);
 
+    const hasReport = !!repository?.compiledReport && repository.compiledReport !== "COMPILING";
+
+    // Auto-poll when the report is compiling in the background
+    useEffect(() => {
+        if (!repository || hasReport) return;
+
+        const interval = setInterval(() => {
+            fetchData(true);
+        }, 10000); // poll every 10 seconds
+
+        return () => clearInterval(interval);
+    }, [repository, hasReport, fetchData]);
+
     const birdsEye = useMemo(
-        () => (repository?.compiledReport ? parseBirdsEye(repository.compiledReport) : null),
+        () => (repository?.compiledReport && repository.compiledReport !== "COMPILING" ? parseBirdsEye(repository.compiledReport) : null),
         [repository?.compiledReport],
     );
 
     const revenueRisk = useMemo(
-        () => (repository?.compiledReport ? parseRevenueRisk(repository.compiledReport) : null),
+        () => (repository?.compiledReport && repository.compiledReport !== "COMPILING" ? parseRevenueRisk(repository.compiledReport) : null),
         [repository?.compiledReport],
     );
 
@@ -1002,8 +1015,6 @@ export default function ProjectPage() {
             </div>
         );
     }
-
-    const hasReport = !!repository.compiledReport;
 
     return (
         <div className="h-screen flex flex-col bg-background overflow-hidden">
@@ -1162,79 +1173,27 @@ export default function ProjectPage() {
                                 {/* Ambient decorative backdrop blur */}
                                 <div className="absolute -top-24 left-1/2 -translate-x-1/2 w-72 h-72 bg-gradient-to-br from-violet-500/20 to-emerald-400/20 rounded-full blur-3xl opacity-60 pointer-events-none" />
 
-                                {/* Glowing Animated Futuristic Loader */}
-                                <div className="relative flex items-center justify-center w-20 h-20">
+                                {/* Glowing Simple Loader */}
+                                <div className="relative flex items-center justify-center w-16 h-16">
                                     <div className="absolute inset-0 rounded-full border border-violet-500/30 animate-ping opacity-25" />
-                                    <div className="absolute inset-1 rounded-full border-2 border-t-emerald-400 border-r-transparent border-b-violet-500 border-l-transparent animate-spin duration-1500" />
-                                    <Bot className="h-9 w-9 text-violet-400 animate-pulse" />
+                                    <Loader2 className="h-10 w-10 animate-spin text-violet-400" />
                                 </div>
 
-                                <div className="space-y-2">
+                                <div className="space-y-4">
                                     <h2 className="text-xl font-bold tracking-tight text-white bg-clip-text text-transparent bg-gradient-to-r from-white via-neutral-200 to-neutral-400">
-                                        Founder-Optimized Report Compiling...
+                                        Analyzing Your Codebase...
                                     </h2>
-                                    <p className="text-sm text-neutral-300 leading-relaxed max-w-md mx-auto">
-                                        Our specialized AI agents are currently executing deep codebase analysis, evaluating database schemas, and mapping architectural bottlenecks.
-                                    </p>
-                                </div>
-
-                                {/* Reassurance block */}
-                                <div className="w-full rounded-xl border border-white/6 bg-white/2 p-4 text-xs text-neutral-400 leading-relaxed text-left space-y-2.5">
-                                    <p className="flex items-start gap-2">
-                                        <span className="shrink-0 text-violet-400 font-semibold">⚡ Time To Complete:</span>
-                                        <span>This dedicated analysis runs on our secure background worker and takes about <strong>10 to 15 minutes</strong> to build the full founder dashboard.</span>
-                                    </p>
-                                    <p className="flex items-start gap-2">
-                                        <span className="shrink-0 text-emerald-400 font-semibold">✓ Background Safe:</span>
-                                        <span>You can safely close this page, navigate away, or shut down your PC. The background analysis runs uninterrupted and the completed report will be waiting here when you return!</span>
-                                    </p>
-                                </div>
-
-                                {/* Pipeline indicators */}
-                                <div className="w-full space-y-3 pt-4 border-t border-white/6">
-                                    <p className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400 text-left">Pipeline Progress</p>
-                                    <div className="space-y-2">
-                                        <div className="flex items-center justify-between text-xs p-2.5 rounded-lg bg-emerald-500/5 border border-emerald-500/10 text-emerald-300">
-                                            <span className="font-medium flex items-center gap-2">
-                                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                                                1. Framework Detection & Verification
-                                            </span>
-                                            <span className="text-[10px] uppercase font-bold">Completed</span>
-                                        </div>
-                                        <div className="flex items-center justify-between text-xs p-2.5 rounded-lg bg-violet-500/5 border border-violet-500/10 text-violet-300 animate-pulse">
-                                            <span className="font-medium flex items-center gap-2">
-                                                <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-ping" />
-                                                2. Background Agent Compilation
-                                            </span>
-                                            <span className="text-[10px] uppercase font-bold flex items-center gap-1.5">
-                                                <Loader2 className="h-3 w-3 animate-spin" /> Running
-                                            </span>
-                                        </div>
-                                        <div className="flex items-center justify-between text-xs p-2.5 rounded-lg bg-white/2 border border-white/6 text-neutral-500">
-                                            <span className="font-medium flex items-center gap-2">
-                                                <span className="w-1.5 h-1.5 rounded-full bg-neutral-600" />
-                                                3. Report Synthesis & Visualization
-                                            </span>
-                                            <span className="text-[10px] uppercase font-bold">Pending</span>
-                                        </div>
+                                    <div className="space-y-3 text-sm text-neutral-300 leading-relaxed max-w-md mx-auto">
+                                        <p>
+                                            Multiple specialized agents are working to generate a business scale analysis report for you.
+                                        </p>
+                                        <p className="text-xs text-neutral-400">
+                                            The generation is done via a background job, so you can safely do other stuff if you want.
+                                        </p>
+                                        <p className="text-xs text-violet-400 font-semibold bg-violet-500/5 border border-violet-500/10 rounded-lg p-2.5">
+                                            ⏱️ The generation takes around 15 minutes, so please be patient.
+                                        </p>
                                     </div>
-                                </div>
-
-                                {/* Actions */}
-                                <div className="flex items-center gap-3 pt-4 w-full">
-                                    <Button
-                                        onClick={() => fetchData(true)}
-                                        disabled={refreshing}
-                                        className="flex-1 gap-2 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 text-white cursor-pointer"
-                                    >
-                                        <RotateCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-                                        {refreshing ? "Checking..." : "Refresh Status"}
-                                    </Button>
-                                    <Link href="/" className="flex-1">
-                                        <Button variant="outline" className="w-full text-neutral-300 hover:text-white cursor-pointer">
-                                            Back to Dashboard
-                                        </Button>
-                                    </Link>
                                 </div>
                             </div>
                         </div>
