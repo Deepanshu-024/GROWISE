@@ -23,36 +23,36 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: 'GrowWise — Business Scale Analyzer',
-    template: '%s | GrowWise',
+    default: 'Gro(W)ise — Business Scale Analyzer',
+    template: '%s | Gro(W)ise',
   },
   description:
-    'Understand the bottlenecks your business can face before they hit. GrowWise analyzes your codebase for scalability risks, revenue threats, and architectural weaknesses.',
+    'Understand the bottlenecks your business can face before they hit. Gro(W)ise analyzes your codebase for scalability risks, revenue threats, and architectural weaknesses.',
   keywords: [
     'business scalability',
     'bottleneck detection',
     'scale analyzer',
     'architecture review',
     'revenue risk analysis',
-    'GrowWise',
+    'Gro(W)ise',
     'code analysis',
     'growth readiness',
     'performance bottlenecks',
   ],
-  authors: [{ name: 'GrowWise' }],
-  creator: 'GrowWise',
+  authors: [{ name: 'Gro(W)ise' }],
+  creator: 'Gro(W)ise',
   metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'),
   openGraph: {
     type: 'website',
     locale: 'en_US',
-    siteName: 'GrowWise',
-    title: 'GrowWise — Business Scale Analyzer',
+    siteName: 'Gro(W)ise',
+    title: 'Gro(W)ise — Business Scale Analyzer',
     description:
       'Understand the bottlenecks your business can face before they hit. Scalability analysis powered by intelligent agents.',
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'GrowWise — Business Scale Analyzer',
+    title: 'Gro(W)ise — Business Scale Analyzer',
     description:
       'Understand the bottlenecks your business can face before they hit. Scalability analysis powered by intelligent agents.',
   },
