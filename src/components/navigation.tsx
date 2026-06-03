@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import { SignInButton, SignUpButton, SignedIn, SignedOut, UserButton, useUser } from '@clerk/nextjs'
+import { SignInButton, SignUpButton, SignedIn, SignedOut, UserButton, useUser, useClerk } from '@clerk/nextjs'
 import { usePathname } from 'next/navigation'
 import Link from "next/link"
 import { Menu, X } from "lucide-react"
@@ -17,6 +17,7 @@ const navLinks = [
 export default function Navigation() {
   const pathname = usePathname()
   const { user } = useUser()
+  const { signOut } = useClerk()
   const [reportedRepos, setReportedRepos] = useState<ReportedRepo[]>([])
   const [isHovering, setIsHovering] = useState(false)
   const [loaded, setLoaded] = useState(false)
@@ -251,10 +252,8 @@ export default function Navigation() {
             </SignedOut>
             <SignedIn>
               <div className="flex items-center gap-3">
-                <div onClick={() => setIsOpen(false)}>
-                  <UserButton afterSignOutUrl="/" />
-                </div>
-                <div className="flex flex-col min-w-0">
+                <UserButton afterSignOutUrl="/" />
+                <div className="flex flex-col min-w-0 flex-1">
                   <span className="text-sm font-medium text-foreground truncate">
                     {user?.fullName || user?.username || 'User'}
                   </span>
@@ -262,6 +261,15 @@ export default function Navigation() {
                     {user?.primaryEmailAddress?.emailAddress}
                   </span>
                 </div>
+                <button
+                  onClick={() => {
+                    setIsOpen(false)
+                    signOut({ redirectUrl: "/" })
+                  }}
+                  className="px-3 py-1.5 text-xs font-medium text-red-400 border border-red-500/30 hover:bg-red-500/10 hover:border-red-500/50 transition-all duration-200 rounded-full shrink-0"
+                >
+                  Sign Out
+                </button>
               </div>
             </SignedIn>
           </div>
