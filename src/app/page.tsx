@@ -42,10 +42,10 @@ export default function Home() {
               ease: "easeInOut",
             }}
             className={`mx-auto text-balance leading-relaxed text-center transition-all duration-500 ${githubConnected
-                ? "text-base sm:text-lg text-white/60 max-w-md mb-12 sm:mb-[68px]"
-                : "text-lg sm:text-xl text-white/80 max-w-2xl mb-10 sm:mb-16"
+              ? "text-base sm:text-lg text-white/60 max-w-md mb-12 sm:mb-[68px]"
+              : "text-lg sm:text-xl text-white/80 max-w-2xl mb-10 sm:mb-16"
               }`}
-          > 
+          >
             Intelligent analysis and automated fixes for your business&apos;s scalability challenges.
           </motion.p>
 
