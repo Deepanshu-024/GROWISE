@@ -1,8 +1,11 @@
-import { createAgent, createMiddleware } from "langchain";
-import { ToolMessage } from "@langchain/core/messages";
+import { createAgent } from "langchain";
+import {
+    createToolBudgetMiddleware,
+    resolveCallbackToolName,
+} from "../tools/agent-middleware";
 import { gpt5Mini } from "@/lib/llm";
 import prisma from "@/lib/prisma";
-import { searchCodeTool, getFileContentTool, githubContextSchema } from "../analysis/tools/agent-tools";
+import { searchCodeTool, getFileContentTool, githubContextSchema } from "../tools/agent-tools";
 
 // --- Types --------------------------------------------------------------------
 
@@ -334,13 +337,17 @@ export async function runDatabaseAgent(
     const startTime = Date.now();
 
 
-    let toolCallCount = 0;
-    let cumulativeInputTokens = 0;
-    let cumulativeOutputTokens = 0;
-    let lastToolName = "unknown";
-
     const emit = (event: StreamEvent) => {
         try { onEvent?.(event); } catch { /* ignore stream errors */ }
+    };
+
+    const shared = {
+        toolCallCount: 0,
+        cumulativeInputTokens: 0,
+        cumulativeOutputTokens: 0,
+        lastToolName: "unknown",
+        startTime,
+        emit,
     };
 
     console.log(`[dbAgent] Starting investigation for: ${repositoryId}`);
@@ -402,148 +409,11 @@ export async function runDatabaseAgent(
 
         console.log(`[dbAgent] Repo: ${repository.fullName} (${branch})`);
 
-        // -- Tool budget middleware (custom) ------------------------------
-        // The built-in toolCallLimitMiddleware sends a vague "Tool call limit exceeded"
-        // message that doesn't instruct the agent to produce its report.
-        // This custom middleware sends explicit instructions to generate findings.
-        const TOOL_BUDGET = 15;
-        const SEARCH_BUDGET = 3;
-        let _toolCalls = 0;
-        let _searchCalls = 0;
-
-        const toolBudgetMiddleware = createMiddleware({
-            name: "ToolBudgetMiddleware",
-
-            // --- Capture agent reasoning after every LLM call in the loop ---
-            afterModel: (state: any) => {
-                const lastMsg = state.messages?.[state.messages.length - 1];
-                if (!lastMsg) return;
-
-                // --- Extract reasoning from the AIMessage ---
-                let reasoning = "";
-
-                // 1. contentBlocks (LangChain standardized format)
-                //    OpenAI: [{type:"reasoning", summary:[{type:"summary_text", text:"..."}]}, {type:"text", text:"..."}]
-                //    Anthropic: [{type:"thinking", thinking:"..."}, {type:"text", text:"..."}]
-                const blocks = lastMsg.contentBlocks ?? lastMsg.content_blocks;
-                if (Array.isArray(blocks)) {
-                    for (const block of blocks) {
-                        if (block.type === "reasoning" && Array.isArray(block.summary)) {
-                            // OpenAI reasoning format
-                            const summaryTexts = block.summary
-                                .filter((s: any) => s.type === "summary_text" && s.text)
-                                .map((s: any) => s.text);
-                            if (summaryTexts.length > 0) reasoning += summaryTexts.join(" ");
-                        } else if (block.type === "thinking" && block.thinking) {
-                            // Anthropic thinking format
-                            reasoning += block.thinking;
-                        } else if (block.type === "text" && block.text) {
-                            // Plain text content alongside tool_calls
-                            reasoning += block.text;
-                        }
-                    }
-                }
-
-                // 2. Fallback: message.content as string
-                if (!reasoning && typeof lastMsg.content === "string" && lastMsg.content.trim()) {
-                    reasoning = lastMsg.content.trim();
-                }
-
-                // 3. Fallback: message.content as array of parts
-                if (!reasoning && Array.isArray(lastMsg.content)) {
-                    const textParts = lastMsg.content
-                        .filter((p: any) => (p.type === "text" && p.text) || (p.type === "reasoning"))
-                        .map((p: any) => {
-                            if (p.type === "reasoning" && Array.isArray(p.summary)) {
-                                return p.summary.map((s: any) => s.text).filter(Boolean).join(" ");
-                            }
-                            return p.text ?? "";
-                        });
-                    if (textParts.length > 0) reasoning = textParts.join("\n").trim();
-                }
-
-                // --- Extract tool calls being made ---
-                const toolCalls = lastMsg.tool_calls ?? [];
-                const toolNames = toolCalls.map((tc: any) => tc.name ?? "?").join(", ");
-
-                // --- Log reasoning ---
-                if (reasoning) {
-                    console.log(`\n💭 [Agent] Reasoning: ${reasoning.slice(0, 500)}${reasoning.length > 500 ? "..." : ""}`);
-                    emit({
-                        type: "agent_thought",
-                        stepNumber: toolCallCount,
-                        timestamp: new Date().toISOString(),
-                        elapsedMs: Date.now() - startTime,
-                        reasoning: reasoning.slice(0, 2000),
-                        cumulativeTokens: {
-                            inputTokens: cumulativeInputTokens,
-                            outputTokens: cumulativeOutputTokens,
-                            totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
-                        },
-                    });
-                }
-
-                if (toolCalls.length > 0) {
-                    console.log(`🤖 [Agent] Selecting tool(s): ${toolNames}`);
-                    if (toolCalls[0]?.name) lastToolName = toolCalls[0].name;
-                }
-
-                // --- Extract token usage ---
-                const usageMeta = lastMsg.usage_metadata;
-                if (usageMeta) {
-                    const inTok = usageMeta.input_tokens ?? 0;
-                    const outTok = usageMeta.output_tokens ?? 0;
-                    cumulativeInputTokens += inTok;
-                    cumulativeOutputTokens += outTok;
-                    console.log(`📊 [Agent] Tokens: +${inTok}in/+${outTok}out (cumulative: ${cumulativeInputTokens}in/${cumulativeOutputTokens}out)`);
-
-                    emit({
-                        type: "llm_end",
-                        stepNumber: toolCallCount,
-                        timestamp: new Date().toISOString(),
-                        elapsedMs: Date.now() - startTime,
-                        tokenUsage: { inputTokens: inTok, outputTokens: outTok, totalTokens: inTok + outTok },
-                        cumulativeTokens: {
-                            inputTokens: cumulativeInputTokens,
-                            outputTokens: cumulativeOutputTokens,
-                            totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
-                        },
-                    });
-                }
-
-                return; // no state mutation
-            },
-
-            // --- Enforce tool budgets ---
-            wrapToolCall: async (request: any, handler: any) => {
-                const toolName = request.toolCall?.name ?? "unknown";
-                _toolCalls++;
-
-                // Per-tool limit: searchCode
-                if (toolName === "searchCode") {
-                    _searchCalls++;
-                    if (_searchCalls > SEARCH_BUDGET) {
-                        console.log(`🚫 [Middleware] searchCode BLOCKED (${_searchCalls}/${SEARCH_BUDGET})`);
-                        return new ToolMessage({
-                            content: `searchCode budget exhausted (${SEARCH_BUDGET}/${SEARCH_BUDGET} used). Do NOT call searchCode again. Use getFileContent to navigate the file tree instead, or if you have enough evidence, generate your findings report now.`,
-                            tool_call_id: request.toolCall?.id ?? "unknown",
-                        });
-                    }
-                }
-
-                // Global tool limit
-                if (_toolCalls > TOOL_BUDGET) {
-                    console.log(`🚫 [Middleware] TOOL BUDGET EXHAUSTED (${_toolCalls}/${TOOL_BUDGET}) — blocking ${toolName}`);
-                    return new ToolMessage({
-                        content: `TOOL BUDGET EXHAUSTED (${TOOL_BUDGET}/${TOOL_BUDGET} calls used). You MUST stop calling tools immediately. Generate your final findings report NOW using all evidence gathered so far. Output the compact findings digest as described in your system prompt. Do not attempt any more tool calls.`,
-                        tool_call_id: request.toolCall?.id ?? "unknown",
-                    });
-                }
-
-                // Within budget — execute normally
-                console.log(`📋 [Middleware] Tool ${_toolCalls}/${TOOL_BUDGET}: ${toolName}`);
-                return handler(request);
-            },
+        const { middleware: toolBudgetMiddleware } = createToolBudgetMiddleware({
+            agentLabel: "dbAgent",
+            toolBudget: 15,
+            searchBudget: 3,
+            shared,
         });
 
         // -- Create agent & invoke ----------------------------------------
@@ -613,107 +483,66 @@ Return the compact findings digest required by the system prompt. Do not call an
                 callbacks: [
                     {
                         handleToolStart(tool: any, input: string) {
-                            // Increment tool call counter (this is the only reliable callback that fires per tool call)
-                            toolCallCount++;
-
-                            // Resolve tool name — try multiple paths since LangChain serializes differently
-                            const toolName = tool.name ?? tool.constructor.name;
-                            lastToolName = toolName;
-
-                            console.log(`\n🔧 [Step ${toolCallCount}/15] TOOL CALL: ${toolName}`);
-
+                            shared.toolCallCount++;
+                            const toolName = resolveCallbackToolName(tool, shared.lastToolName);
+                            shared.lastToolName = toolName;
+                            let parsedInput: unknown = input;
+                            try { parsedInput = JSON.parse(input); } catch { /* keep raw */ }
+                            const inputPreview = typeof parsedInput === "object"
+                                ? JSON.stringify(parsedInput).slice(0, 200)
+                                : String(parsedInput).slice(0, 200);
+                            console.log(`\n🔧 [Step ${shared.toolCallCount}/15] TOOL CALL: ${toolName}`);
+                            console.log(`   Input: ${inputPreview}`);
                             emit({
                                 type: "tool_start",
-                                stepNumber: toolCallCount,
+                                stepNumber: shared.toolCallCount,
                                 timestamp: new Date().toISOString(),
                                 elapsedMs: Date.now() - startTime,
                                 toolName,
-                                toolInput: input,
+                                toolInput: parsedInput,
                                 cumulativeTokens: {
-                                    inputTokens: cumulativeInputTokens,
-                                    outputTokens: cumulativeOutputTokens,
-                                    totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                                    inputTokens: shared.cumulativeInputTokens,
+                                    outputTokens: shared.cumulativeOutputTokens,
+                                    totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens,
                                 },
                             });
                         },
-
                         handleToolEnd(output: any) {
-                            // Extract clean content from LangChain ToolMessage objects
-                            let cleanOutput: string;
-                            if (typeof output === "string") {
-                                cleanOutput = output;
-                            } else if (output?.content != null) {
-                                // ToolMessage object — extract .content directly
-                                cleanOutput = typeof output.content === "string"
-                                    ? output.content
-                                    : JSON.stringify(output.content);
-                            } else if (output?.kwargs?.content != null) {
-                                // Serialized ToolMessage — extract from .kwargs.content
-                                cleanOutput = typeof output.kwargs.content === "string"
-                                    ? output.kwargs.content
-                                    : JSON.stringify(output.kwargs.content);
-                            } else {
-                                cleanOutput = JSON.stringify(output) ?? "";
-                            }
-
-                            // Detect middleware limit responses
-                            const isMiddlewareBlock = cleanOutput.includes("Tool call limit")
-                                || cleanOutput.includes("ToolCallLimitExceeded")
-                                || cleanOutput.includes("tool call limit reached");
-
-                            if (isMiddlewareBlock) {
-                                console.log(`🚫 [Step ${toolCallCount}/15] MIDDLEWARE BLOCKED: ${lastToolName}`);
-                            } else {
-                                console.log(`📄 [Step ${toolCallCount}/15] TOOL RESPONSE: ${lastToolName} (${cleanOutput.length} chars)`);
-                                console.log(`   Preview: ${cleanOutput.slice(0, 200)}${cleanOutput.length > 200 ? "..." : ""}`);
-                            }
-
+                            const outputStr = typeof output?.content === "string"
+                                ? output.content
+                                : typeof output === "string"
+                                    ? output
+                                    : JSON.stringify(output) ?? "";
+                            const preview = outputStr.slice(0, 300);
+                            console.log(`📄 [Step ${shared.toolCallCount}/15] TOOL RESPONSE: ${shared.lastToolName} (${outputStr.length} chars)`);
+                            console.log(`   Preview: ${preview}${outputStr.length > 300 ? "..." : ""}`);
                             emit({
                                 type: "tool_end",
-                                stepNumber: toolCallCount,
+                                stepNumber: shared.toolCallCount,
                                 timestamp: new Date().toISOString(),
                                 elapsedMs: Date.now() - startTime,
-                                toolName: lastToolName,
-                                toolOutput: cleanOutput.length > 5000
-                                    ? cleanOutput.slice(0, 5000) + "\n... [truncated]"
-                                    : cleanOutput,
-                                toolOutputLength: cleanOutput.length,
+                                toolName: shared.lastToolName,
+                                toolOutput: outputStr.slice(0, 5000),
+                                toolOutputLength: outputStr.length,
                                 cumulativeTokens: {
-                                    inputTokens: cumulativeInputTokens,
-                                    outputTokens: cumulativeOutputTokens,
-                                    totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                                    inputTokens: shared.cumulativeInputTokens,
+                                    outputTokens: shared.cumulativeOutputTokens,
+                                    totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens,
                                 },
                             });
                         },
-
-                        handleLLMEnd(output: any) {
-                            // Token extraction — kept as fallback for when afterModel doesn't fire
-                            // (e.g., in nested chains or legacy compatibility)
-                            const usage = output?.llmOutput?.tokenUsage
-                                ?? output?.llmOutput?.usage
-                                ?? null;
-                            if (usage) {
-                                const inTok = usage.promptTokens ?? usage.prompt_tokens ?? usage.inputTokens ?? usage.input_tokens ?? 0;
-                                const outTok = usage.completionTokens ?? usage.completion_tokens ?? usage.outputTokens ?? usage.output_tokens ?? 0;
-                                // Only add if afterModel didn't already count these
-                                // (afterModel uses usage_metadata which is the same data)
-                                // We skip to avoid double-counting
-                            }
-                        },
-
                         handleChainError(error: Error) {
-                            console.log(`\n❌ [dbAgent] CHAIN ERROR: ${error.message}`);
-
+                            console.log(`\n[dbAgent] CHAIN ERROR: ${error.message}`);
                             emit({
                                 type: "error",
-                                stepNumber: toolCallCount,
+                                stepNumber: shared.toolCallCount,
                                 timestamp: new Date().toISOString(),
                                 elapsedMs: Date.now() - startTime,
                                 error: error.message,
                                 cumulativeTokens: {
-                                    inputTokens: cumulativeInputTokens,
-                                    outputTokens: cumulativeOutputTokens,
-                                    totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                                    inputTokens: shared.cumulativeInputTokens,
+                                    outputTokens: shared.cumulativeOutputTokens,
+                                    totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens,
                                 },
                             });
                         },
@@ -756,23 +585,21 @@ Return the compact findings digest required by the system prompt. Do not call an
         }
 
         console.log(`\n✅ [dbAgent] Complete. ${totalToolCalls} tool calls, ${rawFindings.length} chars findings, ${executionTimeMs}ms`);
-        console.log(`📊 [dbAgent] Final tokens: ${cumulativeInputTokens}in / ${cumulativeOutputTokens}out`);
-
-
+        console.log(`📊 [dbAgent] Final tokens: ${shared.cumulativeInputTokens}in / ${shared.cumulativeOutputTokens}out`);
 
         // Emit done event with final totals
         emit({
             type: "done",
-            stepNumber: toolCallCount,
+            stepNumber: shared.toolCallCount,
             timestamp: new Date().toISOString(),
             elapsedMs: executionTimeMs,
             rawFindings,
             totalToolCalls,
             executionTimeMs,
             cumulativeTokens: {
-                inputTokens: cumulativeInputTokens,
-                outputTokens: cumulativeOutputTokens,
-                totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                inputTokens: shared.cumulativeInputTokens,
+                outputTokens: shared.cumulativeOutputTokens,
+                totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens,
             },
         });
 
@@ -789,11 +616,9 @@ Return the compact findings digest required by the system prompt. Do not call an
 
         console.error(`[dbAgent] Error: ${message}`);
 
-
-
         emit({
             type: "done",
-            stepNumber: toolCallCount,
+            stepNumber: shared.toolCallCount,
             timestamp: new Date().toISOString(),
             elapsedMs: executionTimeMs,
             rawFindings: null,
@@ -801,9 +626,9 @@ Return the compact findings digest required by the system prompt. Do not call an
             executionTimeMs,
             error: message,
             cumulativeTokens: {
-                inputTokens: cumulativeInputTokens,
-                outputTokens: cumulativeOutputTokens,
-                totalTokens: cumulativeInputTokens + cumulativeOutputTokens,
+                inputTokens: shared.cumulativeInputTokens,
+                outputTokens: shared.cumulativeOutputTokens,
+                totalTokens: shared.cumulativeInputTokens + shared.cumulativeOutputTokens,
             },
         });
 

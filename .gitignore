@@ -45,3 +45,4 @@ next-env.d.ts
 # test pages and routes
 /src/app/test/
 /src/app/api/test/
+/actions/test/
