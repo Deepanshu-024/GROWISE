@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import prisma from "@/lib/prisma";
-import { orchestrateAgents } from "../../../../../actions/agents/orchestrator";
+import { orchestrateAgents } from "../../../../actions/agents/orchestrator";
 
 /**
  * POST /api/agent/orchestrate

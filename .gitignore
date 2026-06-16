@@ -42,4 +42,6 @@ next-env.d.ts
 
 /src/generated/prisma
 
-/src/generated/prisma
+# test pages and routes
+/src/app/test/
+/src/app/api/test/

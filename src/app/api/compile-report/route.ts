@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { runReportCompiler } from "../../../../../actions/agents/report-compiler";
+import { runReportCompiler } from "../../../../actions/agents/report-compiler";
 
 /**
  * POST /api/agent/compile-report
