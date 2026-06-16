@@ -42,12 +42,20 @@ export default function Navigation() {
     }, 120)
   }
 
-  // Re-fetch on route change so new reports appear
+  // Fetch reported repos when user or pathname changes to load them as the page loads
   useEffect(() => {
-    if (loaded) {
-      getReportedRepos().then((repos) => setReportedRepos(repos))
+    if (user) {
+      getReportedRepos().then((repos) => {
+        setReportedRepos(repos)
+        setLoaded(true)
+      })
+    } else {
+      Promise.resolve().then(() => {
+        setReportedRepos([])
+        setLoaded(false)
+      })
     }
-  }, [pathname])
+  }, [user, pathname])
 
   const isReportsActive = pathname.startsWith("/project")
 
