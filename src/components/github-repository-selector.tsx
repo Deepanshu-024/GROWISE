@@ -628,10 +628,10 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
                                                 <div
                                                     key={s}
                                                     className={`h-1.5 flex-1 rounded-full transition-colors ${isDone
-                                                            ? "bg-green-500"
-                                                            : isActive
-                                                                ? "bg-blue-500 animate-pulse"
-                                                                : "bg-muted"
+                                                        ? "bg-green-500"
+                                                        : isActive
+                                                            ? "bg-blue-500 animate-pulse"
+                                                            : "bg-muted"
                                                         }`}
                                                 />
                                             );

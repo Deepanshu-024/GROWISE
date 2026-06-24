@@ -40,13 +40,20 @@ export async function GET(req: NextRequest) {
                 id: true,
                 repositoryId: true,
                 compiledReport: true,
+                isSupported: true,
+                framework: true,
             },
         });
 
         const dbMap = new Map(
             dbRepos.map((r) => [
                 r.repositoryId,
-                { dbId: r.id, hasReport: r.compiledReport !== null },
+                {
+                    dbId: r.id,
+                    hasReport: r.compiledReport !== null,
+                    isSupported: r.isSupported,
+                    framework: r.framework,
+                },
             ])
         );
 
@@ -56,6 +63,8 @@ export async function GET(req: NextRequest) {
                 ...repo,
                 dbId: dbInfo?.dbId ?? null,
                 hasReport: dbInfo?.hasReport ?? false,
+                isSupported: dbInfo?.isSupported ?? null,
+                framework: dbInfo?.framework ?? null,
             };
         });
 
