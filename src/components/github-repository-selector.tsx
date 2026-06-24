@@ -266,7 +266,7 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
         abortRef.current = controller;
 
         try {
-            const response = await fetch("/api/agent/orchestrate", {
+            const response = await fetch("/api/orchestrate", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ repositoryId: repoId }),
@@ -464,7 +464,7 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
         abortRef.current = controller;
 
         try {
-            const response = await fetch("/api/agent/compile-report", {
+            const response = await fetch("/api/compile-report", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ repositoryId: analyzedRepoId }),
@@ -628,10 +628,10 @@ export function GitHubRepositorySelector({ open, onOpenChange, onSelectRepositor
                                                 <div
                                                     key={s}
                                                     className={`h-1.5 flex-1 rounded-full transition-colors ${isDone
-                                                            ? "bg-green-500"
-                                                            : isActive
-                                                                ? "bg-blue-500 animate-pulse"
-                                                                : "bg-muted"
+                                                        ? "bg-green-500"
+                                                        : isActive
+                                                            ? "bg-blue-500 animate-pulse"
+                                                            : "bg-muted"
                                                         }`}
                                                 />
                                             );

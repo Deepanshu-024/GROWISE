@@ -2,14 +2,14 @@ import { createAgent } from "langchain";
 import {
     createToolBudgetMiddleware,
     resolveCallbackToolName,
-} from "./agent-middleware";
+} from "../tools/agent-middleware";
 import { gpt5Mini } from "@/lib/llm";
 import prisma from "@/lib/prisma";
 import {
     searchCodeTool,
     getFileContentTool,
     githubContextSchema,
-} from "../analysis/tools/agent-tools";
+} from "../tools/agent-tools";
 
 // --- Types --------------------------------------------------------------------
 

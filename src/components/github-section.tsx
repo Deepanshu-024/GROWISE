@@ -8,6 +8,7 @@ import { toast } from "sonner"
 import { motion, AnimatePresence } from "motion/react"
 import { triggerWorkflow } from "../../actions/trigger-workflow"
 import { getAnalysisUsage, type AnalysisUsage } from "../../actions/get-analysis-usage"
+import { checkPackageAndFramework } from "../../actions/analysis/repository-analysis"
 
 interface Repository {
   id: number
@@ -18,6 +19,8 @@ interface Repository {
   url: string
   dbId: string | null       // Database UUID (null if not yet in DB)
   hasReport: boolean         // Whether a compiled report exists
+  isSupported?: boolean | null
+  framework?: string | null
 }
 
 interface GitHubSectionProps {
@@ -41,6 +44,8 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
   const [usage, setUsage] = useState<AnalysisUsage | null>(null)
   const [loadingUsage, setLoadingUsage] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
+  const [repoIsUnsupported, setRepoIsUnsupported] = useState<boolean>(false)
+  const [checkingFramework, setCheckingFramework] = useState(false)
 
   useEffect(() => {
     if (!isAuthLoaded) return
@@ -116,6 +121,7 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
 
     // Otherwise open the analysis modal
     setSelectedRepo(repo)
+    setRepoIsUnsupported(repo.isSupported === false || repo.framework === "unsupported")
     setLoadingUsage(true)
     try {
       const usageData = await getAnalysisUsage()
@@ -131,11 +137,52 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
     if (analyzing) return
     setSelectedRepo(null)
     setUsage(null)
+    setRepoIsUnsupported(false)
   }, [analyzing])
+
+  const handleRedetectFramework = async () => {
+    if (!selectedRepo || checkingFramework) return
+    setCheckingFramework(true)
+    toast.info("Re-detecting framework...")
+    try {
+      const result = await checkPackageAndFramework(
+        selectedRepo.id.toString(),
+        selectedRepo.fullName
+      )
+      if (result.isSupported) {
+        toast.success(`Detected ${result.framework?.toUpperCase()} project`)
+        setRepoIsUnsupported(false)
+        setRepositories(prev =>
+          prev.map(r =>
+            r.id === selectedRepo.id
+              ? { ...r, isSupported: true, framework: result.framework }
+              : r
+          )
+        )
+      } else {
+        toast.error("Could not detect Next.js or React framework", {
+          description: result.error || "Repository may not be a supported framework",
+        })
+        setRepoIsUnsupported(true)
+        setRepositories(prev =>
+          prev.map(r =>
+            r.id === selectedRepo.id
+              ? { ...r, isSupported: false, framework: "unsupported" }
+              : r
+          )
+        )
+      }
+    } catch (error) {
+      console.error("Error re-detecting framework:", error)
+      toast.error("Failed to re-detect framework")
+    } finally {
+      setCheckingFramework(false)
+    }
+  }
 
   // ── Run analysis from modal ────────────────────────────────────────────────
   const handleAnalyze = async () => {
-    if (!selectedRepo || analyzing) return
+    if (!selectedRepo || analyzing || repoIsUnsupported) return
 
     setAnalyzing(true)
     toast.info("Starting analysis pipeline…")
@@ -148,6 +195,16 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
 
       if (!result.success) {
         toast.error("Analysis failed", { description: result.error })
+        if (result.error?.toLowerCase().includes("unsupported") || result.error?.toLowerCase().includes("package.json")) {
+          setRepoIsUnsupported(true)
+          setRepositories(prev =>
+            prev.map(r =>
+              r.id === selectedRepo.id
+                ? { ...r, isSupported: false, framework: "unsupported" }
+                : r
+            )
+          )
+        }
         return
       }
 
@@ -343,14 +400,29 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
                 </div>
 
                 {/* Middle Section: Text Message / Loader */}
-                <div className="min-h-[36px] flex items-center select-none">
+                <div className="min-h-[36px] flex flex-col justify-center select-none gap-2">
                   {loadingUsage ? (
                     <div className="flex items-center justify-center w-full py-1">
                       <Loader2 className="w-4 h-4 animate-spin text-violet-400/60" />
                     </div>
+                  ) : repoIsUnsupported ? (
+                    <div className="p-2 bg-red-500/10 border border-red-500/20 rounded-lg text-[10px] text-red-400 flex items-center gap-2 w-full justify-between">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-red-400" />
+                        <span className="font-medium text-red-200 truncate">Framework not supported</span>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={checkingFramework}
+                        onClick={handleRedetectFramework}
+                        className="font-semibold text-red-300 hover:text-red-200 underline shrink-0 disabled:opacity-50"
+                      >
+                        {checkingFramework ? "Re-detecting..." : "Retry"}
+                      </button>
+                    </div>
                   ) : (
                     usage && (
-                      <div className="text-[11px] sm:text-[12px] text-white/60 leading-normal font-medium">
+                      <div className="text-[11px] sm:text-[12px] text-white/60 leading-normal font-medium text-left">
                         {isAtLimit ? (
                           <span className="text-red-400/95">
                             Generation limit reached (2/2 used). Pro plans are coming soon to unlock unlimited analyses.
@@ -371,14 +443,14 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
                   <div className="flex items-center gap-2">
                     <button
                       onClick={closeModal}
-                      disabled={analyzing}
+                      disabled={analyzing || checkingFramework}
                       className="flex-1 h-7 rounded-md text-[10px] font-medium text-white/50 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] hover:border-white/[0.15] transition-all duration-200 disabled:opacity-50"
                     >
                       Cancel
                     </button>
                     <button
                       onClick={handleAnalyze}
-                      disabled={analyzing || isAtLimit}
+                      disabled={analyzing || isAtLimit || repoIsUnsupported || checkingFramework}
                       className="flex-1 h-7 rounded-md text-[10px] font-semibold flex items-center justify-center gap-1 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed bg-gradient-to-r from-violet-600 to-emerald-600 text-white hover:from-violet-500 hover:to-emerald-500 hover:shadow-[0_0_10px_rgba(139,92,246,0.2)] animate-pulse-subtle"
                     >
                       {analyzing ? (
