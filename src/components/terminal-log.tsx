@@ -30,11 +30,11 @@ export default function TerminalLog() {
 
   return (
     <div className="flex flex-col font-mono text-xs leading-relaxed overflow-hidden">
-      <div className="mb-4 text-white/30 uppercase tracking-widest flex items-center gap-2">
+      <div className="mb-6 text-white/30 uppercase tracking-widest flex items-center gap-2">
         <Command className="w-3.5 h-3.5" />
         <span>System Log</span>
       </div>
-      <div className="space-y-1">
+      <div className="space-y-3">
         <AnimatePresence mode="popLayout">
           {displayedLines.map((line, i) => (
             <motion.div
