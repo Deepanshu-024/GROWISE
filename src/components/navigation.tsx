@@ -11,7 +11,7 @@ const navLinks = [
   { label: "Home", href: "/" },
   { label: "Dashboard", href: "/dashboard" },
   { label: "Pricing", href: "/pricing" },
-  { label: "Contact", href: "/contact" },
+  { label: "Docs", href: "#" },
 ]
 
 export default function Navigation() {
@@ -65,27 +65,30 @@ export default function Navigation() {
       <a
         key={label}
         href={href}
-        className={`transition-colors text-sm ${isActive ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground"}`}
+        className={`transition-colors tracking-widest ${isActive ? "text-white font-medium" : "text-white/50 hover:text-white"}`}
       >
         {label}
       </a>
     )
   }
 
+  const isHome = pathname === "/"
+
   return (
-    <nav className="fixed top-0 w-full z-50 bg-background/80 backdrop-blur-md border-b border-border/50">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
-        {/* Logo — fixed width so center stays centered */}
+    <nav className={`w-full z-50 transition-all duration-300 border-b border-white/15 h-16 flex items-center justify-between px-8`}>
+      {/* Logo — fixed width so center stays centered */}
         <div className="flex items-center gap-2.5 flex-1 md:flex-none md:w-48">
-          <span className="font-semibold text-base sm:text-lg bg-gradient-to-r from-emerald-400 to-white bg-clip-text text-transparent">Gro(W)ise</span>
+          <span className="font-mono text-xl font-black tracking-tighter uppercase">
+            GRO
+            <span className="text-acid-green">(W)</span>
+            ISE
+          </span>
         </div>
 
         {/* Center Navigation — true center */}
-        <div className="flex-1 hidden md:flex items-center justify-center gap-8">
-          {/* Home */}
+        <div className="flex-1 hidden md:flex items-center justify-center gap-8 font-mono text-xs uppercase tracking-widest font-bold">
           {renderNavLink("Home", "/")}
 
-          {/* Reports — right after Home, only for signed-in users */}
           <SignedIn>
             <div
               className="relative"
@@ -93,9 +96,9 @@ export default function Navigation() {
               onMouseLeave={handleMouseLeave}
             >
               <button
-                className={`transition-colors text-sm ${isReportsActive
-                  ? "text-foreground font-medium"
-                  : "text-muted-foreground hover:text-foreground"
+                className={`transition-colors tracking-widest ${isReportsActive
+                  ? "text-white font-medium"
+                  : "text-white/50 hover:text-white"
                 }`}
               >
                 Reports
@@ -112,49 +115,41 @@ export default function Navigation() {
                   }
                 `}
               >
-                <div className="bg-background/95 backdrop-blur-xl border border-border/50 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.35)]">
-                <div className="py-2 px-1">
-                  {reportedRepos.length === 0 ? (
-                    <p className="px-3 py-3 text-sm text-muted-foreground/60 text-center">
-                      No reports yet
-                    </p>
-                  ) : (
-                    reportedRepos.map((repo) => (
-                      <Link
-                        key={repo.id}
-                        href={`/project/${repo.id}`}
-                        className="block px-3 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors rounded-md hover:bg-white/[0.04]"
-                        onClick={() => setIsHovering(false)}
-                      >
-                        <span className="border-b border-transparent hover:border-current transition-[border-color] duration-150">
-                          {repo.name}
-                        </span>
-                      </Link>
-                    ))
-                  )}
-                </div>
+                <div className="bg-[#111111]/95 backdrop-blur-xl border border-white/10 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.35)]">
+                  <div className="py-2 px-1">
+                    {reportedRepos.length === 0 ? (
+                      <p className="px-3 py-3 text-[10px] text-white/30 text-center uppercase tracking-widest">
+                        No reports yet
+                      </p>
+                    ) : (
+                      reportedRepos.map((repo) => (
+                        <Link
+                          key={repo.id}
+                          href={`/project/${repo.id}`}
+                          className="block px-3 py-2 text-[11px] text-white/50 hover:text-white transition-colors rounded-md hover:bg-white/[0.04]"
+                          onClick={() => setIsHovering(false)}
+                        >
+                          {repo.name.toUpperCase()}
+                        </Link>
+                      ))
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
           </SignedIn>
 
-          {/* Remaining nav links */}
           {navLinks.slice(1).map(({ label, href }) => renderNavLink(label, href))}
         </div>
 
         {/* Desktop Auth Buttons — hidden on mobile */}
-        <div className="hidden md:flex items-center justify-end gap-3 flex-1 md:flex-none md:w-48">
+        <div className="hidden md:flex items-center justify-end gap-3 flex-1 md:flex-none md:w-48 font-mono">
           <SignedOut>
             <SignInButton fallbackRedirectUrl="/">
-              <button className="px-4 py-2 text-sm font-medium border border-border hover:border-muted-foreground hover:text-foreground text-muted-foreground transition-colors rounded-full">
+              <button className="px-4 py-1.5 text-xs font-bold border border-white/20 acid-sweep uppercase tracking-widest">
                 Login
               </button>
             </SignInButton>
-            <SignUpButton fallbackRedirectUrl="/">
-              <button className="px-4 py-2 text-sm font-medium bg-primary text-primary-foreground hover:opacity-90 transition-opacity rounded-full">
-                Sign Up
-              </button>
-            </SignUpButton>
           </SignedOut>
           <SignedIn>
             <UserButton afterSignOutUrl="/" />
@@ -171,7 +166,6 @@ export default function Navigation() {
             {isOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
           </button>
         </div>
-      </div>
 
       {/* Mobile Navigation Dropdown Drawer */}
       {isOpen && (

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { Github, Lock, Globe, Plus, Loader2, ChevronRight, Zap, X, Sparkles, AlertTriangle, FileCheck } from "lucide-react"
+import { Github, Lock, Globe, Plus, Loader2, ChevronRight, Zap, X, Sparkles, AlertTriangle, FileCheck, CircleCheck } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { useUser, useClerk } from "@clerk/nextjs"
 import { toast } from "sonner"
@@ -101,6 +101,8 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
       setLoadingRepos(false)
     }
   }
+
+  const isAtLimit = usage !== null && usage.remaining <= 0
 
   const handleConnect = () => {
     if (!isAuthLoaded) return
@@ -240,32 +242,47 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
     return (
       <button
         onClick={handleConnect}
-        className="w-full max-w-md mt-4 px-4 sm:px-6 py-3 border border-[#22c55e]/40 hover:border-[#22c55e]/70 hover:shadow-[0_0_15px_rgba(34,197,94,0.3)] text-muted-foreground hover:text-[#22c55e] transition-all duration-200 rounded-xl font-medium text-xs sm:text-sm whitespace-nowrap bg-transparent hover:bg-[#22c55e]/5 flex items-center justify-center gap-2"
+        className="flex flex-col items-center gap-6 group transition-all duration-300"
       >
-        <Github className="w-4 h-4 shrink-0" />
-        Connect GitHub & Import Repository
+        <div className="flex items-center gap-4 font-mono text-2xl md:text-3xl lg:text-[2.5rem] font-bold tracking-tight">
+          <span className="text-white/40 group-hover:text-[#111111]/40 transition-colors">
+            $
+          </span>
+          <span className="text-white group-hover:text-[#111111] transition-colors uppercase">
+            CONNECT_GITHUB_REPOSITORY
+          </span>
+          <span className="cursor-blink" />
+        </div>
+        
+        <div className="flex items-center gap-8 opacity-0 transition-all duration-700 translate-y-4 group-hover:opacity-100 group-hover:translate-y-0 text-[#111111]">
+          <div className="flex items-center gap-2 text-xs uppercase tracking-widest font-mono font-bold">
+            <Github className="w-5 h-5" />
+            <span>Select Repository</span>
+          </div>
+          <div className="h-px w-12 bg-current/20" />
+          <div className="flex items-center gap-2 text-xs uppercase tracking-widest font-mono font-bold">
+            <CircleCheck className="w-5 h-5" />
+            <span>Analyze Scale</span>
+          </div>
+        </div>
       </button>
     )
   }
 
-  // ── Derived values for modal ──────────────────────────────────────────────
-  const isAtLimit = usage !== null && usage.remaining <= 0
-  const usedAfter = usage ? usage.used + 1 : 0
-
   // ── State 2: GitHub Connected ─────────────────────────────────────────────
   return (
-    <div className="w-full max-w-md flex flex-col items-center">
+    <div className="w-full max-w-lg flex flex-col items-center font-mono">
       {/* Connected indicator with dynamic color/text */}
-      <div className="flex items-center gap-1.5 mb-1.5 h-4 transition-all duration-350">
-        <div className={`w-1.5 h-1.5 rounded-full animate-pulse transition-colors duration-500 ${selectedRepo ? "bg-violet-400" : "bg-emerald-400"}`} />
+      <div className="flex items-center gap-2 mb-4 h-4 transition-all duration-350 uppercase tracking-[0.2em]">
+        <div className={`w-1.5 h-1.5 rounded-full animate-pulse bg-acid-green`} />
         <span className="text-[10px] text-white/40 select-none">
           {selectedRepo ? (
             <>
-              Confirming analysis for <span className="text-violet-400/80 font-medium">{selectedRepo.name}</span>
+              Confirming analysis for <span className="text-acid-green font-medium">{selectedRepo.name}</span>
             </>
           ) : (
             <>
-              Connected as <span className="text-emerald-400/70 font-medium">@{githubUsername}</span>
+              Connected as <span className="text-acid-green font-medium">@{githubUsername}</span>
             </>
           )}
         </span>
@@ -275,83 +292,78 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
       <motion.div
         layout
         transition={{ type: "spring", stiffness: 300, damping: 30 }}
-        className={`w-full rounded-xl p-[1px] transition-all duration-500 ${selectedRepo
-          ? "bg-gradient-to-b from-violet-500/40 via-emerald-500/20 to-white/[0.08] shadow-[0_0_30px_rgba(139,92,246,0.15)]"
-          : "bg-gradient-to-b from-emerald-500/30 via-white/[0.12] to-white/[0.06] shadow-[0_0_20px_rgba(16,185,129,0.08)]"
-          }`}
+        className={`w-full border p-[1px] transition-all duration-500 border-white/10 bg-white/[0.02]`}
       >
         <motion.div
           layout
           transition={{ type: "spring", stiffness: 300, damping: 30 }}
-          className="w-full h-[162px] rounded-[11px] bg-slate-950/90 backdrop-blur-sm overflow-hidden"
+          className="w-full h-[182px] overflow-hidden"
         >
           <AnimatePresence mode="wait" initial={false}>
             {!selectedRepo ? (
               <motion.div
                 key="repo-list"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                transition={{ duration: 0.2 }}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
                 className="w-full h-full flex flex-col justify-between"
               >
                 {loadingRepos ? (
-                  <div className="h-[120px] flex items-center justify-center">
-                    <Loader2 className="w-4 h-4 animate-spin text-emerald-400/60" />
+                  <div className="h-[140px] flex items-center justify-center">
+                    <Loader2 className="w-5 h-5 animate-spin text-acid-green/60" />
                   </div>
                 ) : repositories.length === 0 ? (
-                  <div className="h-[120px] flex items-center justify-center px-3 text-center">
-                    <p className="text-xs text-white/40">No repositories found</p>
+                  <div className="h-[140px] flex items-center justify-center px-3 text-center">
+                    <p className="text-[10px] text-white/30 tracking-widest">ERR: NO_REPOSITORIES_FOUND</p>
                   </div>
                 ) : (
-                  <div className="h-[120px] overflow-y-auto scrollbar-thin">
-                    {repositories.map((repo, index) => (
+                  <div className="h-[140px] overflow-y-auto scrollbar-thin divide-y divide-white/[0.05]">
+                    {repositories.map((repo) => (
                       <button
                         key={repo.id}
                         onClick={() => handleRepoClick(repo)}
-                        className={`w-full px-3 py-1.5 flex items-center gap-2 hover:bg-emerald-500/[0.06] transition-all duration-200 group text-left ${index !== repositories.length - 1 ? "border-b border-white/[0.07]" : ""
-                          }`}
+                        className="w-full px-4 py-2.5 flex items-center gap-3 hover:bg-white/[0.03] transition-all duration-200 group text-left"
                       >
                         {/* Icon */}
-                        <div className="shrink-0 w-5 h-5 rounded bg-white/[0.05] border border-white/[0.1] flex items-center justify-center group-hover:border-emerald-500/30 group-hover:bg-emerald-500/[0.06] transition-all duration-200">
+                        <div className="shrink-0 w-6 h-6 border border-white/5 flex items-center justify-center group-hover:border-acid-green/30 transition-all duration-200">
                           {repo.private ? (
-                            <Lock className="w-2.5 h-2.5 text-white/30 group-hover:text-emerald-400/70 transition-colors" />
+                            <Lock className="w-3 h-3 text-white/20 group-hover:text-acid-green transition-colors" />
                           ) : (
-                            <Globe className="w-2.5 h-2.5 text-white/30 group-hover:text-emerald-400/70 transition-colors" />
+                            <Globe className="w-3 h-3 text-white/20 group-hover:text-acid-green transition-colors" />
                           )}
                         </div>
 
                         {/* Name */}
-                        <span className="flex-1 min-w-0 text-[11px] font-medium text-white/70 group-hover:text-emerald-300 transition-colors truncate">
-                          {repo.name}
+                        <span className="flex-1 min-w-0 text-[11px] font-bold text-white/60 group-hover:text-white transition-colors truncate tracking-tight">
+                          {repo.name.toUpperCase()}
                         </span>
 
                         {/* Report Generated badge */}
                         {repo.hasReport ? (
-                          <span className="shrink-0 text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-violet-500/10 text-violet-300 border border-violet-500/20 flex items-center gap-1">
+                          <span className="shrink-0 text-[9px] font-bold px-2 py-0.5 bg-acid-green/10 text-acid-green border border-acid-green/20 flex items-center gap-1">
                             <FileCheck className="w-2.5 h-2.5" />
-                            Report Generated
+                            INDEXED
                           </span>
                         ) : (
                           /* Private/Public badge */
                           <span
-                            className={`shrink-0 text-[9px] font-medium px-1.5 py-0.5 rounded-full ${repo.private
-                              ? "bg-amber-500/10 text-amber-400/60 border border-amber-500/20"
-                              : "bg-emerald-500/10 text-emerald-400/60 border border-emerald-500/20"
+                            className={`shrink-0 text-[9px] font-bold px-2 py-0.5 border ${repo.private
+                              ? "bg-amber-500/10 text-amber-400/60 border-amber-500/20"
+                              : "bg-white/5 text-white/40 border-white/10"
                               }`}
                           >
-                            {repo.private ? "Private" : "Public"}
+                            {repo.private ? "PVT" : "PUB"}
                           </span>
                         )}
 
-                        <ChevronRight className="w-3 h-3 text-white/20 group-hover:text-emerald-400/40 transition-all duration-200 group-hover:translate-x-0.5 shrink-0" />
+                        <ChevronRight className="w-3 h-3 text-white/10 group-hover:text-acid-green transition-all duration-200 group-hover:translate-x-0.5 shrink-0" />
                       </button>
                     ))}
                   </div>
                 )}
 
                 {/* Footer */}
-                <div className="h-[42px] border-t border-white/[0.08] flex items-center shrink-0">
+                <div className="h-[42px] border-t border-white/10 flex items-center shrink-0">
                   <button
                     onClick={() => {
                       if (githubInstallationId) {
@@ -360,76 +372,66 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
                         window.location.href = "/api/github/install"
                       }
                     }}
-                    className="w-full h-full flex items-center justify-center gap-1.5 text-[10px] text-white/35 hover:text-emerald-400 hover:bg-emerald-500/[0.04] transition-all duration-200"
+                    className="w-full h-full flex items-center justify-center gap-2 text-[10px] text-white/20 hover:text-white hover:bg-white/5 transition-all duration-200 tracking-[0.2em]"
                   >
                     <Plus className="w-3 h-3" />
-                    Add New Repository
+                    APPEND_REPOSITORY
                   </button>
                 </div>
               </motion.div>
             ) : (
               <motion.div
                 key="confirm-box"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                transition={{ duration: 0.2 }}
-                className="w-full h-full p-3.5 flex flex-col justify-between relative"
+                initial={{ opacity: 0, scale: 0.98 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0 }}
+                className="w-full h-full p-6 flex flex-col justify-between relative"
               >
-                {/* Close button */}
-                {/* <button
-                  onClick={closeModal}
-                  disabled={analyzing}
-                  className="absolute top-3 right-3 w-5 h-5 flex items-center justify-center rounded-full bg-white/[0.05] hover:bg-white/[0.1] transition-colors disabled:opacity-50"
-                >
-                  <X className="w-3 h-3 text-white/40" />
-                </button> */}
-
                 {/* Top Section: Header */}
-                <div className="flex flex-col gap-2.5">
+                <div className="flex flex-col gap-4">
                   {/* Header */}
-                  <div className="flex items-center gap-2 select-none">
-                    <div className="w-6.5 h-6.5 rounded bg-violet-500/15 border border-violet-500/25 flex items-center justify-center shrink-0">
-                      <Zap className="w-3.5 h-3.5 text-violet-400" />
+                  <div className="flex items-center gap-3 select-none">
+                    <div className="w-10 h-10 bg-acid-green/10 border border-acid-green/20 flex items-center justify-center shrink-0">
+                      <Zap className="w-5 h-5 text-acid-green" />
                     </div>
                     <div className="min-w-0">
-                      <h3 className="text-[11px] font-semibold text-white/90 leading-tight">Analyze Repository</h3>
-                      <p className="text-[9px] text-white/40 truncate max-w-[180px]">{selectedRepo.fullName}</p>
+                      <h3 className="text-xs font-bold text-white tracking-widest uppercase">Analyze_Repository</h3>
+                      <p className="text-[10px] text-white/30 truncate max-w-[240px] font-mono">{selectedRepo.fullName}</p>
                     </div>
                   </div>
                 </div>
 
                 {/* Middle Section: Text Message / Loader */}
-                <div className="min-h-[36px] flex flex-col justify-center select-none gap-2">
+                <div className="min-h-[40px] flex flex-col justify-center select-none">
                   {loadingUsage ? (
-                    <div className="flex items-center justify-center w-full py-1">
-                      <Loader2 className="w-4 h-4 animate-spin text-violet-400/60" />
+                    <div className="flex items-center justify-center w-full">
+                      <Loader2 className="w-5 h-5 animate-spin text-acid-green/60" />
                     </div>
                   ) : repoIsUnsupported ? (
-                    <div className="p-2 bg-red-500/10 border border-red-500/20 rounded-lg text-[10px] text-red-400 flex items-center gap-2 w-full justify-between">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-red-400" />
-                        <span className="font-medium text-red-200 truncate">Framework not supported</span>
+                    <div className="p-3 bg-red-500/10 border border-red-500/20 text-[10px] text-red-400 flex items-center gap-3 w-full justify-between">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <AlertTriangle className="h-4 w-4 shrink-0" />
+                        <span className="font-bold uppercase tracking-tight">ERR: UNSUPPORTED_FRAMEWORK</span>
                       </div>
                       <button
                         type="button"
                         disabled={checkingFramework}
                         onClick={handleRedetectFramework}
-                        className="font-semibold text-red-300 hover:text-red-200 underline shrink-0 disabled:opacity-50"
+                        className="font-bold text-red-300 hover:text-white underline shrink-0 disabled:opacity-50"
                       >
-                        {checkingFramework ? "Re-detecting..." : "Retry"}
+                        RETRY
                       </button>
                     </div>
                   ) : (
                     usage && (
-                      <div className="text-[11px] sm:text-[12px] text-white/60 leading-normal font-medium text-left">
+                      <div className="text-[11px] text-white/60 leading-normal font-medium text-left">
                         {isAtLimit ? (
-                          <span className="text-red-400/95">
-                            Generation limit reached (2/2 used). Pro plans are coming soon to unlock unlimited analyses.
+                          <span className="text-red-400/90 tracking-tight font-bold">
+                            LIMIT_EXCEEDED: UPGRADE_TO_PRO
                           </span>
                         ) : (
-                          <span className="text-violet-300/90">
-                            Analyzing will use 1 of your 2 free generations ({usage.remaining} remaining). Pro plans are coming soon to unlock unlimited analyses.
+                          <span className="text-acid-green/80 tracking-tight font-bold">
+                            TOKEN_ALLOCATION: 01 / {usage.remaining} REMAINING
                           </span>
                         )}
                       </div>
@@ -438,34 +440,31 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
                 </div>
 
                 {/* Bottom Section: Actions */}
-                <div className="flex flex-col gap-2">
-                  {/* Action buttons */}
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={closeModal}
-                      disabled={analyzing || checkingFramework}
-                      className="flex-1 h-7 rounded-md text-[10px] font-medium text-white/50 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] hover:border-white/[0.15] transition-all duration-200 disabled:opacity-50"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={handleAnalyze}
-                      disabled={analyzing || isAtLimit || repoIsUnsupported || checkingFramework}
-                      className="flex-1 h-7 rounded-md text-[10px] font-semibold flex items-center justify-center gap-1 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed bg-gradient-to-r from-violet-600 to-emerald-600 text-white hover:from-violet-500 hover:to-emerald-500 hover:shadow-[0_0_10px_rgba(139,92,246,0.2)] animate-pulse-subtle"
-                    >
-                      {analyzing ? (
-                        <>
-                          <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                          Analyzing…
-                        </>
-                      ) : (
-                        <>
-                          <Zap className="w-2.5 h-2.5" />
-                          Analyze
-                        </>
-                      )}
-                    </button>
-                  </div>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={closeModal}
+                    disabled={analyzing || checkingFramework}
+                    className="flex-1 h-9 border border-white/10 text-[10px] font-bold text-white/40 hover:text-white hover:bg-white/5 transition-all duration-200 uppercase tracking-widest"
+                  >
+                    Abort
+                  </button>
+                  <button
+                    onClick={handleAnalyze}
+                    disabled={analyzing || isAtLimit || repoIsUnsupported || checkingFramework}
+                    className="flex-1 h-9 bg-acid-green text-[#111111] text-[10px] font-black flex items-center justify-center gap-2 hover:bg-white transition-all duration-200 disabled:opacity-50 disabled:grayscale tracking-widest"
+                  >
+                    {analyzing ? (
+                      <>
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        EXECUTING...
+                      </>
+                    ) : (
+                      <>
+                        <Zap className="w-3 h-3" />
+                        INITIALIZE
+                      </>
+                    )}
+                  </button>
                 </div>
               </motion.div>
             )}

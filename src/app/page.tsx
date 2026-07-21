@@ -3,66 +3,81 @@
 import { useState } from "react"
 import Navigation from "@/components/navigation"
 import GitHubSection from "@/components/github-section"
-import { LampContainer } from "@/components/ui/lamp"
+import TerminalLog from "@/components/terminal-log"
 import { motion } from "motion/react"
 
 export default function Home() {
   const [githubConnected, setGithubConnected] = useState(false)
 
   return (
-    <div className="max-h-screen flex flex-col bg-slate-950 text-foreground overflow-hidden">
+    <div className="h-screen w-full flex flex-col bg-[#111111] text-white overflow-hidden selection:bg-acid-green/30 font-sans">
       <Navigation />
 
-      {/* pt-6 pushes the lamp below the fixed navbar */}
-      <div className="pt-5">
-        <LampContainer>
-          {/* Headline — appears first with the lamp */}
-          <motion.div
-            initial={{ opacity: 0, y: 100 }}
-            whileInView={{ opacity: 1, y: -10 }}
-            transition={{
-              delay: 0.3,
-              duration: 0.8,
-              ease: "easeInOut",
-            }}
-            className="w-full max-w-4xl flex flex-col items-center px-4"
-          >
-            <h1 className="text-3xl sm:text-5xl lg:text-6xl font-bold mb-5 sm:mb-6 leading-tight bg-gradient-to-b from-white to-white/90 bg-clip-text text-transparent text-center">
-              Scale your business <br /> with confidence
-            </h1>
-          </motion.div>
+      {/* Grid Lines Overlay */}
+      <div className="absolute inset-0 pointer-events-none z-10">
+        <motion.div
+          initial={{ scaleX: 0 }}
+          animate={{ scaleX: 1 }}
+          transition={{ duration: 0.8, ease: "circOut" }}
+          className="absolute top-[60vh] left-0 w-full h-[1px] bg-white/15 origin-left"
+        />
+        <motion.div
+          initial={{ scaleY: 0 }}
+          animate={{ scaleY: 1 }}
+          transition={{ duration: 0.8, ease: "circOut", delay: 0.2 }}
+          className="absolute top-0 left-1/2 w-[1px] h-[60vh] bg-white/15 origin-top"
+        />
+        <motion.div
+          initial={{ scaleX: 0 }}
+          animate={{ scaleX: 1 }}
+          transition={{ duration: 0.6, ease: "circOut" }}
+          className="absolute top-16 left-0 w-full h-[1px] bg-white/15 origin-left"
+        />
+      </div>
 
-          {/* Subheadline — shrinks when GitHub is connected */}
-          <motion.p
-            initial={{ opacity: 0, y: 10 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            transition={{
-              delay: 1,
-              duration: 0.6,
-              ease: "easeInOut",
-            }}
-            className={`mx-auto text-balance leading-relaxed text-center transition-all duration-500 ${githubConnected
-              ? "text-base sm:text-lg text-white/60 max-w-md mb-12 sm:mb-[68px]"
-              : "text-lg sm:text-xl text-white/80 max-w-2xl mb-10 sm:mb-16"
-              }`}
-          >
-            Intelligent analysis and automated fixes for your business&apos;s scalability challenges.
-          </motion.p>
+      <main className="flex-1 grid grid-cols-1 md:grid-cols-2 grid-rows-[auto_1fr_auto] md:grid-rows-[60vh_auto]">
+        {/* Top Left: Headline */}
+        <section className="p-8 md:p-12 flex flex-col justify-end relative overflow-hidden">
+          <div className="z-20">
+            <motion.h1
+              initial={{ opacity: 0, y: 40 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.8, ease: "circOut", delay: 0.4 }}
+              className="font-mono text-[8vw] leading-[0.9] font-black tracking-tighter uppercase mb-6"
+            >
+              Scale<br />Without<br />Breaking.
+            </motion.h1>
+            <motion.p
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.8, ease: "circOut", delay: 0.6 }}
+              className="max-w-md text-white/60 text-sm leading-relaxed"
+            >
+              Intelligent analysis and automated fixes for your business&apos;s scalability challenges.
+              Find your bottlenecks before they find you.
+            </motion.p>
+          </div>
+        </section>
 
-          {/* GitHub Section — replaces the old Import button */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: -30 }}
-            transition={{
-              delay: 1.4,
-              duration: 0.6,
-              ease: "easeInOut",
-            }}
-            className="w-full max-w-4xl px-4 flex items-start justify-center h-14 overflow-visible"
-          >
-            <GitHubSection onStatusResolved={setGithubConnected} />
-          </motion.div>
-        </LampContainer>
+        {/* Top Right: Terminal Log */}
+        <section className="p-8 md:p-12 flex flex-col">
+          <TerminalLog />
+        </section>
+
+        {/* Bottom Row: GitHub Connection */}
+        <section className="col-span-1 md:col-span-2 p-12 flex flex-col items-center justify-center relative acid-sweep group cursor-pointer border-t border-white/15" id="github-section">
+          <GitHubSection onStatusResolved={setGithubConnected} />
+
+          {/* Ornamental Crosshair */}
+          <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 z-30 bg-[#111111] px-2 py-1 border border-white/15 group-hover:bg-acid-green group-hover:border-[#111111]/20 transition-colors">
+            <span className="text-[10px] font-mono group-hover:text-black transition-colors">+</span>
+          </div>
+        </section>
+      </main>
+
+      {/* Viewport Ornaments */}
+      <div className="absolute bottom-8 right-8 font-mono text-[10px] text-white/20 uppercase tracking-widest z-30">
+        v1.0.4 // Carbon-Acid Interface
       </div>
     </div>
   )
