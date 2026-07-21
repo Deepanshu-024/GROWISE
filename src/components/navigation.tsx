@@ -75,20 +75,18 @@ export default function Navigation() {
   const isHome = pathname === "/"
 
   return (
-    <nav className={`w-full z-50 transition-all duration-300 border-b border-white/15 h-16 flex items-center justify-between px-8`}>
+    <nav className={`w-full z-50 transition-all duration-300 border-b border-white/15 h-12 min-h-12 flex items-center justify-between px-12`}>
       {/* Logo — fixed width so center stays centered */}
-        <div className="flex items-center gap-2.5 flex-1 md:flex-none md:w-48">
-          <span className="font-mono text-xl font-black tracking-tighter uppercase">
-            GRO
-            <span className="text-acid-green">(W)</span>
-            ISE
-          </span>
-        </div>
+      <div className="flex items-center gap-2.5 flex-1 md:flex-none md:w-64">
+        <span className="font-mono text-xl font-black tracking-tighter uppercase">
+          GRO
+          <span className="text-acid-green">(W)</span>
+          ISE
+        </span>
+      </div>
 
-        {/* Center Navigation — true center */}
-        <div className="flex-1 hidden md:flex items-center justify-center gap-8 font-mono text-xs uppercase tracking-widest font-bold">
-          {renderNavLink("Home", "/")}
-
+      {/* Center Navigation — true center */}
+      <div className="flex-1 hidden md:flex items-center justify-center gap-12 font-mono text-xs uppercase tracking-widest font-bold">
           <SignedIn>
             <div
               className="relative"
@@ -139,14 +137,14 @@ export default function Navigation() {
             </div>
           </SignedIn>
 
-          {navLinks.slice(1).map(({ label, href }) => renderNavLink(label, href))}
+          {navLinks.map(({ label, href }) => renderNavLink(label, href))}
         </div>
 
         {/* Desktop Auth Buttons — hidden on mobile */}
-        <div className="hidden md:flex items-center justify-end gap-3 flex-1 md:flex-none md:w-48 font-mono">
+        <div className="hidden md:flex items-center justify-end gap-3 flex-1 md:flex-none md:w-64 font-mono">
           <SignedOut>
             <SignInButton fallbackRedirectUrl="/">
-              <button className="px-4 py-1.5 text-xs font-bold border border-white/20 acid-sweep uppercase tracking-widest">
+              <button className="px-6 py-2 text-xs font-bold border border-white/20 acid-sweep uppercase tracking-widest">
                 Login
               </button>
             </SignInButton>
