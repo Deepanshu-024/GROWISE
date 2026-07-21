@@ -45,7 +45,7 @@ export default function Home() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.8, ease: "circOut", delay: 0.6 }}
-              className="max-w-md text-white/60 text-[clamp(0.75rem,1.5vw,0.95rem)] leading-relaxed"
+              className="max-w-md text-white/60 text-[clamp(0.5rem,1.5vw,0.75rem)] leading-relaxed"
             >
               Intelligent analysis and automated fixes for your business&apos;s scalability challenges.
               Find your bottlenecks before they find you.
