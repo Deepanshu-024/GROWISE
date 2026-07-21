@@ -54,7 +54,7 @@ export default function Home() {
         </section>
 
         {/* Top Right: Terminal Log */}
-        <section className="p-8 md:p-20 flex flex-col">
+        <section className="p-4 md:p-8 flex flex-col justify-center overflow-hidden">
           <TerminalLog />
         </section>
 
@@ -68,11 +68,6 @@ export default function Home() {
           </div>
         </section>
       </main>
-
-      {/* Viewport Ornaments */}
-      <div className="absolute bottom-8 right-8 font-mono text-[10px] text-white/20 uppercase tracking-widest z-30">
-        v1.0.4 // Carbon-Acid Interface
-      </div>
     </div>
   )
 }
