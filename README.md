@@ -1,6 +1,8 @@
 # Gro(W)ise — Business Scale Analyzer
 
 Gro(W)ise analyzes your codebase for scalability risks, revenue threats, and architectural weaknesses — helping you understand the bottlenecks your business can face before they hit. Scalability analysis is powered by intelligent agents.
+<img width="1919" height="910" alt="image" src="https://github.com/user-attachments/assets/99631bf8-d263-43b9-9810-7eede4c16b27" />
+
 
 ## Setup Guide
 
