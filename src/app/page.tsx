@@ -88,7 +88,7 @@ export default function Home() {
 
           {/* Right: Socials */}
           <a
-            href="https://github.com"
+            href="https://github.com/Deepanshu-024/GROWISE"
             target="_blank"
             rel="noopener noreferrer"
             className="text-white/20 hover:text-acid-green transition-colors"
