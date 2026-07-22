@@ -20,7 +20,7 @@ export default function Home() {
     <div className="h-screen w-full flex flex-col bg-[#111111] text-white overflow-hidden selection:bg-acid-green/30 font-sans">
       <Navigation />
 
-      <main className="flex-1 min-h-0 relative grid grid-cols-1 md:grid-cols-2 grid-rows-[auto_1fr_auto] md:grid-rows-[1fr_auto] overflow-hidden">
+      <main className="flex-1 min-h-0 relative grid grid-cols-1 md:grid-cols-2 grid-rows-[auto_1fr_auto] md:grid-rows-[1.3fr_1fr] overflow-hidden">
         {/* Top Left: Headline */}
         <section className="p-[clamp(1rem,3vw,5rem)] flex flex-col justify-end relative md:border-r border-white/15">
           <div className="z-20">
@@ -50,8 +50,8 @@ export default function Home() {
         </section>
 
         {/* Bottom Row: GitHub Connection */}
-        <section className="col-span-1 md:col-span-2 md:py-6 flex flex-col items-center justify-center relative border-t border-white/15" id="github-section">
-            <div className="mt-1 w-full flex items-center justify-center"><GitHubSection onStatusResolved={handleStatusResolved}/></div>
+        <section className="col-span-1 md:col-span-2 pt-6 pb-2 flex flex-col items-center justify-center relative border-t border-white/15 min-h-0" id="github-section">
+            <div className="w-full flex-1 min-h-0 flex items-center justify-center"><GitHubSection onStatusResolved={handleStatusResolved}/></div>
 
           {/* Open Source Star Banner */}
           <div className="absolute top-0 left-0 w-full -translate-y-1/2 z-30 bg-[#111111] py-1.5 px-4 border-y border-white/15 flex items-center justify-center gap-2 font-mono text-xs uppercase tracking-widest group/banner hover:border-acid-green/40 transition-colors">

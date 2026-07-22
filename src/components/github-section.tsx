@@ -240,14 +240,14 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
   // ── State 1: GitHub NOT Connected ─────────────────────────────────────────
   if (!githubConnected) {
     return (
-      <div className="w-full max-w-xl md:max-w-2xl flex flex-col items-center font-mono">
+      <div className="w-full max-w-xl md:max-w-2xl flex flex-col items-center font-mono h-full min-h-0">
         {/* Box matching connected state structure */}
         <motion.div
           layout
           transition={{ type: "spring", stiffness: 300, damping: 30 }}
-          className="w-full border p-[1px] transition-all duration-500 border-white/10 bg-white/[0.02]"
+          className="w-full flex-1 min-h-0 border p-[1px] transition-all duration-500 border-white/10 bg-white/[0.02] flex flex-col"
         >
-          <div className="w-full h-[210px] overflow-hidden flex flex-col">
+          <div className="w-full flex-1 min-h-0 overflow-hidden flex flex-col">
             {/* Main content area — connect prompt */}
             <button
               onClick={handleConnect}
@@ -289,17 +289,17 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
 
   // ── State 2: GitHub Connected ─────────────────────────────────────────────
   return (
-    <div className="w-full max-w-xl md:max-w-2xl flex flex-col items-center font-mono">
+    <div className="w-full max-w-xl md:max-w-2xl flex flex-col items-center font-mono h-full min-h-0">
       {/* Repo card */}
       <motion.div
         layout
         transition={{ type: "spring", stiffness: 300, damping: 30 }}
-        className={`w-full border p-[1px] transition-all duration-500 border-white/10 bg-white/[0.02]`}
+        className={`w-full flex-1 min-h-0 border p-[1px] transition-all duration-500 border-white/10 bg-white/[0.02] flex flex-col`}
       >
         <motion.div
           layout
           transition={{ type: "spring", stiffness: 300, damping: 30 }}
-          className="w-full overflow-hidden"
+          className="w-full flex-1 min-h-0 overflow-hidden flex flex-col"
         >
           <AnimatePresence mode="wait" initial={false}>
             {!selectedRepo ? (
@@ -308,18 +308,18 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="w-full flex flex-col"
+                className="w-full flex flex-col flex-1 min-h-0"
               >
                 {loadingRepos ? (
-                  <div className="h-[170px] flex items-center justify-center">
+                  <div className="flex-1 min-h-0 flex items-center justify-center">
                     <Loader2 className="w-5 h-5 animate-spin text-acid-green/60" />
                   </div>
                 ) : repositories.length === 0 ? (
-                  <div className="h-[170px] flex items-center justify-center px-3 text-center">
+                  <div className="flex-1 min-h-0 flex items-center justify-center px-3 text-center">
                     <p className="text-[10px] text-white/30 tracking-widest">ERR: NO_REPOSITORIES_FOUND</p>
                   </div>
                 ) : (
-                  <div className="h-[170px] overflow-y-auto scrollbar-thin divide-y divide-white/[0.05]">
+                  <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin divide-y divide-white/[0.05]">
                     {repositories.map((repo) => (
                       <button
                         key={repo.id}
@@ -365,7 +365,7 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
                 )}
 
                 {/* Footer */}
-                <div className="h-[36px] border-t border-white/10 flex items-center shrink-0">
+                <div className="h-[25px] border-t border-white/10 flex items-center shrink-0">
                   <button
                     onClick={() => {
                       if (githubInstallationId) {
