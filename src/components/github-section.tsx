@@ -25,7 +25,7 @@ interface Repository {
 
 interface GitHubSectionProps {
   /** Called when GitHub status is resolved so the parent can react */
-  onStatusResolved?: (connected: boolean) => void
+  onStatusResolved?: (connected: boolean, username?: string | null) => void
 }
 
 export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) {
@@ -71,7 +71,7 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
         setGithubConnected(data.connected)
         setGithubUsername(data.username ?? null)
         setGithubInstallationId(data.installationId ?? null)
-        onStatusResolved?.(data.connected)
+        onStatusResolved?.(data.connected, data.username ?? null)
 
         if (data.connected) {
           fetchRepositories()
@@ -240,55 +240,57 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
   // ── State 1: GitHub NOT Connected ─────────────────────────────────────────
   if (!githubConnected) {
     return (
-      <button
-        onClick={handleConnect}
-        className="flex flex-col items-center gap-6 group transition-all duration-300"
-      >
-        <div className="flex items-center gap-4 font-mono text-2xl md:text-3xl lg:text-[2.5rem] font-bold tracking-tight">
-          <span className="text-white/40 group-hover:text-[#111111]/40 transition-colors">
-            $
-          </span>
-          <span className="text-white group-hover:text-[#111111] transition-colors uppercase">
-            CONNECT_GITHUB_REPOSITORY
-          </span>
-          <span className="cursor-blink" />
-        </div>
-        
-        <div className="flex items-center gap-8 opacity-0 transition-all duration-700 translate-y-4 group-hover:opacity-100 group-hover:translate-y-0 text-[#111111]">
-          <div className="flex items-center gap-2 text-xs uppercase tracking-widest font-mono font-bold">
-            <Github className="w-5 h-5" />
-            <span>Select Repository</span>
+      <div className="w-full max-w-xl md:max-w-2xl flex flex-col items-center font-mono">
+        {/* Box matching connected state structure */}
+        <motion.div
+          layout
+          transition={{ type: "spring", stiffness: 300, damping: 30 }}
+          className="w-full border p-[1px] transition-all duration-500 border-white/10 bg-white/[0.02]"
+        >
+          <div className="w-full h-[210px] overflow-hidden flex flex-col">
+            {/* Main content area — connect prompt */}
+            <button
+              onClick={handleConnect}
+              className="flex-1 flex flex-col items-center justify-center gap-4 group hover:bg-white/[0.02] transition-all duration-300 cursor-pointer"
+            >
+              <div className="flex items-center gap-3 text-sm md:text-base font-bold tracking-tight">
+                <span className="text-white/40 group-hover:text-acid-green/60 transition-colors">$</span>
+                <span className="text-white group-hover:text-acid-green transition-colors uppercase">
+                  CONNECT_GITHUB_REPOSITORY
+                </span>
+                <span className="cursor-blink" />
+              </div>
+
+              <div className="flex items-center gap-6 text-white/40 group-hover:text-white/70 transition-colors">
+                <div className="flex items-center gap-1.5 text-[9px] uppercase tracking-widest font-bold">
+                  <Github className="w-3.5 h-3.5 text-acid-green/60" />
+                  <span>Select Repo</span>
+                </div>
+                <div className="h-px w-8 bg-white/10" />
+                <div className="flex items-center gap-1.5 text-[9px] uppercase tracking-widest font-bold">
+                  <CircleCheck className="w-3.5 h-3.5 text-acid-green/60" />
+                  <span>Analyze Scale</span>
+                </div>
+              </div>
+            </button>
+
+            {/* Footer — status indicator */}
+            <div className="h-[42px] border-t border-white/10 flex items-center justify-center shrink-0 gap-2">
+              <div className="w-1.5 h-1.5 rounded-full bg-white/20" />
+              <span className="text-[10px] text-white/20 uppercase tracking-[0.2em] select-none">
+                Not Connected
+              </span>
+            </div>
           </div>
-          <div className="h-px w-12 bg-current/20" />
-          <div className="flex items-center gap-2 text-xs uppercase tracking-widest font-mono font-bold">
-            <CircleCheck className="w-5 h-5" />
-            <span>Analyze Scale</span>
-          </div>
-        </div>
-      </button>
+        </motion.div>
+      </div>
     )
   }
 
   // ── State 2: GitHub Connected ─────────────────────────────────────────────
   return (
-    <div className="w-full max-w-lg flex flex-col items-center font-mono">
-      {/* Connected indicator with dynamic color/text */}
-      <div className="flex items-center gap-2 mb-4 h-4 transition-all duration-350 uppercase tracking-[0.2em]">
-        <div className={`w-1.5 h-1.5 rounded-full animate-pulse bg-acid-green`} />
-        <span className="text-[10px] text-white/40 select-none">
-          {selectedRepo ? (
-            <>
-              Confirming analysis for <span className="text-acid-green font-medium">{selectedRepo.name}</span>
-            </>
-          ) : (
-            <>
-              Connected as <span className="text-acid-green font-medium">@{githubUsername}</span>
-            </>
-          )}
-        </span>
-      </div>
-
-      {/* Repo card with dynamic border gradient & shadow transformation */}
+    <div className="w-full max-w-xl md:max-w-2xl flex flex-col items-center font-mono">
+      {/* Repo card */}
       <motion.div
         layout
         transition={{ type: "spring", stiffness: 300, damping: 30 }}
@@ -297,7 +299,7 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
         <motion.div
           layout
           transition={{ type: "spring", stiffness: 300, damping: 30 }}
-          className="w-full h-[182px] overflow-hidden"
+          className="w-full overflow-hidden"
         >
           <AnimatePresence mode="wait" initial={false}>
             {!selectedRepo ? (
@@ -306,18 +308,18 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="w-full h-full flex flex-col justify-between"
+                className="w-full flex flex-col"
               >
                 {loadingRepos ? (
-                  <div className="h-[140px] flex items-center justify-center">
+                  <div className="h-[170px] flex items-center justify-center">
                     <Loader2 className="w-5 h-5 animate-spin text-acid-green/60" />
                   </div>
                 ) : repositories.length === 0 ? (
-                  <div className="h-[140px] flex items-center justify-center px-3 text-center">
+                  <div className="h-[170px] flex items-center justify-center px-3 text-center">
                     <p className="text-[10px] text-white/30 tracking-widest">ERR: NO_REPOSITORIES_FOUND</p>
                   </div>
                 ) : (
-                  <div className="h-[140px] overflow-y-auto scrollbar-thin divide-y divide-white/[0.05]">
+                  <div className="h-[170px] overflow-y-auto scrollbar-thin divide-y divide-white/[0.05]">
                     {repositories.map((repo) => (
                       <button
                         key={repo.id}
@@ -363,7 +365,7 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
                 )}
 
                 {/* Footer */}
-                <div className="h-[42px] border-t border-white/10 flex items-center shrink-0">
+                <div className="h-[36px] border-t border-white/10 flex items-center shrink-0">
                   <button
                     onClick={() => {
                       if (githubInstallationId) {
@@ -385,7 +387,7 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
                 initial={{ opacity: 0, scale: 0.98 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0 }}
-                className="w-full h-full p-6 flex flex-col justify-between relative"
+                className="w-full p-6 flex flex-col justify-between relative"
               >
                 {/* Top Section: Header */}
                 <div className="flex flex-col gap-4">
@@ -402,7 +404,7 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
                 </div>
 
                 {/* Middle Section: Text Message / Loader */}
-                <div className="min-h-[40px] flex flex-col justify-center select-none">
+                <div className="min-h-[40px] flex flex-col justify-center select-none mt-4">
                   {loadingUsage ? (
                     <div className="flex items-center justify-center w-full">
                       <Loader2 className="w-5 h-5 animate-spin text-acid-green/60" />
@@ -440,7 +442,7 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
                 </div>
 
                 {/* Bottom Section: Actions */}
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 mt-4">
                   <button
                     onClick={closeModal}
                     disabled={analyzing || checkingFramework}
