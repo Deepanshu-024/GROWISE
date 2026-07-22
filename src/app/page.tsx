@@ -22,7 +22,7 @@ export default function Home() {
 
       <main className="flex-1 min-h-0 relative grid grid-cols-1 md:grid-cols-2 grid-rows-[auto_1fr_auto] md:grid-rows-[1fr_auto] overflow-hidden">
         {/* Top Left: Headline */}
-        <section className="p-[clamp(1rem,3vw,5rem)] flex flex-col justify-end relative overflow-hidden md:border-r border-white/15">
+        <section className="p-[clamp(1rem,3vw,5rem)] flex flex-col justify-end relative md:border-r border-white/15">
           <div className="z-20">
             <motion.h1
               initial={{ opacity: 0, y: 40 }}
