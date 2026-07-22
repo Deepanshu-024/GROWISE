@@ -11,7 +11,6 @@ const navLinks = [
   { label: "Home", href: "/" },
   { label: "Dashboard", href: "/dashboard" },
   { label: "Pricing", href: "/pricing" },
-  { label: "Docs", href: "#" },
 ]
 
 export default function Navigation() {
@@ -87,6 +86,10 @@ export default function Navigation() {
 
       {/* Center Navigation — true center */}
       <div className="flex-1 hidden md:flex items-center justify-center gap-12 font-mono text-xs uppercase tracking-widest font-bold">
+          {/* Home link first */}
+          {renderNavLink("Home", "/")}
+
+          {/* Reports — only when signed in, right after Home */}
           <SignedIn>
             <div
               className="relative"
@@ -99,7 +102,7 @@ export default function Navigation() {
                   : "text-white/50 hover:text-white"
                 }`}
               >
-                Reports
+                REPORTS
               </button>
 
               {/* Dropdown */}
@@ -137,7 +140,8 @@ export default function Navigation() {
             </div>
           </SignedIn>
 
-          {navLinks.map(({ label, href }) => renderNavLink(label, href))}
+          {/* Remaining nav links (skip Home since it's already rendered) */}
+          {navLinks.filter(({ label }) => label !== "Home").map(({ label, href }) => renderNavLink(label, href))}
         </div>
 
         {/* Desktop Auth Buttons — hidden on mobile */}
