@@ -27,43 +27,43 @@ const WORKFLOW_STEPS: WorkflowStep[] = [
     id: "github",
     label: "auth_github_connect",
     icon: Github,
-    description: "Authenticate via OAuth and link your GitHub account to enable repository access.",
+    description: "Sign in via Clerk, then connect the Growise GitHub App to grant read-only access to your repositories — secure OAuth, zero credentials stored.",
   },
   {
     id: "repo",
     label: "select_repository",
     icon: FolderGit2,
-    description: "Choose a repository from your connected GitHub account for scalability analysis.",
+    description: "Pick the repository you want analyzed. We pull your repo list from the connected GitHub App — just select and go.",
   },
   {
     id: "framework",
     label: "detect_framework",
     icon: ScanSearch,
-    description: "Scan package.json and project structure to detect if the framework is supported (Next.js, React).",
+    description: "We scan your project to detect the framework in use. Currently supporting Next.js and React — if matched, a background job kicks off so you can close the browser.",
   },
   {
     id: "arch",
     label: "map_architecture",
     icon: Network,
-    description: "Build a dependency graph and map the full architecture — routes, APIs, database layers, and services.",
+    description: "Your codebase is parsed into a full dependency graph — routes, APIs, database layers, and services — then each detected archetype is assigned a specialized agent.",
   },
   {
     id: "agents",
     label: "run_agent_analysis",
     icon: Bot,
-    description: "Dispatch specialized AI agents for each business archetype to analyze scalability risks in parallel.",
+    description: "Specialized AI agents run in parallel, each analyzing a different archetype of your architecture. This deep analysis takes roughly 10 minutes to complete.",
   },
   {
     id: "report",
     label: "compile_scalability_report",
     icon: FileBarChart,
-    description: "Aggregate findings into a final scalability report with risk scores, bottlenecks, and recommendations.",
+    description: "A final agent compiles all findings into a comprehensive scalability report — risk scores, bottlenecks, and actionable recommendations for high-traffic readiness.",
   },
   {
     id: "chatbot",
     label: "init_chatbot_interface",
     icon: MessageSquare,
-    description: "Access the AI chatbot to ask questions, open GitHub issues, or generate an action plan from the report.",
+    description: "Chat with an AI assistant about your report — ask questions, open GitHub issues directly, or generate step-by-step action plans to resolve identified risks.",
   },
 ]
 
@@ -117,9 +117,9 @@ export default function TerminalLog() {
   }, [phase])
 
   return (
-    <div className="flex h-full font-mono text-xs leading-relaxed overflow-hidden gap-2.5">
+    <div className="flex h-full font-mono text-xs leading-relaxed overflow-hidden gap-2">
       {/* ── Left: Log Lines ───────────────────────────────────────── */}
-      <div className="flex flex-col flex-1 min-w-0">
+      <div className="flex flex-col flex-1 min-w-0 justify-center">
         <div className="mb-4 text-white/30 uppercase tracking-widest flex items-center gap-2">
           <Command className="w-3.5 h-3.5" />
           <span>Pipeline</span>
@@ -138,7 +138,7 @@ export default function TerminalLog() {
                   initial={{ opacity: 0, x: -6 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ duration: 0.3 }}
-                  className={`flex items-center gap-1.5 py-0.5 px-1 rounded-sm cursor-default transition-colors duration-200 ${
+                  className={`flex items-center gap-2 py-1 px-1 rounded-sm cursor-default transition-colors duration-200 ${
                     isActive
                       ? "text-acid-green"
                       : isCompleted
@@ -150,7 +150,7 @@ export default function TerminalLog() {
                   onMouseEnter={() => handleStepHover(i)}
                   onMouseLeave={() => handleStepHover(null)}
                 >
-                  <span className="w-4 text-center shrink-0">
+                  <span className="w-5 text-center shrink-0 text-sm">
                     {phase === "typing" ? (
                       <span className="text-white/40">&gt;</span>
                     ) : isActive ? (
@@ -162,12 +162,12 @@ export default function TerminalLog() {
                         ▸
                       </motion.span>
                     ) : isCompleted ? (
-                      <span className="text-acid-green/50">✓</span>
+                      <span className="text-acid-green/50">//</span>
                     ) : (
-                      <span className="text-white/15">○</span>
+                      <span className="text-white/15">//</span>
                     )}
                   </span>
-                  <span className={`truncate text-[10px] font-bold tracking-tight ${
+                  <span className={`truncate text-[11px] font-bold tracking-tight ${
                     isActive ? "text-acid-green" : ""
                   }`}>
                     {step.label}
@@ -191,7 +191,7 @@ export default function TerminalLog() {
       </div>
 
       {/* ── Right: Description Box ────────────────────────────────── */}
-      <div className="w-[55%] shrink-0 flex flex-col pr-10">
+      <div className="w-[65%] shrink-0 flex flex-col pr-16">
         <div className="flex-1 border border-white/[0.06] bg-white/[0.015] rounded-sm p-3 flex items-center">
           <AnimatePresence mode="wait">
             {typedCount > 0 && (
