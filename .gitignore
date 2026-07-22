@@ -46,3 +46,6 @@ next-env.d.ts
 /src/app/test/
 /src/app/api/test/
 /actions/test/
+
+# kombai
+.kombai
