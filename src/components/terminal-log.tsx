@@ -117,7 +117,7 @@ export default function TerminalLog() {
   }, [phase])
 
   return (
-    <div className="flex h-full font-mono text-xs leading-relaxed overflow-hidden gap-2">
+    <div className="flex flex-col md:flex-row h-full font-mono text-xs leading-relaxed md:overflow-hidden gap-4 md:gap-2">
       {/* ── Left: Log Lines ───────────────────────────────────────── */}
       <div className="flex flex-col flex-1 min-w-0 justify-center">
         <div className="mb-4 text-white/30 uppercase tracking-widest flex items-center gap-2">
@@ -138,7 +138,12 @@ export default function TerminalLog() {
                   initial={{ opacity: 0, x: -6 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ duration: 0.3 }}
-                  className={`flex items-center gap-2 py-1 px-1 rounded-sm cursor-default transition-colors duration-200 ${
+                  className="flex flex-col"
+                  onMouseEnter={() => handleStepHover(i)}
+                  onMouseLeave={() => handleStepHover(null)}
+                >
+                  {/* Step row */}
+                  <div className={`flex items-center gap-2 py-1 px-1 rounded-sm cursor-default transition-colors duration-200 ${
                     isActive
                       ? "text-acid-green"
                       : isCompleted
@@ -146,32 +151,45 @@ export default function TerminalLog() {
                         : isPending
                           ? "text-white/20"
                           : "text-white/50"
-                  }`}
-                  onMouseEnter={() => handleStepHover(i)}
-                  onMouseLeave={() => handleStepHover(null)}
-                >
-                  <span className="w-5 text-center shrink-0 text-sm">
-                    {phase === "typing" ? (
-                      <span className="text-white/40">&gt;</span>
-                    ) : isActive ? (
-                      <motion.span
-                        animate={{ opacity: [1, 0.3] }}
-                        transition={{ repeat: Infinity, duration: 0.8 }}
-                        className="text-acid-green"
-                      >
-                        ▸
-                      </motion.span>
-                    ) : isCompleted ? (
-                      <span className="text-acid-green/50">//</span>
-                    ) : (
-                      <span className="text-white/15">//</span>
-                    )}
-                  </span>
-                  <span className={`truncate text-[11px] font-bold tracking-tight ${
-                    isActive ? "text-acid-green" : ""
                   }`}>
-                    {step.label}
-                  </span>
+                    <span className="w-5 text-center shrink-0 text-sm">
+                      {phase === "typing" ? (
+                        <span className="text-white/40">&gt;</span>
+                      ) : isActive ? (
+                        <motion.span
+                          animate={{ opacity: [1, 0.3] }}
+                          transition={{ repeat: Infinity, duration: 0.8 }}
+                          className="text-acid-green"
+                        >
+                          ▸
+                        </motion.span>
+                      ) : isCompleted ? (
+                        <span className="text-acid-green/50">//</span>
+                      ) : (
+                        <span className="text-white/15">//</span>
+                      )}
+                    </span>
+                    <span className={`truncate text-[11px] font-bold tracking-tight ${
+                      isActive ? "text-acid-green" : ""
+                    }`}>
+                      {step.label}
+                    </span>
+                  </div>
+
+                  {/* Mobile inline description — shown below the active step */}
+                  {isActive && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.25, ease: "circOut" }}
+                      className="md:hidden ml-7 mt-1 mb-2 border-l-2 border-acid-green/20 pl-3"
+                    >
+                      <p className="text-[11px] text-white/40 leading-relaxed">
+                        {step.description}
+                      </p>
+                    </motion.div>
+                  )}
                 </motion.div>
               )
             })}
@@ -190,8 +208,8 @@ export default function TerminalLog() {
         </div>
       </div>
 
-      {/* ── Right: Description Box ────────────────────────────────── */}
-      <div className="w-[65%] shrink-0 flex flex-col pr-16">
+      {/* ── Right: Description Box (desktop only) ─────────────────── */}
+      <div className="hidden md:flex w-[65%] shrink-0 flex-col pr-16">
         <div className="flex-1 border border-white/[0.06] bg-white/[0.015] rounded-sm p-3 flex items-center">
           <AnimatePresence mode="wait">
             {typedCount > 0 && (

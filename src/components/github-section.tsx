@@ -266,11 +266,11 @@ export default function GitHubSection({ onStatusResolved }: GitHubSectionProps) 
                   <Github className="w-3.5 h-3.5 text-acid-green/60" />
                   <span>Select Repo</span>
                 </div>
-                <div className="h-px w-8 bg-white/10" />
+                {/* <div className="h-px w-8 bg-white/10" />
                 <div className="flex items-center gap-1.5 text-[9px] uppercase tracking-widest font-bold">
                   <CircleCheck className="w-3.5 h-3.5 text-acid-green/60" />
                   <span>Analyze Scale</span>
-                </div>
+                </div> */}
               </div>
             </button>
 

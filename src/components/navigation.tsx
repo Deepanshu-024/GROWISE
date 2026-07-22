@@ -75,7 +75,7 @@ export default function Navigation() {
   const isHome = pathname === "/"
 
   return (
-    <nav className={`w-full z-50 transition-all duration-300 border-b border-white/15 h-12 min-h-12 flex items-center justify-between px-12`}>
+    <nav className={`w-full z-50 transition-all duration-300 border-b border-white/15 h-12 min-h-12 flex items-center justify-between px-5 md:px-12`}>
       {/* Logo — fixed width so center stays centered */}
       <div className="flex items-center gap-2.5 flex-1 md:flex-none md:w-64">
         <span className="font-mono text-xl font-black tracking-tighter uppercase">
